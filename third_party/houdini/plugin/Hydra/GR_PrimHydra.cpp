@@ -384,12 +384,6 @@ GR_PrimHydra::initRender()
         default:
             break;
         }
-        // Handle HYDRA_HOUDINI_DISABLE=2
-        if (disable) {
-            drawType[i] = DrawType::RE;
-            hasRE = true;
-            continue;
-        }
         // Detect if a prim is drawn more than once, use instance drawing
         size_t& iEntry(hashToInstance[hashValue(prim) + std::hash<double>()(getFrame(i))]);
         if (iEntry) {
@@ -399,9 +393,10 @@ GR_PrimHydra::initRender()
             continue;
         }
         iEntry = i+1; // record first of possible instances
-        // Any child of PointInstancer (such as a prototype) does not work in Hydra,
-        // See if they fix it as this check is expensive!
-        if (inPointInstancer(prim)) {
+        // Handle HYDRA_HOUDINI_DISABLE=2, plus
+        // any child of PointInstancer (such as a prototype) does not work in Hydra,
+        // (See if they fix it as inPointInstancer() is expensive!)
+        if (disable || inPointInstancer(prim)) {
             drawType[i] = DrawType::RE;
             hasRE = true;
             continue;
@@ -1164,6 +1159,16 @@ GR_PrimHydra::_buildGeo(RE_Render* r, size_t i)
             geo.geo->findCachedInstanceGroupAttrib(
                 r, 0, "InstID", RE_GPU_INT32, 1, 1, geo.instances, true
             )->setArray(r, &ids[0]);
+            // Color the instances if there is a point Cd attribute
+            GA_ROHandleV3 Cd(getPrimPacked(i)->getParent()->findPointVectorAttrib("Cd"));
+            if (Cd.isValid()) {
+                std::vector<UT_Vector3> colors(geo.instances);
+                for (size_t j = 0; j < geo.instances; ++j)
+                    colors[j] = Cd.get(j);
+                geo.geo->findCachedInstanceGroupAttrib(
+                    r, 0, "InstCd", RE_GPU_FLOAT32, 3, 1, geo.instances, true
+                )->setArray(r, &colors[0].x());
+            }
             drawEverything(geo.geo, r, 0, geo.instances);
             local.identity();
         }
