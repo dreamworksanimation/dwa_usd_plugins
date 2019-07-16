@@ -1,16 +1,19 @@
 Nuke Plugins
 ==============
 
-This section contains libraries and plugins for Nuke. 
-
-* Requires the cmake/modules/FindNuke.cmake module which uses NUKE_LOCATION
-  defined in build_scripts/build_usd.py.
-* cmake/defaults/Options.cmake and cmake/defaults/Packages.cmake also need
-  to have Nuke entries to kick off the FindNuke module.
+This section contains libraries and plugins to help Nuke load scene files like USD, Alembic, FBX, etc, and an IO plugin for USD.
 
 
-List of added files:
-<src-top>/
+This first release of the code is beta internal-development code and shouldn't be relied on for production work. It works fine on Nuke 10 & 11 and should work on Nuke 12.
+
+At the moment it's only been built on Linux 64 and there likely needs to be many (hopefully small) changes to get it building on Win/OSX.
+
+
+   docs are work-in-progress - add Fuser lib explanation here
+
+
+List of currently-added files:
+src-top/
     third_party/
         nuke/
             CMakeLists.txt
@@ -126,10 +129,6 @@ List of added files:
                 TransformGeo2/
                     CMakeLists.txt
                     TransformGeo2.cpp
-
-                EnvLight/
-                    CMakeLists.txt
-                    EnvLight.cpp
 
                 StereoCam2/
                     CMakeLists.txt
