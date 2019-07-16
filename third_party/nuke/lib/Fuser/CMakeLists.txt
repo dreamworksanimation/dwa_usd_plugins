@@ -1,0 +1,69 @@
+set(PXR_PACKAGE Fuser)
+
+pxr_static_library(${PXR_PACKAGE}
+    LIBRARIES
+        ${NUKE_DDIMAGE_LIBRARY}
+
+    INCLUDE_DIRS
+        ${NUKE_INCLUDE_DIRS}
+
+    PUBLIC_HEADERS
+        api.h
+        ArgConstants.h
+        ArgSet.h
+        Attribute.h
+        AttributeTypes.h
+        AxisKnob.h
+        AxisOp.h
+        Box2.h
+        Box3.h
+        CameraOp.h
+        CameraRigOp.h
+        ExecuteTargetContexts.h
+        GeoReader.h
+        GeoSceneFileArchiveContext.h
+        GeoSceneGraphReader.h
+        HalfEdge.h
+        LightOp.h
+        Lookat.h
+        Mat4.h
+        MeshPrimitive.h
+        Node.h
+        NodeContext.h
+        NodeIOInterface.h
+        NodePrimitive.h
+        NukeGeoInterface.h
+        NukeKnobInterface.h
+        PointBasedPrimitive.h
+        Primitive.h
+        RayContext.h
+        SceneLoader.h
+        SceneOpExtender.h
+        SceneXform.h
+        Time.h
+        Vec2.h
+        Vec3.h
+        Vec4.h
+        XformableNode.h
+
+    CPPFILES
+        ArgSet.cpp
+        Attribute.cpp
+        AxisKnob.cpp
+        AxisOp.cpp
+        CameraOp.cpp
+        CameraRigOp.cpp
+        GeoReader.cpp
+        GeoSceneGraphReader.cpp
+        LightOp.cpp
+        MeshPrimitive.cpp
+        Node.cpp
+        NodeIOInterface.cpp
+        NodePrimitive.cpp
+        NukeGeoInterface.cpp
+        NukeKnobInterface.cpp
+        PointBasedPrimitive.cpp
+        SceneLoader.cpp
+        SceneXform.cpp
+        XformableNode.cpp
+)
