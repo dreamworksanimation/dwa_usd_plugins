@@ -71,3 +71,17 @@ python build_scripts/build_usd.py --houdini --houdini-location /path/to/houdini1
 python build_scripts/build_usd.py --nuke --nuke-location /path/to/nuke10_or_11
 ```
 
+# Using the plugins
+
+#### Hydra integration for Houdini
+
+Launch Houdini with Pixar's USD plugin. USD imported with Pixar's
+USD Import will automatically be drawn in the viewer using Hydra.
+
+#### USD Reader plugins for Nuke
+
+Add $USD_DIR/third_party/nuke/plugin to $NUKE_PATH before launching
+Nuke.
+
+Once in Nuke, you can create a ReadGeo node or a Camera node and supply
+a USD file to import data from USD.
