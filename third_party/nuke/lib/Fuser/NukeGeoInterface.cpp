@@ -328,7 +328,11 @@ GeoOpGeometryEngineContext::GeoOpGeometryEngineContext(int                      
 {
     assert(geo); // shouldn't happen...
 
+#ifdef DWA_INTERNAL_BUILD
+    typedef std::map<DD::Image::GeoOp*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
+#else
     typedef std::unordered_map<DD::Image::GeoOp*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
+#endif
     static GeoOpContextMap geoop_context_map;
 
     const GeoOpContextMap::const_iterator it = geoop_context_map.find(geo);

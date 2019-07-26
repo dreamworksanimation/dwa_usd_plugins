@@ -72,7 +72,11 @@ static const Fsr::KnobMap knob_map[] =
 //-------------------------------------------------------------------------
 
 
+#ifdef DWA_INTERNAL_BUILD
+typedef std::map<uint64_t, GeoSceneFileArchiveContext*> GeoSceneFileArchiveContextMap;
+#else
 typedef std::unordered_map<uint64_t, GeoSceneFileArchiveContext*> GeoSceneFileArchiveContextMap;
+#endif
 static GeoSceneFileArchiveContextMap m_archive_context_map;
 static std::mutex                    m_archive_lock;
 

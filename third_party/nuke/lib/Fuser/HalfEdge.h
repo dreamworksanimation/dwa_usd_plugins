@@ -31,8 +31,12 @@
 
 #include "api.h"
 
+#ifdef DWA_INTERNAL_BUILD
+#  include <map>
+#else
+#  include <unordered_map>
+#endif
 #include <vector>
-#include <unordered_map>
 #include <iostream>
 #if DEBUG
 #  include <assert.h>
@@ -553,7 +557,11 @@ HalfEdge::buildEdges(const std::vector<uint32_t>& verts_per_face,
     // On the 2nd pass we find any edge with the same point indices
     // but in the reverse order. If there's a match those two edges are
     // considered 'twins'.
+#ifdef DWA_INTERNAL_BUILD
+    std::map<uint64_t, uint32_t> edge_map;
+#else
     std::unordered_map<uint64_t, uint32_t> edge_map;
+#endif
 
     // Find max edge count:
     size_t nEdges = 0;
@@ -561,7 +569,10 @@ HalfEdge::buildEdges(const std::vector<uint32_t>& verts_per_face,
         nEdges += verts_per_face[f];
     if (nEdges == 0)
         return false; // don't crash...
+#ifdef DWA_INTERNAL_BUILD
+#else
     edge_map.reserve(nEdges);
+#endif
 
     // Build edges for each face in the mesh in the 1st pass, then go back
     // and assign the twin connections:
@@ -619,7 +630,11 @@ HalfEdge::buildEdges(const std::vector<uint32_t>& verts_per_face,
             hash.reset();
             hash.append(vert_indices[vNext   ]);
             hash.append(vert_indices[vCurrent]);
+#ifdef DWA_INTERNAL_BUILD
+            std::map<uint64_t, uint32_t>::const_iterator iter = edge_map.find(hash.value());
+#else
             std::unordered_map<uint64_t, uint32_t>::const_iterator iter = edge_map.find(hash.value());
+#endif
             if (iter != edge_map.end())
             {
                 Fsr::HalfEdge& heIncoming = edge_list[iter->second];

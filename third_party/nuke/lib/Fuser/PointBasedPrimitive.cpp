@@ -1101,7 +1101,11 @@ static DD::Image::Lock cache_lock;
 class VertexBuffersCache
 {
   private:
+#ifdef DWA_INTERNAL_BUILD
+    typedef std::map<std::string, GeoOpVertexBuffers*> NodeGeoOpVertexBuffersMap;
+#else
     typedef std::unordered_map<std::string, GeoOpVertexBuffers*> NodeGeoOpVertexBuffersMap;
+#endif
     NodeGeoOpVertexBuffersMap m_vbuffers_map;
 
 

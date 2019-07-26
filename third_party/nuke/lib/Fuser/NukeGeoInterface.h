@@ -223,7 +223,11 @@ class FSR_EXPORT GeoInfoCacheRef
 class FSR_EXPORT GeoOpGeometryEngineContext
 {
   public:
+#ifdef DWA_INTERNAL_BUILD
+    typedef std::map<std::string, int> ObjectIndexMap;
+#else
     typedef std::unordered_map<std::string, int> ObjectIndexMap;
+#endif
 
     /*! These contexts are stored in a static map keyed to the pointer of the GeoOp
         where they were first assigned/created.

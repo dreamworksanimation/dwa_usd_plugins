@@ -518,7 +518,11 @@ Node::expandContents(const char* node_mask)
 class DsoMap
 {
   private:
+#ifdef DWA_INTERNAL_BUILD
+    typedef std::map<std::string, const Node::Description*> NodeDescMap;
+#else
     typedef std::unordered_map<std::string, const Node::Description*> NodeDescMap;
+#endif
     NodeDescMap m_dso_map;
 
 

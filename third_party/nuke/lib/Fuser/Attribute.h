@@ -31,7 +31,11 @@
 
 #include "api.h"
 
-#include <unordered_map>
+#ifdef DWA_INTERNAL_BUILD
+#  include <map>
+#else
+#  include <unordered_map>
+#endif
 
 namespace Fsr {
 
@@ -106,7 +110,11 @@ class Attribute
 };
 
 
+#ifdef DWA_INTERNAL_BUILD
+typedef std::map<std::string, Attribute*> AttributeMap;
+#else
 typedef std::unordered_map<std::string, Attribute*> AttributeMap;
+#endif
 
 
 } // namespace Fsr

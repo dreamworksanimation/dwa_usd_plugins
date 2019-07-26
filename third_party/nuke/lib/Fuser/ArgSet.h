@@ -35,8 +35,10 @@
 #include "Mat4.h"
 
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
+#ifndef DWA_INTERNAL_BUILD
+#  include <unordered_map>
+#  include <unordered_set>
+#endif
 #include <map>
 #include <set>
 
@@ -47,9 +49,14 @@ namespace Fsr {
 
 // Define some common-usage types:
 
+#ifdef DWA_INTERNAL_BUILD
+typedef std::map<std::string, std::string> KeyValueMap;
+typedef std::set<std::string>              StringSet;
+#else
 // These are unordered to improve lookup speed at the cost of alphabetizing.
 typedef std::unordered_map<std::string, std::string> KeyValueMap;
 typedef std::unordered_set<std::string>              StringSet;
+#endif
 
 // Sorted variants:
 typedef std::map<std::string, std::string> KeyValueSortedMap;
