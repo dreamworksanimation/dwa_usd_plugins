@@ -1,0 +1,20 @@
+#usda 1.0
+
+def Scope "Scene"
+{
+    def "triangle_hello" (
+        append references=@./triangle.usdat:SDF_FORMAT_ARGS:phrase=hello&color=red@
+    )
+    {
+    }
+    def "triangle_goodbye" (
+        append references=@./triangle.usdat:SDF_FORMAT_ARGS:phrase=goodbye&color=blue@
+    )
+    {
+    }
+    def "triangle_template" (
+        append references=@./triangle.usdat@
+    )
+    {
+    }
+}

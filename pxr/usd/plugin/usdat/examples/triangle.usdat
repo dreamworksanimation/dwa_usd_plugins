@@ -1,0 +1,15 @@
+#usdat 1.0
+(
+    defaultPrim = "triangle"
+)
+
+def Mesh "triangle"
+{
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0, 1, 2]
+  point3f[] points = [(1, 0, 0), (0, 1, 0), (-1, 0, 0)] (
+    interpolation = "vertex"
+  )
+  custom string phrase = "${phrase}"
+  custom string primaryColor = "${color}"
+}

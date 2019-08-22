@@ -20,6 +20,13 @@ into Nuke. This is currently a beta release.
 
 [Documentation](third_party/nuke/README.md)
 
+#### usdat FileFormat
+
+usdat is USD-ascii with templates. It enables layer re-use with
+different string values (such as asset instance name) within a common layer.
+
+[Documentation](pxr/usd/plugin/usdat/README.md)
+
 # License
 
 This code is released under the 
@@ -51,7 +58,7 @@ Run merge_plugins.py and supply a path to your local USD repository,
 and specify which plugins you would like to merge as arguments.
 
 ```bash
-python merge_plugins.py /path/to/USD (--nuke) (--houdini_hydra)
+python merge_plugins.py /path/to/USD (--nuke) (--houdini_hydra) (--usdat)
 ```
 
 This will merge and / or copy the relevant files from this repository to
@@ -71,6 +78,11 @@ python build_scripts/build_usd.py --houdini --houdini-location /path/to/houdini1
 python build_scripts/build_usd.py --nuke --nuke-location /path/to/nuke10_or_11
 ```
 
+#### usdat FileFormat
+```bash
+python build_scripts/build_usd.py
+```
+
 # Using the plugins
 
 #### Hydra integration for Houdini
@@ -85,3 +97,10 @@ Nuke.
 
 Once in Nuke, you can create a ReadGeo node or a Camera node and supply
 a USD file to import data from USD.
+
+#### usdat FileFormat
+
+Once installed, the usdat FileFormat will be available to USD and
+automatically discovered from the plugin registry.
+You can start using usdat layers in your assets and stages without
+additional configuration.

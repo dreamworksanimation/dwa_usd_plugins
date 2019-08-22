@@ -30,15 +30,22 @@ AVAILABLE_PLUGINS = {
             "third_party/nuke",
             "cmake",
             "CMakeLists.txt",
-            "build_scripts"
+            "build_scripts",
         ]
     },
     "houdini_hydra": {
         "about": "Hydra extension for Pixar's Houdini plugin",
         "files": [
-            "third_party/houdini"
+            "third_party/houdini",
         ]
     },
+    "usdat": {
+        "about": "usdat (usda with templates) SdfFileFormat plugin",
+        "files": [
+            "pxr/usd/plugin/CMakeLists.txt",
+            "pxr/usd/plugin/usdat",
+        ]
+    }
 }
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
