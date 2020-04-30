@@ -34,6 +34,8 @@
 
 namespace Fsr {
 
+class PrimitiveViewerContext; // avoid including Node.h via ExecuteTargetContexts.h
+
 
 /*! DD::Image::Primitive wrapper adding double-precision point support.
 
@@ -76,6 +78,9 @@ class FSR_EXPORT PointBasedPrimitive : public FuserPrimitive
 
         The lists match the DD::Image::VArray class minus 'P' and 'MB' which are
         created internally by rPrimitives during add_to_render().
+
+        TODO: This can be made more memory effecient by allocating a big lump
+        for all attribute data since all the lists are the same size.
     */
     struct VertexBuffers
     {
@@ -86,16 +91,16 @@ class FSR_EXPORT PointBasedPrimitive : public FuserPrimitive
         Fsr::Vec3fList   PW;        //!< Mask_PW_ - PL with concat xform applied (in world-space)
 
         // Per-vert arrays: TODO: change these to Fuser::Attributes!
-        Fsr::UintList  Pidx;        //!< Point indices into point-rate PL/PW arrays
-        Fsr::Vec3fList    N;        //!< Mask_N_  - normals (in world-space if inverse concat xform applied)
-        Fsr::Vec4fList   UV;        //!< Mask_UV_ - Vec4 uvs where w = perspective-coord for perspective interpolation
-        Fsr::Vec4fList   Cf;        //!< Mask_Cf_ - Vec4 colors where w = alpha/opacity
-        Fsr::Vec3fList  VEL;        //!< Mask_VEL_- local-space point velocity
+        Fsr::Uint32List Pidx;       //!< Point indices into point-rate PL/PW arrays
+        Fsr::Vec3fList     N;       //!< Mask_N_  - normals (in world-space if inverse concat xform applied)
+        Fsr::Vec4fList    UV;       //!< Mask_UV_ - Vec4 uvs where w = perspective-coord for perspective interpolation
+        Fsr::Vec4fList    Cf;       //!< Mask_Cf_ - Vec4 colors where w = alpha/opacity
+        Fsr::Vec3fList   VEL;       //!< Mask_VEL_- local-space point velocity
 
         // Per-face info.
-        bool          allTris;      //!< Are verts part of an all-tri mesh? Don't need a face list if so.
-        bool          allQuads;     //!< Are verts part of an all-quad mesh? Don't need a face list if so.
-        Fsr::UintList vertsPerFace; //!< Number of verts per face (empty if not a mesh-like prim)
+        bool            allTris;        //!< Are verts part of an all-tri mesh? Don't need a face list if so.
+        bool            allQuads;       //!< Are verts part of an all-quad mesh? Don't need a face list if so.
+        Fsr::Uint32List vertsPerFace;   //!< Number of verts per face (empty if not a mesh-like prim)
 
 
         //! Resizes arrays.
@@ -110,8 +115,9 @@ class FSR_EXPORT PointBasedPrimitive : public FuserPrimitive
         void   resizePoints(size_t nPoints);
         void   resizeVerts(size_t nVerts);
 
-        //! Sets allQuads false if nPolyFaces > 0
-        void   resizePolyFaces(size_t nPolyFaces);
+        //! Sets allQuads/allTris to verts_per_face results if valid, otherwise false if nPolyFaces > 0
+        void   resizePolyFaces(size_t          nPolyFaces,
+                               const uint32_t* verts_per_face=NULL);
         //! Enable all-tris mode. Clears the vertsPerFace list and sets allTris = true.
         void   setAllTrisMode() { resizePolyFaces(0); allTris = true; allQuads = false; }
         //! Enable all-quads mode. Clears the vertsPerFace list and sets allQuads = true.
@@ -134,25 +140,22 @@ class FSR_EXPORT PointBasedPrimitive : public FuserPrimitive
         //-----------------------------------------------------------------
 
         //! Runs the GeoInfo's shader on all verts in the buffers, preparing them for rendering.
-        void applyVertexShader(DD::Image::PrimitiveContext* ptx,
-                               DD::Image::Scene*            render_scene,
-                               const Fsr::Mat4d&            local_xform=Fsr::Mat4d::getIdentity());
+        void applyVertexShader(const DDImageRenderSceneTessellateContext& rtess_ctx,
+                               const Fsr::Mat4d&                          local_xform=Fsr::Mat4d::getIdentity());
 
         //! Add vertex buffers to render scene.
-        void addToRenderScene(int                          mode,
-                              DD::Image::PrimitiveContext* ptx,
-                              DD::Image::Scene*            render_scene) const;
+        void addToRenderScene(DDImageRenderSceneTessellateContext& rtess_ctx,
+                              int                                  mode) const;
 
         /*! Insert a rTriangle into the Scene, copying vertex values from the buffers.
 
             This method assumes the scene transforms in ptx have already been fiddled
             with to concatenate the GeoInfo and Fsr::Primitive's transforms.
         */
-        void addRenderTriangleToScene(size_t                       v0,
-                                      size_t                       v1,
-                                      size_t                       v2,
-                                      DD::Image::PrimitiveContext* ptx,
-                                      DD::Image::Scene*            render_scene) const;
+        void addRenderTriangleToScene(size_t                               v0,
+                                      size_t                               v1,
+                                      size_t                               v2,
+                                      DDImageRenderSceneTessellateContext& rtess_ctx) const;
     };
 
 
@@ -171,12 +174,10 @@ class FSR_EXPORT PointBasedPrimitive : public FuserPrimitive
         calls to fill in a VertexBuffer.
         Base class does nothing.
     */
-    virtual void _drawWireframe(DD::Image::ViewerContext* vtx,
-                                const DD::Image::GeoInfo& info,
-                                VertexBuffers&            vbuffers) {}
-    virtual void _drawSolid(DD::Image::ViewerContext* vtx,
-                            const DD::Image::GeoInfo& info,
-                            VertexBuffers&            vbuffers) {}
+    virtual void _drawWireframe(const PrimitiveViewerContext& vtx,
+                                VertexBuffers&                vbuffers) {}
+    virtual void _drawSolid(const PrimitiveViewerContext& vtx,
+                            VertexBuffers&                vbuffers) {}
 
 
   public:
@@ -213,16 +214,19 @@ class FSR_EXPORT PointBasedPrimitive : public FuserPrimitive
     //--------------------------------------------------------------------------------- 
 
 
+    //! If this has a local point list, what's its size.
+    size_t numLocalPoints() const { return m_local_points.size(); }
+
     /*! Set the transform and pass in local-space point locations at once.
         If the transform is identity then local points values are ignored.
         Updates m_local_bbox (it will be empty if transform is identity.)
     */
-    void setTransformAndLocalPoints(const Fsr::Mat4d& xform,
-                                    size_t            num_local_points,
-                                    const Fsr::Vec3f* local_points);
+    void   setTransformAndLocalPoints(const Fsr::Mat4d& xform,
+                                      size_t            num_local_points,
+                                      const Fsr::Vec3f* local_points);
 
     //! Get the local point locations (untransformed by m_xform)
-    const Fsr::Vec3fList& pointLocations() const { return m_local_points; }
+    const   Fsr::Vec3fList& pointLocations() const { return m_local_points; }
 
 
     /*! Rebuild the bboxes. If force is true then the points are rescanned.
@@ -255,22 +259,19 @@ class FSR_EXPORT PointBasedPrimitive : public FuserPrimitive
 
 
     //! Fill in the VertexBuffers with the attribute values from this Primitive's attributes.
-    virtual void fillVertexBuffers(DD::Image::PrimitiveContext* ptx,
-                                   DD::Image::Scene*            render_scene,
-                                   VertexBuffers&               vbuffers) const;
+    virtual void fillVertexBuffers(const DDImageRenderSceneTessellateContext& rtess_ctx,
+                                   VertexBuffers&                             vbuffers) const;
 
 
     //! Run the material (if there is one) vertex_shader() on each vertex in the VertexBuffer.
-    virtual void applyVertexShader(DD::Image::PrimitiveContext* ptx,
-                                   DD::Image::Scene*            render_scene,
-                                   VertexBuffers&               vbuffers) const;
+    virtual void applyVertexShader(const DDImageRenderSceneTessellateContext& rtess_ctx,
+                                   VertexBuffers&                             vbuffers) const;
 
 
     //! Add vertex buffers to render scene.
-    virtual void addToRenderScene(int                          mode,
-                                  DD::Image::PrimitiveContext* ptx,
-                                  DD::Image::Scene*            render_scene,
-                                  VertexBuffers&               vbuffers) const;
+    virtual void addToRenderScene(const VertexBuffers&                 vbuffers,
+                                  DDImageRenderSceneTessellateContext& rtess_ctx,
+                                  int                                  mode) const;
 
 
   public:

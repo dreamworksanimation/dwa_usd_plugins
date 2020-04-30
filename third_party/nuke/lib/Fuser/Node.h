@@ -57,7 +57,7 @@ typedef std::vector<Fsr::Box3d> BBoxList;
 
 /*!
 */
-struct NodeFilterPattern
+struct FSR_EXPORT NodeFilterPattern
 {
     std::string     name_expr;      //!< Matches node name or path
     std::string     type_expr;      //!< Matches node type/class
@@ -77,7 +77,7 @@ typedef std::vector<NodeFilterPattern> NodeFilterPatternList;
 
 /*! Extend this as needed to add more description params.
 */
-struct NodeDescription
+struct FSR_EXPORT NodeDescription
 {
     std::string     path;       //!< Full scene path ex. '/Scene/Foo/Bar'
     std::string     type;       //!< Type/Class of node ex. 'Camera'
@@ -94,6 +94,22 @@ struct NodeDescription
 typedef std::vector<NodeDescription>           NodeDescriptionList;
 // Keep this ordered so that the paths are automatically sorted:
 typedef std::map<std::string, NodeDescription> NodeDescriptionMap;
+
+
+/*! A structure holding selection sets of node paths separated by type.
+    TODO: add other fundamental types here?
+*/
+struct FSR_EXPORT NodePathSelections
+{
+    std::set<std::string> objects;      //!< List of enabled object node paths
+    std::set<std::string> materials;    //!< List of enabled material node paths
+    std::set<std::string> lights;       //!< List of enabled light node paths
+
+    //!
+    void clear() { objects.clear(); materials.clear(); lights.clear(); }
+    //!
+    bool isEmpty() const { return (objects.empty() && materials.empty() && lights.empty()); }
+};
 
 
 //-------------------------------------------------------------------------
@@ -327,10 +343,7 @@ class FSR_EXPORT Node
     virtual bool willProduceChildren() const { return false; }
 
     //! Add a child node, this node take ownership of pointer.
-    //unsigned addChild(Node* node);
-    //!
-    //Node* addChild(const BBoxList& motion_bboxes);
-
+    unsigned addChild(Node* node);
     //!
     unsigned numChildren() const { return (unsigned)m_children.size(); }
     //!
@@ -368,6 +381,7 @@ class FSR_EXPORT Node
     */
     static ErrCtx executeImmediate(const char*             node_class,
                                    const ArgSet&           node_args,
+                                   Node*                   node_parent,
                                    const Fsr::NodeContext& execute_target_context,
                                    const char*             execute_target_name,
                                    void*                   execute_target=NULL,

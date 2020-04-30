@@ -22,7 +22,7 @@
 // language governing permissions and limitations under the Apache License.
 //
 
-/// @file Fuser/Mesh.h
+/// @file Fuser/MeshPrimitive.h
 ///
 /// @author Jonathan Egstad
 
@@ -36,6 +36,7 @@
 
 namespace Fsr {
 
+
 //----------------------------------------------------------------------------------
 
 /*!
@@ -44,8 +45,8 @@ class FSR_EXPORT MeshPrimitive : public Fsr::PointBasedPrimitive
 {
   protected:
     // These are stored in separate lists so they can be passed as separate contiguous arrays:
-    Fsr::UintList     m_num_verts_per_face;     //!< Number of verts per face
-    Fsr::UintList     m_vert_start_per_face;    //!< Starting vert index, per face
+    Fsr::Uint32List   m_num_verts_per_face;     //!< Number of verts per face
+    Fsr::Uint32List   m_vert_start_per_face;    //!< Starting vert index, per face
 
     //! Optional edge info, stored separately so the memory can be released when not required
     Fsr::HalfEdgeList m_edge_list;
@@ -61,12 +62,10 @@ class FSR_EXPORT MeshPrimitive : public Fsr::PointBasedPrimitive
     /*! These are called from the hijacked DD::Image::Primitive
         calls to fill in a VertexBuffer.
     */
-    /*virtual*/ void _drawWireframe(DD::Image::ViewerContext* vtx,
-                                    const DD::Image::GeoInfo& info,
-                                    VertexBuffers&            vbuffers);
-    /*virtual*/ void _drawSolid(DD::Image::ViewerContext* vtx,
-                                const DD::Image::GeoInfo& info,
-                                VertexBuffers&            vbuffers);
+    /*virtual*/ void _drawWireframe(const PrimitiveViewerContext& vtx,
+                                    VertexBuffers&                vbuffers);
+    /*virtual*/ void _drawSolid(const PrimitiveViewerContext& vtx,
+                                VertexBuffers&                vbuffers);
 
 
   public:
@@ -76,10 +75,11 @@ class FSR_EXPORT MeshPrimitive : public Fsr::PointBasedPrimitive
         src_mesh is the non-tessellated source mesh.
 
         TODO: this is temp standin until we combine VertexBuffers, MeshPrimitive, and MeshSample classes
+        TODO: replace use of this with the generic MeshTessellateContext version.
     */
     struct FSR_EXPORT TessellateContext
     {
-        static const char* name; // "MeshPrimitiveTessellate"
+        static const char* name; // "FsrMeshPrimitiveTessellate"
 
         const MeshPrimitive* mesh;
         VertexBuffers*       vbuffers;
@@ -91,23 +91,6 @@ class FSR_EXPORT MeshPrimitive : public Fsr::PointBasedPrimitive
         {
             //
         }
-    };
-
-
-    // TODO: this is temp standin until we combine VertexBuffers, MeshPrimitive, and MeshSample classes
-    struct FSR_EXPORT TessellateContext2
-    {
-        static const char* name; // "MeshPrimitiveTessellate2"
-
-        Fsr::UintList*  vertsPerFace;
-        Fsr::Vec3fList*    P;
-        Fsr::UintList*  Pidx;
-        Fsr::Vec3fList*    N;
-        Fsr::Vec4fList*   UV;
-        Fsr::Vec4fList*   Cf;
-        Fsr::Vec3fList*  VEL;
-
-        TessellateContext2() : vertsPerFace(NULL), P(NULL), Pidx(NULL), N(NULL), UV(NULL), Cf(NULL), VEL(NULL) {}
     };
 
 
@@ -123,15 +106,15 @@ class FSR_EXPORT MeshPrimitive : public Fsr::PointBasedPrimitive
     MeshPrimitive(const Fsr::ArgSet& args,
                   double             frame,
                   size_t             nVerts,
-                  const uint32_t*    vertIndices,
+                  const uint32_t*    faceVertPointIndices,
                   size_t             nFaces,
                   const uint32_t*    nVertsPerFace);
 
     //!
-    MeshPrimitive(const Fsr::ArgSet&   args,
-                  double               frame,
-                  const Fsr::UintList& vertIndices,
-                  const Fsr::UintList& nVertsPerFace);
+    MeshPrimitive(const Fsr::ArgSet&     args,
+                  double                 frame,
+                  const Fsr::Uint32List& faceVertPointIndices,
+                  const Fsr::Uint32List& nVertsPerFace);
 
     //! Must have a virtual destructor!
     virtual ~MeshPrimitive() {}
@@ -149,10 +132,10 @@ class FSR_EXPORT MeshPrimitive : public Fsr::PointBasedPrimitive
 
 
     //! Number of verts per face list.
-    const Fsr::UintList&     numVertsPerFace() const { return m_num_verts_per_face; }
+    const Fsr::Uint32List&   numVertsPerFace() const { return m_num_verts_per_face; }
 
     //! Starting vert index, per face list.
-    const Fsr::UintList&     vertStartPerFace() const { return m_vert_start_per_face; }
+    const Fsr::Uint32List&   vertStartPerFace() const { return m_vert_start_per_face; }
 
     //! HalfEdge list, one per vertex. Only filled if buildEdges() has been called.
     const Fsr::HalfEdgeList& edgeList()         const { return m_edge_list; }
@@ -163,26 +146,12 @@ class FSR_EXPORT MeshPrimitive : public Fsr::PointBasedPrimitive
         Call buildEdges() when finished adding faces to the mesh if you need them.
     */
     void     addFace(uint32_t        nFaceVerts,
-                     const uint32_t* vertIndices);
+                     const uint32_t* faceVertPointIndices);
     void     addFaces(size_t          nVerts,
-                      const uint32_t* vertIndices,
+                      const uint32_t* faceVertPointIndices,
                       size_t          nFaces,
                       const uint32_t* nVertsPerFace);
 
-
-    //!
-    static bool calcPointNormals(size_t            nPoints,
-                                 const Fsr::Vec3f* points,
-                                 size_t            nVerts,
-                                 const uint32_t*   vert_indices,
-                                 size_t            nFaces,
-                                 const uint32_t*   verts_per_face,
-                                 bool              all_tris,
-                                 bool              all_quads,
-                                 Fsr::Vec3fList&   point_normals);
-
-    //! Builds normals for the current VertexBuffers state.
-    static bool calcVertexBufferNormals(VertexBuffers& vbuffers);
 
     //!
     bool calcPointNormals(const DD::Image::PointList* point_list,
@@ -222,27 +191,27 @@ class FSR_EXPORT MeshPrimitive : public Fsr::PointBasedPrimitive
     //--------------------------------------------------------------------------
 
     //! Get the vertex indices for a face.
-    void getFaceVertices(uint32_t       face,
-                         Fsr::UintList& verts) const;
+    void getFaceVertices(uint32_t         face,
+                         Fsr::Uint32List& verts) const;
     //! Get the edge indices for a face. This is the same as getFaceVertices().
-    void getFaceEdges(uint32_t       face,
-                      Fsr::UintList& edges) const;
+    void getFaceEdges(uint32_t         face,
+                      Fsr::Uint32List& edges) const;
 
     //! Fill a vector with a list of edges (HalfEdge structures) for the given vertex.
-    void getVertexEdges(uint32_t       vert,
-                        Fsr::UintList& edges);
+    void getVertexEdges(uint32_t         vert,
+                        Fsr::Uint32List& edges);
 
     //! Fill a vector with a list of vertices that connect to the given vertex.
-    void getVertexConnectedVerts(uint32_t       vert,
-                                 Fsr::UintList& verts);
+    void getVertexConnectedVerts(uint32_t         vert,
+                                 Fsr::Uint32List& verts);
 
     //! Fill a vector with a list of faces that connect to the given vertex.
-    void getVertexConnectedFaces(uint32_t       vert,
-                                 Fsr::UintList& faces);
+    void getVertexConnectedFaces(uint32_t         vert,
+                                 Fsr::Uint32List& faces);
 
     //! Fill a vector with a list of faces that connect with the the given face.
-    void getFaceConnectedFaces(uint32_t       face,
-                               Fsr::UintList& connected_faces);
+    void getFaceConnectedFaces(uint32_t         face,
+                               Fsr::Uint32List& connected_faces);
 
 
   public:
@@ -258,9 +227,8 @@ class FSR_EXPORT MeshPrimitive : public Fsr::PointBasedPrimitive
     /*====================================================*/
 
     //! Fill in the VertexBuffers with the attribute values from this Primitive's GeoInfo attributes.
-    /*virtual*/ void fillVertexBuffers(DD::Image::PrimitiveContext* ptx,
-                                       DD::Image::Scene*            render_scene,
-                                       VertexBuffers&               vbuffers) const;
+    /*virtual*/ void fillVertexBuffers(const DDImageRenderSceneTessellateContext& rtess_ctx,
+                                       VertexBuffers&                             vbuffers) const;
 
 
   public:
@@ -400,7 +368,7 @@ MeshPrimitive::buildEdges(bool force)
     if (force || !haveEdges())
         HalfEdge::buildEdges(m_num_verts_per_face,
                              m_vert_start_per_face,
-                             reinterpret_cast<Fsr::UintList&>(vertex_),
+                             *((Fsr::Uint32List*)&vertex_),
                              m_edge_list);
 }
 
@@ -419,8 +387,8 @@ MeshPrimitive::get_face_vertices(int       face,
 }
 
 inline void
-MeshPrimitive::getFaceVertices(uint32_t       face,
-                               Fsr::UintList& verts) const
+MeshPrimitive::getFaceVertices(uint32_t         face,
+                               Fsr::Uint32List& verts) const
 {
 #if DEBUG
     if (face >= (uint32_t)numFaces())
@@ -434,11 +402,11 @@ MeshPrimitive::getFaceVertices(uint32_t       face,
     verts.resize(nFaceVerts);
     for (uint32_t i=0; i < nFaceVerts; ++i)
         verts[i] = vstart+i;
-
 }
+
 inline void
-MeshPrimitive::getFaceEdges(uint32_t       face,
-                            Fsr::UintList& edges) const
+MeshPrimitive::getFaceEdges(uint32_t         face,
+                            Fsr::Uint32List& edges) const
 {
     getFaceVertices(face, edges); // verts and edges are same indices
 }
@@ -457,8 +425,8 @@ MeshPrimitive::faceUsesVertex(unsigned face,
 }
 
 inline void
-MeshPrimitive::getVertexConnectedVerts(uint32_t       vert,
-                                       Fsr::UintList& verts)
+MeshPrimitive::getVertexConnectedVerts(uint32_t         vert,
+                                       Fsr::Uint32List& verts)
 {
 #if DEBUG
     assert(vert < (uint32_t)numVerts());
@@ -468,8 +436,8 @@ MeshPrimitive::getVertexConnectedVerts(uint32_t       vert,
 }
 
 inline void
-MeshPrimitive::getVertexConnectedFaces(uint32_t       vert,
-                                       Fsr::UintList& faces)
+MeshPrimitive::getVertexConnectedFaces(uint32_t         vert,
+                                       Fsr::Uint32List& faces)
 {
 #if DEBUG
     assert(vert < (uint32_t)numVerts());
@@ -479,8 +447,8 @@ MeshPrimitive::getVertexConnectedFaces(uint32_t       vert,
 }
 
 inline void
-MeshPrimitive::getVertexEdges(uint32_t       vert,
-                              Fsr::UintList& edges)
+MeshPrimitive::getVertexEdges(uint32_t         vert,
+                              Fsr::Uint32List& edges)
 {
 #if DEBUG
     assert(vert < (uint32_t)numVerts());
@@ -490,8 +458,8 @@ MeshPrimitive::getVertexEdges(uint32_t       vert,
 }
 
 inline void
-MeshPrimitive::getFaceConnectedFaces(uint32_t       face,
-                                     Fsr::UintList& connected_faces)
+MeshPrimitive::getFaceConnectedFaces(uint32_t         face,
+                                     Fsr::Uint32List& connected_faces)
 {
 #if DEBUG
     assert(face < (uint32_t)numFaces());
@@ -499,7 +467,7 @@ MeshPrimitive::getFaceConnectedFaces(uint32_t       face,
     connected_faces.clear(); // make sure it's empty
 
     // Find the list of half-edges for this face:
-    Fsr::UintList edges;
+    Fsr::Uint32List edges;
     getFaceEdges(face, edges);
     if (edges.size() == 0)
         return; // bail quick if no edges

@@ -28,6 +28,7 @@
 
 #include "Node.h"
 #include "ExecuteTargetContexts.h"
+#include "Primitive.h"
 
 #include <DDImage/plugins.h>
 #include <DDImage/Thread.h> // for Lock
@@ -48,9 +49,14 @@ namespace Fsr {
 /*static*/ const char* SceneArchiveContext::name    = "SceneArchive";
 /*static*/ const char* ScenePathFilters::name       = "ScenePathFilters";
 /*static*/ const char* SceneNodeDescriptions::name  = "SceneNodeDescriptions";
+/*static*/ const char* SelectedSceneNodePaths::name = "SelectedSceneNodePaths";
 
 /*static*/ const char* SceneOpImportContext::name   = "SceneOpImport";
 /*static*/ const char* PrimitiveViewerContext::name = "drawGL";
+
+/*static*/ const char* MeshTessellateContext::name  = "MeshTessellate"; // generic mesh version
+
+/*static*/ const char* FuserPrimitive::DDImageRenderSceneTessellateContext::name = "DDImageRenderSceneTessellate";
 
 //-----------------------------------------------------------------------------
 
@@ -183,29 +189,14 @@ bool Node::debug3()       const { return (debug() == NodeContext::DEBUG_3  ); }
 //-----------------------------------------------------------------------------
 
 
-#if 0
 /*! Add a child node, this node take ownership of pointer.
 */
 unsigned
 Node::addChild(Node* node)
 {
     m_children.push_back(node);
-    m_bbox_valid = false;
-    return m_children.size()-1;
+    return (unsigned)(m_children.size()-1);
 }
-
-
-/*!
-*/
-Node*
-Node::addChild(const BBoxList& motion_bboxes)
-{
-    Node* node = new Node(this, motion_bboxes);
-    assert(node);
-    addChild(node);
-    return node;
-}
-#endif
 
 
 //---------------------------------------------------------------------------------------
@@ -330,6 +321,8 @@ Node::_execute(const Fsr::NodeContext& target_context,
 
 /*! Creates, executes, then deletes a Fsr::Node instance.
 
+    node_parent is passed to the created node's builder method.
+
     If a ErrorNode was returned from the create() method its error state and message
     are used, otherwise an unspecific error message is formulated.
 
@@ -338,6 +331,7 @@ Node::_execute(const Fsr::NodeContext& target_context,
 /*static*/ Node::ErrCtx
 Node::executeImmediate(const char*             node_class,
                        const ArgSet&           node_args,
+                       Node*                   node_parent,
                        const Fsr::NodeContext& execute_target_context,
                        const char*             execute_target_name,
                        void*                   execute_target,
@@ -351,7 +345,7 @@ Node::executeImmediate(const char*             node_class,
 
     ErrCtx ret;
 
-    Node* node = Node::create(node_class, node_args, NULL/*parent-node*/);
+    Node* node = Node::create(node_class, node_args, node_parent);
     if (!node)
     {
         // Formulate a simple error message since there's a NULL node returned:
@@ -664,6 +658,8 @@ Node::Description::Description(const char*   node_class,
     m_node_class(node_class),
     builder_method(builder)
 {
+    //std::cout << "  Fsr::Node::Description::ctor(" << node_class << ")" << std::endl;
+
     // DD::Image::Description.h:
     //  const char* compiled;   // Date and DD_IMAGE_VERSION_LONG this was compiled for
     //  const char* plugin;     // Set to the plugin filename
@@ -728,7 +724,7 @@ Node::Description::find(const char* node_class)
         return NULL;  // just in case...
     const std::string dso_name(node_class);
 
-    //std::cout << "Fsr::Node::Description::find(" << dso_name << ") dso_map=" << DsoMap::dsoMap() << std::endl;
+    //std::cout << "Fsr::Node::Description::find('" << dso_name << "') dso_map=" << DsoMap::dsoMap() << std::endl;
 
     // Search for existing dso using the base fuserNodeClass() name
     // (ie UsdIO, UsdaIO, MeshPrim, etc)
@@ -742,12 +738,24 @@ Node::Description::find(const char* node_class)
     plugin_name += dso_name;
 
     // Use the stock DDImage plugin load method, which supports .tcl redirectors.
-    // It's important
+    // It's important because we're relying on .tcl directors to handle aliasing
+    // in several IO plugins:
+    // NOTE: DD::Image::plugin_load() says that it returns NULL if a plugin is
+    // not loaded but that does not appear to be the case. It returns the path
+    // to the plugin it *attempted* to load, but only by checking plugin_error()
+    // can we tell if dlopen() failed and what was returned in dlerror()
     const char* plugin_path = DD::Image::plugin_load(plugin_name.c_str());
     if (!plugin_path || !plugin_path[0])
     {
         std::cerr << "Fsr::Node::Description::find('" << plugin_name << "') ";
-        std::cerr << "error: plugin not loaded, dlopen error '" << dlerror() << "'" << std::endl;
+        std::cerr << "error: plugin not found." << std::endl;
+        return NULL;  // plugin not found!
+    }
+    // Was there a dlerror() on load?
+    if (DD::Image::plugin_error())
+    {
+        std::cerr << "Fsr::Node::Description::find('" << plugin_name << "') ";
+        std::cerr << "error: plugin not loaded, dlopen error '" << DD::Image::plugin_error() << "'" << std::endl;
         return NULL;  // plugin not found!
     }
 

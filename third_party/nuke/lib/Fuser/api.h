@@ -29,7 +29,17 @@
 #ifndef FSR_EXPORT_H
 #define FSR_EXPORT_H
 
-// This should be set sutomatically by the build system:
+// Define our own version symbols.  This is not currently managed by the Make system,
+// so this needs to be kept up to date manually... (which it rarely is)
+// TODO: have the release num be incremented automatically
+#define FuserVersion           "0.2.1"
+#define FuserVersionInteger    00201
+#define FuserVersionMajorNum   0
+#define FuserVersionMinorNum   2
+#define FuserVersionReleaseNum 1
+
+
+// This should be set automatically by the build system:
 #define IS_STATIC_LIB 1
 
 // Static or dynamic?
@@ -66,15 +76,6 @@
 #endif
 
 
-// Define our own version symbols.  This is not currently managed by the Make system,
-// so this needs to be kept up to date manually... (which it rarely is)
-// TODO: have the release num be incremented automatically
-#define FuserVersion           "0.1.3"
-#define FuserVersionInteger    00103
-#define FuserVersionMajorNum   0
-#define FuserVersionMinorNum   1
-#define FuserVersionReleaseNum 3
-
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------
 //
@@ -94,6 +95,23 @@ namespace Fsr {
 
 typedef uint64_t HashValue;                 //!< Matches type in DD::Image::Hash
 const HashValue defaultHashValue = ~0ull;   //!< Matches default ctor value from DD::Image::Hash (ie 0xffffffffffffffff)
+
+
+//! Clamps v to the range a...b.
+template<typename T>
+inline T clamp(T v, T a, T b) { return (v < a)?a:((v > b)?b:v); }
+
+//! Clamps v to the range 0...1.
+template<typename T>
+inline T clamp(T v) { return (v < (T)0)?(T)0:((v > (T)1)?(T)1:v); }
+
+//! Linear-interpolate v0 to v1 at t, where t is in the range 0..1.
+template<typename T, typename S>
+inline T lerp(T v0, T v1, S t) { return (v0*((T)1 - T(t)) + v1*T(t)); }
+
+//! Linear-interpolate v0 to v1 at t, where t is in the range 0..1, and invt is (1-t).
+template<typename T, typename S>
+inline T lerp(T v0, T v1, S t, S invt) { return (v0*T(invt) + v1*T(t)); }
 
 } // namespace Fsr
 
@@ -215,8 +233,13 @@ inline std::string
 stringTrimLeft(const std::string& str,
                const char*        trim=" \t\r\n")
 {
-    const size_t a = str.find_first_not_of(trim);
-    return (a == std::string::npos) ? std::string("") : str.substr(a, std::string::npos);
+    if (!str.empty())
+    {
+        const size_t a = str.find_first_not_of(trim);
+        if (a != std::string::npos)
+            return str.substr(a, std::string::npos);
+    }
+    return std::string("");
 }
 
 /*! Trim off characters from right side of string.
@@ -226,8 +249,13 @@ inline std::string
 stringTrimRight(const std::string& str,
                 const char*        trim=" \t\r\n")
 {
-    const size_t a = str.find_last_not_of(trim);
-    return str.substr(0, a+1);
+    if (!str.empty())
+    {
+        const size_t a = str.find_last_not_of(trim);
+        if (a != std::string::npos)
+            return str.substr(0, a+1);
+    }
+    return std::string("");
 }
 
 /*! Trim off characters from both sides of string.

@@ -26,7 +26,7 @@
 ///
 /// @author Jonathan Egstad
 ///
-/// @brief Fuser plugin to load USD files (.usd)
+/// @brief Fuser plugin to load USD files (.usd) and optionally Alembic (.abc) files
 
 #include "FuserUsdNode.h"
 
@@ -38,19 +38,10 @@
 #include "FuserUsdXform.h"
 
 #ifdef DWA_INTERNAL_BUILD
+#  include "../environmentDWA.hpp" // to configure default plugin paths
 #  include "FuserUsdStereoRigDWA.h"
 #endif
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wconversion"
-
-#  include <pxr/base/plug/registry.h>
-
-#  pragma GCC diagnostic pop
-#endif
 
 #include <sys/stat.h>
 
@@ -69,7 +60,8 @@ namespace Fsr {
 
     TODO: move to separate file, finish implementation
 */
-class FuserUsdDefaultNode : public FuserUsdNode
+class FuserUsdDefaultNode : public FuserUsdNode,
+                            public Fsr::Node
 {
   protected:
     Pxr::UsdPrim m_prim;
@@ -84,7 +76,8 @@ class FuserUsdDefaultNode : public FuserUsdNode
                         const Pxr::UsdPrim&        prim,
                         const Fsr::ArgSet&         args,
                         Fsr::Node*                 parent) :
-        FuserUsdNode(stage, args, parent),
+        FuserUsdNode(stage),
+        Fsr::Node(args, parent),
         m_prim(prim)
     {
         const bool scene_debug = args.getBool(  Arg::Scene::read_debug, false);
@@ -130,7 +123,8 @@ class FuserUsdDefaultNode : public FuserUsdNode
 
     TODO: move to separate file, finish implementation
 */
-class FuserUsdGeomScope : public FuserUsdNode
+class FuserUsdGeomScope : public FuserUsdNode,
+                          public Fsr::Node
 {
   protected:
     Pxr::UsdGeomScope   m_scope_schema;
@@ -145,7 +139,8 @@ class FuserUsdGeomScope : public FuserUsdNode
                       const Pxr::UsdPrim&        scope_prim,
                       const Fsr::ArgSet&         args,
                       Fsr::Node*                 parent) :
-        FuserUsdNode(stage, args, parent)
+        FuserUsdNode(stage),
+        Fsr::Node(args, parent)
     {
         //std::cout << "    FuserUsdGeomScope::ctor(" << this << "): scope'" << scope_prim.GetPath() << "'" << std::endl;
 
@@ -203,7 +198,8 @@ class FuserUsdGeomScope : public FuserUsdNode
 
     TODO: move to separate file, finish implementation
 */
-class FuserUsdGeoOpaquePayload : public FuserUsdNode
+class FuserUsdGeoOpaquePayload : public FuserUsdNode,
+                                 public Fsr::Node
 {
   protected:
     Pxr::UsdPrim m_prim;
@@ -218,7 +214,8 @@ class FuserUsdGeoOpaquePayload : public FuserUsdNode
                              const Pxr::UsdPrim&        prim,
                              const Fsr::ArgSet&         args,
                              Fsr::Node*                 parent) :
-        FuserUsdNode(stage, args, parent),
+        FuserUsdNode(stage),
+        Fsr::Node(args, parent),
         m_prim(prim)
     {
         std::cout << "  FuserUsdGeoOpaquePayload::ctor(" << this << ") type[" << prim.GetTypeName() << "] '" << prim.GetPath() << "'" << std::endl;
@@ -252,9 +249,9 @@ class FuserUsdGeoOpaquePayload : public FuserUsdNode
 
 */
 static
-Fsr::Node* buildNode(const char*        builder_class,
-                     const Fsr::ArgSet& args,
-                     Fsr::Node*         parent)
+Fsr::Node* buildUsdNode(const char*        builder_class,
+                        const Fsr::ArgSet& args,
+                        Fsr::Node*         parent)
 {
     // The build directive helps inform this routine what kind of Fuser::Node to
     // create. Some are executed immediately and discarded like FuserUsdArchiveIO
@@ -277,15 +274,20 @@ Fsr::Node* buildNode(const char*        builder_class,
     const bool         debug_archive      = args.getBool(Arg::Scene::file_archive_debug, false);//args.getBool("UsdIO:debug_archive_loading", false);
 
 
-    if (debug_archive || scene_debug)
-        std::cout << "  fsrUsdIO::buildNode('" << build_directive << "') args=[ " << args << " ]" << std::endl;
+    if (debug_archive || scene_debug || geo_debug)
+    {
+        static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
+        std::cout << "  fsrUsdIO::buildUsdNode('" << build_directive << "') args=[ " << args << " ]";
+        std::cout << ", parent=" << parent << std::endl;
+    }
 
     // We really need a build_directive to do anything meaningful.
     if (build_directive.empty())
     {
         return new Fsr::ErrorNode(builder_class,
                                   -2,
-                                  "fsrUsdIO::buildNode('%s'): "
+                                  "fsrUsdIO::buildUsdNode('%s'): "
                                   "warning, missing directive to perform build operation, "
                                   "this is likely a plugin coding error.",
                                   scene_file.c_str());
@@ -495,51 +497,13 @@ Fsr::Node* buildNode(const char*        builder_class,
         //    std::cout << "      '" << *it << "'" << std::endl;
 
         const Pxr::UsdPrim prim = stage->GetPrimAtPath(Pxr::SdfPath(scene_node_path));
-        if (!prim.IsValid())
-        {
-            if (geo_debug)
-            {
-                static std::mutex print_lock; print_lock.lock();
-                std::cout << "      '" << scene_node_path << "': IsValid=" << prim.IsValid() << " - skipping" << std::endl;
-                print_lock.unlock();
-            }
-            return new Fsr::ErrorNode(builder_class, -2, "could not load null prim '%s'", scene_node_path.c_str());
-        }
 
-        if (!prim.IsLoaded())
-        {
-            if (scene_debug)
-            {
-                static std::mutex print_lock; print_lock.lock();
-                std::cout << "      prim.IsLoaded=" << prim.IsLoaded() << " ... LOADING NOW!" << std::endl;
-                print_lock.unlock();
-            }
-
-            // Load the prim here. LoadWithoutDescendents means load the parents of
-            // this node and the node itself, but not any children:
-            prim.Load(Pxr::UsdLoadWithoutDescendants/*Pxr::UsdLoadWithDescendants*/);
-            if (!prim.IsLoaded())
-                return new Fsr::ErrorNode(builder_class,
-                                          -2,
-                                          "prim '%s' could not be Loaded() for an unknown USD reason.",
-                                          prim.GetName().GetString().c_str());
-        }
-
-        if (!prim.IsDefined())
-        {
-            // Hard to debug unless this prints an error:
-            if (1)//(scene_debug)
-            {
-                std::cerr << "fsrUsdIO::buildNode('" << scene_node_path << "'): <Scene> ";
-                std::cerr << "error, could not load undefined USD prim type <" << prim.GetTypeName() << ">";
-                std::cerr << ", ignored" << std::endl;
-            }
-            return new Fsr::ErrorNode(builder_class,
-                                      -2,
-                                      "could not load undefined prim '%s' of type '%s'",
-                                      scene_node_path.c_str(),
-                                      prim.GetTypeName().GetString().c_str());
-        }
+        Fsr::ErrorNode* error = FuserUsdNode::isLoadedAndUseablePrim(builder_class,
+                                                                     prim,
+                                                                     scene_node_path.c_str()/*prim_load_path*/,
+                                                                     scene_debug/*debug_loading*/);
+        if (error)
+            return error;
 
         //-----------------------------------------------------------------------
         //
@@ -593,11 +557,14 @@ Fsr::Node* buildNode(const char*        builder_class,
         // This should catch any non-specific types that have a transform we can extract:
         else if (prim.IsA<Pxr::UsdGeomXformable>()   ) return new FuserUsdXform(stage, prim, args, parent);
 
-        // No idea how to handle this prim type. Print a warning in debug mode
-        // and return a wrapper node rather than erroring:
+        // No idea how to handle this prim type.
+        // Print a warning in debug mode and return a null node rather than
+        // erroring:
         if (scene_debug)
         {
-            std::cerr << "fsrUsdIO::buildNode('" << scene_node_path << "'): ";
+            static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
+            std::cerr << "fsrUsdIO::buildUsdNode('" << scene_node_path << "'): ";
             std::cerr << "warning, ignoring unsupported USD prim of type '" << prim.GetTypeName() << "'";
             std::cerr << std::endl;
         }
@@ -634,79 +601,12 @@ Fsr::Node* buildNode(const char*        builder_class,
         //------------------------------------------------------------------
 
         const Pxr::UsdPrim prim = stage->GetPrimAtPath(Pxr::SdfPath(scene_node_path));
-        if (!prim.IsValid())
-        {
-            if (geo_debug)
-            {
-                static std::mutex print_lock; print_lock.lock();
-                std::cout << "      '" << scene_node_path << "': IsValid=" << prim.IsValid() << " - skipping" << std::endl;
-                print_lock.unlock();
-            }
-
-            return new Fsr::ErrorNode(builder_class, -2, "could not load null prim '%s'", scene_node_path.c_str());
-        }
-
-        if (!prim.IsLoaded())
-        {
-            if (geo_debug)
-            {
-                static std::mutex print_lock; print_lock.lock();
-                std::cout << "      prim.IsLoaded=" << prim.IsLoaded() << " ... LOADING NOW!" << std::endl;
-                print_lock.unlock();
-            }
-
-            // Load the prim here. LoadWithoutDescendents means load the parents of
-            // this node and the node itself, but not any children:
-            prim.Load(Pxr::UsdLoadWithoutDescendants/*Pxr::UsdLoadWithDescendants*/);
-            if (!prim.IsLoaded())
-                return new Fsr::ErrorNode(builder_class,
-                                          -2,
-                                          "prim '%s' could not be Loaded() for an unknown USD reason.",
-                                          prim.GetName().GetString().c_str());
-        }
-
-        if (geo_debug)
-        {
-            // Lock to make the output print cleanly:
-            static std::mutex print_lock; print_lock.lock();
-
-            std::cout << "      '" << scene_node_path << "': ";
-            if (prim.GetTypeName() != "")
-                std::cout << ", type='" << prim.GetTypeName() << "'";
-            std::cout << ", HasPayload=" << prim.HasPayload();
-            std::cout << ", IsActive=" << prim.IsActive();
-            std::cout << ", IsDefined=" << prim.IsDefined();
-            std::cout << ", IsAbstract=" << prim.IsAbstract();
-            std::cout << ", isModel=" << prim.IsModel();
-            std::cout << ", isGprim=" << prim.IsA<Pxr::UsdGeomGprim>();
-            std::cout << ", isScope=" << prim.IsA<Pxr::UsdGeomScope>();
-
-            Pxr::UsdVariantSets variantSets = prim.GetVariantSets();
-            std::vector<std::string> names; variantSets.GetNames(&names);
-            if (names.size() > 0)
-            {
-                std::cout << ", variants[";
-                for (size_t i=0; i < names.size(); ++i)
-                {
-                    const std::string& variantName = names[i];
-                    std::string variantValue =
-                            variantSets.GetVariantSet(
-                                    variantName).GetVariantSelection();
-                    std::cout << " " << variantName << ":" << variantValue;
-                }
-                std::cout << " ]";
-            }
-            FuserUsdNode::printPrimAttributes(" attribs", prim, false/*verbose*/, std::cout);
-            std::cout << std::endl;
-
-            print_lock.unlock();
-        }
-
-        if (!prim.IsDefined())
-        {
-            // Don't skip these types, just add a default placeholder node:
-            return new FuserUsdDefaultNode(stage, prim, args, parent);
-        }
+        Fsr::ErrorNode* error = FuserUsdNode::isLoadedAndUseablePrim(builder_class,
+                                                                     prim,
+                                                                     scene_node_path.c_str()/*prim_load_path*/,
+                                                                     geo_debug/*debug_loading*/);
+        if (error)
+            return error;
 
         // Geometry payloads may have a bounds hints - try to get them:
         bool has_extents_hint = false;
@@ -789,24 +689,38 @@ Fsr::Node* buildNode(const char*        builder_class,
         // This should catch any non-specific types that have a transform we can extract:
         else if (prim.IsA<Pxr::UsdGeomXformable>()   ) return new FuserUsdXform(stage, prim, args, parent);
 
+#if 1
+        // UsdShade handling - Shaders are *always* underneath a UsdShadeMaterial so instead
+        // of creating just a single selected node create the entire network tree:
+        //else if (prim.IsA<Pxr::UsdShadeMaterial>()   ) return new FuserUsdShadeMaterialNode(stage, prim, args, parent);
+#else
         // UsdShadeNodeGraph subclasses - check for subclasses first, then the base class:
+        else if (prim.IsA<Pxr::UsdShadeMaterial>()   ) return new FuserUsdShadeMaterialNode(stage, prim, args, parent);
         else if (prim.IsA<Pxr::UsdShadeNodeGraph>()  ) return new FuserUsdShadeNodeGraphNode(stage, prim, args, parent);
 
         // UsdShadeShader subclasses - check for subclasses first, then the base class:
-        else if (prim.IsA<Pxr::UsdShadeShader>()     ) return new FuserUsdShaderNode(stage, prim, args, parent);
+        else if (prim.IsA<Pxr::UsdShadeShader>()     ) return new FuserUsdShadeShaderNode(stage, prim, args, parent);
+#endif
 
 
+        //-----------------------------------------------------------------------
         // If it's an abstract UsdPrim we can do some more checking to figure out
         // what's up and if we can handle it:
+        //
+
+        // For now just return a Default node:
         if      (prim.GetTypeName() == ""          ) return new FuserUsdDefaultNode(stage, prim, args, parent);
         else if (prim.GetTypeName() == "GeomSubset") return new FuserUsdGeomSubsetNode(stage, prim, args, parent);
 
 
-        // No idea how to handle this prim type. Print a warning in debug mode
-        // and return a wrapper node rather than erroring:
+        // No idea how to handle this prim type.
+        // Print a warning in debug mode and return a null node rather than
+        // erroring:
         if (geo_debug)
         {
-            std::cerr << "fsrUsdIO::buildNode('" << scene_node_path << "'): ";
+            static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
+            std::cerr << "fsrUsdIO::buildUsdNode('" << scene_node_path << "'): ";
             std::cerr << "warning, ignoring unsupported USD prim of type '" << prim.GetTypeName() << "'";
             std::cerr << std::endl;
         }
@@ -821,7 +735,7 @@ Fsr::Node* buildNode(const char*        builder_class,
                               "unrecognized build directive '%s'. This is likely a plugin coding error.",
                               build_directive.c_str());
 
-} // buildNode()
+} // buildUsdNode()
 
 
 } // namespace Fsr
@@ -833,10 +747,13 @@ Fsr::Node* buildNode(const char*        builder_class,
 
 // Add the file naming variants as separate descriptions to match the
 // tcl redirector files:
-static const Fsr::Node::Description  registerUsdIONode( "UsdIO", Fsr::buildNode/*ctor*/);
-static const Fsr::Node::Description registerUsdaIONode("UsdaIO", Fsr::buildNode/*ctor*/);
-static const Fsr::Node::Description registerUsdcIONode("UsdcIO", Fsr::buildNode/*ctor*/);
-static const Fsr::Node::Description registerUsdzIONode("UsdzIO", Fsr::buildNode/*ctor*/);
+static const Fsr::Node::Description  registerUsdIONode( "UsdIO", Fsr::buildUsdNode/*ctor*/);
+static const Fsr::Node::Description registerUsdaIONode("UsdaIO", Fsr::buildUsdNode/*ctor*/);
+static const Fsr::Node::Description registerUsdcIONode("UsdcIO", Fsr::buildUsdNode/*ctor*/);
+static const Fsr::Node::Description registerUsdzIONode("UsdzIO", Fsr::buildUsdNode/*ctor*/);
+
+// Plus one to redirect Alembic reading through the USD lib:
+static const Fsr::Node::Description  registerAbcIONode("AbcIO",  Fsr::buildUsdNode/*ctor*/);
 
 
 // end of fsrUsdIO.cpp

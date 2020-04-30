@@ -83,7 +83,7 @@ extern FSR_EXPORT const char* axis_directions[];
     a02, a12, a22, a32,
     a03, a13, a23, a33
 */
-template <typename T>
+template<typename T>
 class FSR_EXPORT Mat4
 {
   public:
@@ -102,6 +102,9 @@ class FSR_EXPORT Mat4
     Mat4() {}
 
     //! Copy constructor.
+    template<typename S>
+    explicit Mat4(const Mat4<S>& b);
+
     Mat4(const T array[16]) { memcpy(&a00, array, 16*sizeof(T)); }
 
     //! Initialize to identity matrix with a constant in the diagonal.
@@ -161,15 +164,15 @@ class FSR_EXPORT Mat4
     //! Return col 0, 1 or 2 as a Vec3.
     template<typename S>
     void    getXAxis(Vec3<S>& v) const { v.x = S(a00); v.y = S(a10); v.z = S(a20); }
-    Vec3<T> getXAxis()              const { return Vec3<T>(a00, a10, a20); }
+    Vec3<T> getXAxis()           const { return Vec3<T>(a00, a10, a20); }
 
     template<typename S>
     void    getYAxis(Vec3<S>& v) const { v.x = S(a01); v.y = S(a11); v.z = S(a21); }
-    Vec3<T> getYAxis()              const { return Vec3<T>(a01, a11, a21); }
+    Vec3<T> getYAxis()           const { return Vec3<T>(a01, a11, a21); }
 
     template<typename S>
     void    getZAxis(Vec3<S>& v) const { v.x = S(a02); v.y = S(a12); v.z = S(a22); }
-    Vec3<T> getZAxis()              const { return Vec3<T>(a02, a12, a22); }
+    Vec3<T> getZAxis()           const { return Vec3<T>(a02, a12, a22); }
 
     //! Assign col 0, 1, or 2 from a Vec3.
     template<typename S>
@@ -178,15 +181,19 @@ class FSR_EXPORT Mat4
     void    setYAxis(const Vec3<S>& v) { a01 = T(v.x); a11 = T(v.y); a21 = T(v.z); }
     template<typename S>
     void    setZAxis(const Vec3<S>& v) { a02 = T(v.x); a12 = T(v.y); a22 = T(v.z); }
+    template<typename S>
+    void    setXYZAxis(const Vec3<S>& x,
+                       const Vec3<S>& y,
+                       const Vec3<S>& z) { setXAxis(x); setYAxis(y); setZAxis(z); }
 
     //! Return the translations or scale of the matrix as a Vec3.
     template<typename S>
     void    getTranslation(Vec3<S>& v) const { v.x = S(a03); v.y = S(a13); v.z = S(a23); }
-    Vec3<T> getTranslation()              const { return Vec3<T>(a03, a13, a23); }
+    Vec3<T> getTranslation()           const { return Vec3<T>(a03, a13, a23); }
 
     template<typename S>
     void    getScaleAxis(Vec3<S>& v) const { v.x = S(a00); v.y = S(a11); v.z = S(a22); }
-    Vec3<T> getScaleAxis()              const { return Vec3<T>(a00, a11, a22); }
+    Vec3<T> getScaleAxis()           const { return Vec3<T>(a00, a11, a22); }
 
     /*! Extract the rotation angles (in radians) from the matrix.
         The matrix is assumed to have no shear or non-uniform scaling.
@@ -229,13 +236,17 @@ class FSR_EXPORT Mat4
     void               toDDImage(DD::Image::Matrix4& out) const;
     DD::Image::Matrix4 asDDImage() const;
 
+    //! Add this to a DD::Image::Hash object, for DD::Image compatibility convenience.
+    void append(DD::Image::Hash& hash) const;
+
+
     /*---------------------------*/
     /*      Multiplication       */
     /*---------------------------*/
     Mat4  operator *  (const Mat4& b) const;
     Mat4& operator *= (const Mat4& b);
     // For DD::Image compatibility convenience:
-    Mat4  operator *  (const DD::Image::Matrix4& b) const { return (*this *= Mat4<T>(b)); }
+    Mat4  operator *  (const DD::Image::Matrix4& b) const { return (*this * Mat4<T>(b)); }
     Mat4& operator *= (const DD::Image::Matrix4& b) { *this *= Mat4<T>(b); return *this; }
 
     /*---------------------------*/
@@ -268,6 +279,9 @@ class FSR_EXPORT Mat4
     Vec4<S>  operator * (const Vec4<S>& v) const { Vec4<S> o; return transform(v, o); }
     template<typename S>
     Vec4<S>  transform(const Vec4<S>& v) const { return *this * v; }
+    template<typename S>
+    Vec4<S>  transform(const Vec3<S>& v,
+                       S              w) const { return *this * Vec4<S>(v, w); }
 
     //! Transform a vector with no translation applied.
     template<typename S>
@@ -292,6 +306,7 @@ class FSR_EXPORT Mat4
     DD::Image::Vector3       transform(const DD::Image::Vector3& v) const;
     DD::Image::Vector3    vecTransform(const DD::Image::Vector3& v) const;
     DD::Image::Vector3 normalTransform(const DD::Image::Vector3& v) const;
+
 
     /*---------------------------*/
     /*         Inversion         */
@@ -355,6 +370,15 @@ class FSR_EXPORT Mat4
     /*---------------------------*/
     /*     Rotation Assignment   */
     /*---------------------------*/
+    //! Set the contents to xyz rotation angles (in radians).
+    Mat4& setToRotations(Fsr::RotationOrder order,
+                         T                  radian_x_angle,
+                         T                  radian_y_angle,
+                         T                  radian_z_angle);
+    template<typename S>
+    Mat4& setToRotations(Fsr::RotationOrder order,
+                         const Vec3<S>&     v) { return setToRotations(order, T(v.x), T(v.y), T(v.z)); }
+
     //! Set the contents to an angle (in radians) around the X axis.
     Mat4& setToRotationX(T radian_angle);
     //! Set the contents to an angle (in radians) around the Y axis.
@@ -448,17 +472,18 @@ class FSR_EXPORT Mat4
     //! Add a constant to all the diagonal elements.
     void addDiagonal(T t);
 
+
 #if 1
-    //! Build orientation rotations.
+    /*! Calculate ZXY rotations to align with direction vector.
+        Return true if rotations have been affected.
+    */
     template<typename S>
-    static void lookAt(const Vec3<S>& eye,
-                       const Vec3<S>& interest,
-                       AxisDirection  align_axis,
-                       bool           do_rx,
-                       bool           do_ry,
-                       bool           do_rz,
-                       T              lookat_strength,
-                       Vec3<S>&       rotations_out);
+    static bool vectorToRotations(const Vec3<S>&     dir_vec,
+                                  Fsr::AxisDirection align_axis,
+                                  bool               do_rx,
+                                  bool               do_ry,
+                                  bool               do_rz,
+                                  Vec3<S>&           radian_rotations);
 #else
     //! Construct a transform to orient -Z towards the interest point.
     void lookAt(const Vec4<T>& eye,
@@ -471,9 +496,10 @@ class FSR_EXPORT Mat4
         This only interpolates position and rotation, and rotation is only valid
         within a certain range since it's a linear interpolation of the xyz axes!
     */
+    template<typename S>
     void interpolate(const Mat4<T>& m0,
                      const Mat4<T>& m1,
-                     T              t);
+                     S              t);
 
     /*---------------------------------------------------------------------*/
     /*          Component extraction (decomposition) routines.             */
@@ -514,8 +540,8 @@ class FSR_EXPORT Mat4
   private:
     static Mat4<T> m_identity;
 
-    template <typename R, typename S> struct isSameType       { enum {value = 0}; };
-    template <typename R>             struct isSameType<R, R> { enum {value = 1}; };
+    template<typename R, typename S> struct isSameType       { enum {value = 0}; };
+    template<typename R>             struct isSameType<R, R> { enum {value = 1}; };
 };
 
 
@@ -525,6 +551,24 @@ class FSR_EXPORT Mat4
 /*----------------------------------*/
 typedef Mat4<float>  Mat4f;
 typedef Mat4<double> Mat4d;
+
+
+
+/*----------------------------------*/
+/*        Static operations         */
+/*----------------------------------*/
+
+
+//! Print out components to a stream.
+template<typename T>
+std::ostream& operator << (std::ostream& o, const Mat4<T>& m);
+
+
+//! Linear-interpolate between two Mat4s at t, where t=0..1.
+template<typename T, typename S>
+Mat4<T> lerp(const Mat4<T>& m0,
+             const Mat4<T>& m1,
+             S              t);
 
 
 
@@ -553,6 +597,23 @@ inline std::ostream& operator << (std::ostream& o, const Mat4<T>& m)
 
 template<typename T>
 /*static*/ Mat4<T> Mat4<T>::m_identity = Mat4<T>(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1);
+
+
+template<typename T>
+template<typename S>
+inline
+Mat4<T>::Mat4(const Mat4<S>& b)
+{
+    if (isSameType<T,S>::value)
+        memcpy(&a00, &b.a00, 16*sizeof(T));
+    else
+    {
+        const S* mIn = &b.a00;
+        T* mOut = &a00;
+        for (int i=0; i < 16; ++i)
+            *mOut++ = T(*mIn++);
+    }
+}
 
 //-----------------------------------------------------------
 
@@ -601,6 +662,13 @@ Mat4<T>::asDDImage() const
     DD::Image::Matrix4 m;
     this->toDDImage(m);
     return m;
+}
+
+template<typename T>
+inline void
+Mat4<T>::append(DD::Image::Hash& hash) const
+{
+    hash.append(this->array(), 16*sizeof(T));
 }
 
 //-----------------------------------------------------------
@@ -835,6 +903,7 @@ Mat4<T>::normalTransform(const DD::Image::Vector3& v) const
     return *reinterpret_cast<DD::Image::Vector3*>(&fout);
 }
 
+
 //-----------------------------------------------------------
 
 template<typename T>
@@ -1015,6 +1084,17 @@ Mat4<T>::rotate(Fsr::RotationOrder order,
             this->rotateX(radian_x_angle); this->rotateY(radian_y_angle); this->rotateZ(radian_z_angle); break;
     }
 }
+template<typename T>
+inline Mat4<T>&
+Mat4<T>::setToRotations(Fsr::RotationOrder order,
+                        T                  radian_x_angle,
+                        T                  radian_y_angle,
+                        T                  radian_z_angle)
+{
+    setToIdentity();
+    rotate(order, radian_x_angle, radian_y_angle, radian_z_angle);
+    return *this;
+}
 
 template<typename T>
 inline void
@@ -1081,8 +1161,8 @@ Mat4<T>::scale(T s)
 template<typename T>
 inline void
 Mat4<T>::scale(T x,
-                  T y,
-                  T z)
+               T y,
+               T z)
 {
     a00 *= x; a01 *= y; a02 *= z;
     a10 *= x; a11 *= y; a12 *= z;
@@ -1220,70 +1300,47 @@ Mat4<T>::addDiagonal(T d)
 
 template<typename T>
 template<typename S>
-/*static*/ inline void
-Mat4<T>::lookAt(const Vec3<S>& eye,
-                const Vec3<S>& interest,
-                AxisDirection  align_axis,
-                bool           do_rx,
-                bool           do_ry,
-                bool           do_rz,
-                T              lookat_strength,
-                Vec3<S>&       rotations_out)
+/*static*/ inline bool
+Mat4<T>::vectorToRotations(const Vec3<S>&     dir_vec,
+                           Fsr::AxisDirection align_axis,
+                           bool               do_rx,
+                           bool               do_ry,
+                           bool               do_rz,
+                           Vec3<S>&           rotations)
 {
 #if 1
-    Vec3<S> dir(interest - eye);
-    const S len = dir.normalize();
-    if (lookat_strength <= (S)0 || len < std::numeric_limits<S>::epsilon())
-        return; // Zero-length vector so no rotation possible
-
-    Vec3<S> look((S)0);
-
+    rotations.set((S)0);
+    S d;
     // Calculate the primary rotation first then the second, and which rotation axis we
     // change is determined by the align axis:
-    S d;
     switch (align_axis)
     {
         case AXIS_X_MINUS:
-            if (do_ry) { look.y = ::atan2(-dir.z, dir.x); d = std::sqrt(dir.z*dir.z + dir.x*dir.x); } else d =  dir.x;
-            if (do_rz) { look.z = ::atan2( dir.y, d); }
+            if (do_ry) { rotations.y = ::atan2(-dir_vec.z, dir_vec.x); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.x*dir_vec.x); } else d =  dir_vec.x;
+            if (do_rz) { rotations.z = ::atan2( dir_vec.y, d); }
             break;
         case AXIS_X_PLUS:
-            if (do_ry) { look.y = ::atan2( dir.z,-dir.x); d = std::sqrt(dir.z*dir.z + dir.x*dir.x); } else d = -dir.x;
-            if (do_rz) { look.z =-::atan2( dir.y, d); }
+            if (do_ry) { rotations.y = ::atan2( dir_vec.z,-dir_vec.x); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.x*dir_vec.x); } else d = -dir_vec.x;
+            if (do_rz) { rotations.z =-::atan2( dir_vec.y, d); }
             break;
         //
         case AXIS_Y_MINUS:
-            if (do_rx) { look.x = ::atan2( dir.z, dir.y); d = std::sqrt(dir.z*dir.z + dir.y*dir.y); } else d =  dir.y;
-            if (do_rz) { look.z =-::atan2( dir.x, d); }
+            if (do_rx) { rotations.x = ::atan2( dir_vec.z, dir_vec.y); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.y*dir_vec.y); } else d =  dir_vec.y;
+            if (do_rz) { rotations.z =-::atan2( dir_vec.x, d); }
             break;
         case AXIS_Y_PLUS:
-            if (do_rx) { look.x = ::atan2(-dir.z,-dir.y); d = std::sqrt(dir.z*dir.z + dir.y*dir.y); } else d = -dir.y;
-            if (do_rz) { look.z = ::atan2( dir.x, d); }
+            if (do_rx) { rotations.x = ::atan2(-dir_vec.z,-dir_vec.y); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.y*dir_vec.y); } else d = -dir_vec.y;
+            if (do_rz) { rotations.z = ::atan2( dir_vec.x, d); }
             break;
         //
         case AXIS_Z_MINUS:
-            if (do_ry) { look.y = ::atan2( dir.x, dir.z); d = std::sqrt(dir.x*dir.x + dir.z*dir.z); } else d =  dir.z;
-            if (do_rx) { look.x =-::atan2( dir.y, d); }
+            if (do_ry) { rotations.y = ::atan2( dir_vec.x, dir_vec.z); d = std::sqrt(dir_vec.x*dir_vec.x + dir_vec.z*dir_vec.z); } else d =  dir_vec.z;
+            if (do_rx) { rotations.x =-::atan2( dir_vec.y, d); }
             break;
         case AXIS_Z_PLUS:
-            if (do_ry) { look.y = ::atan2(-dir.x,-dir.z); d = std::sqrt(dir.x*dir.x + dir.z*dir.z); } else d = -dir.z;
-            if (do_rx) { look.x = ::atan2( dir.y, d); }
+            if (do_ry) { rotations.y = ::atan2(-dir_vec.x,-dir_vec.z); d = std::sqrt(dir_vec.x*dir_vec.x + dir_vec.z*dir_vec.z); } else d = -dir_vec.z;
+            if (do_rx) { rotations.x = ::atan2( dir_vec.y, d); }
             break;
-    }
-
-    if (lookat_strength < (S)1)
-    {
-        // Interpolate between parent rotation and look rotation:
-        if (do_rx) rotations_out.x = ::lerp(rotations_out.x, look.x, lookat_strength);
-        if (do_ry) rotations_out.y = ::lerp(rotations_out.y, look.y, lookat_strength);
-        if (do_rz) rotations_out.z = ::lerp(rotations_out.z, look.z, lookat_strength);
-    }
-    else
-    {
-        // Max rotations:
-        if (do_rx) rotations_out.x = look.x;
-        if (do_ry) rotations_out.y = look.y;
-        if (do_rz) rotations_out.z = look.z;
     }
 #else
     // Rotate the Y vector around the roll value:
@@ -1316,6 +1373,8 @@ Mat4<T>::lookAt(const Vec3<S>& eye,
     m.a30 = (T)0; m.a31 = (T)0; m.a32 = (T)0; m.a33 = (T)1;
     *this *= m;
 #endif
+
+    return true;
 }
 
 /*! Faster implementation from Graphics Gems I, page 785 -
@@ -1356,117 +1415,124 @@ Mat4<T>::transform(const Box3<S>& bbox) const
     The matrix is assumed to have no shear or non-uniform scaling.
     Adapted from ilmbase ImathMatrixAlgo.
 */
-template <class T>
+template<typename T>
 inline void
 Mat4<T>::getRotations(Fsr::RotationOrder order,
                       T&                 radian_rX,
                       T&                 radian_rY,
                       T&                 radian_rZ) const
 {
-    // Normalize the local x, y and z axes to remove scaling:
-    Vec3<T> i(a00, a01, a02); i.normalize();
-    Vec3<T> j(a10, a11, a12); j.normalize();
-    Vec3<T> k(a20, a21, a22); k.normalize();
-    Mat4<T> m(i.x, i.y, i.z, 0, 
-              j.x, j.y, j.z, 0, 
-              k.x, k.y, k.z, 0, 
-              0,   0,   0,   1);
+    // Normalize the local X, Y and Z axes to remove any scaling:
+    Vec3<T> X = getXAxis(); X.normalize();
+    Vec3<T> Y = getYAxis(); Y.normalize();
+    Vec3<T> Z = getZAxis(); Z.normalize();
     switch (order)
     {
         case XYZ_ORDER:
         {
-            // Extract the first angle:
-            radian_rX = ::atan2(m.a21, m.a22); // Yz,Zz
-
-            // Remove the first rotation so that the remaining rotations
-            // are only around two axes, and gimbal lock cannot occur:
-            m.rotateX(-radian_rX);
-
-            // Extract the other two angles:
-            const T cosy = std::sqrt(m.a00*m.a00 + m.a10*m.a10); // Xx,Xy
-            radian_rY = ::atan2(-m.a20,  cosy); // Xz
-            radian_rZ = ::atan2(-m.a01, m.a11); // Yx,Yy
+            const double ang0 = (X.x*X.x + X.y*X.y);
+            radian_rY = ::atan2(-X.z, std::sqrt(ang0));
+            // Do we have gimbal lock?
+            if (std::fabs(ang0) <= std::numeric_limits<T>::epsilon())
+            {
+                radian_rX = ::atan2(-Z.y, Y.y);
+                radian_rZ = 0.0; // gimbal lock
+            }
+            else
+            {
+                radian_rX = ::atan2(Y.z, Z.z);
+                radian_rZ = ::atan2(X.y, X.x);
+            }
         }
         break;
 
         case XZY_ORDER:
         {
-            // Extract the first angle:
-            radian_rX = -::atan2(m.a12, m.a11); // Zy,Yy
-
-            // Remove the first rotation so that the remaining rotations
-            // are only around two axes, and gimbal lock cannot occur:
-            m.rotateX(-radian_rX);
-
-            // Extract the other two angles:
-            const T cosz = std::sqrt(m.a00*m.a00 + m.a20*m.a20); // Xx,Xz
-            radian_rZ = ::atan2( m.a10,  cosz); // Xy
-            radian_rY = ::atan2(-m.a20, m.a00); // Xz,Xx
+            const double ang0 = (Z.y*Z.y + Y.y*Y.y);
+            radian_rZ = ::atan2(X.y, std::sqrt(ang0));
+            // Do we have gimbal lock?
+            if (std::fabs(ang0) <= std::numeric_limits<T>::epsilon())
+            {
+                radian_rX = ::atan2(Y.z, Z.z);
+                radian_rY = 0.0; // gimbal lock
+            }
+            else
+            {
+                radian_rX = ::atan2(-Z.y, Y.y);
+                radian_rY = ::atan2(-X.z, X.x);
+            }
         }
         break;
-
+        //-----------------------------------------------------------------------------
         case YXZ_ORDER:
         {
-            // Extract the first angle:
-            radian_rY = -::atan2(m.a20, m.a22); // Xz,Zz
-
-            // Remove the first rotation so that the remaining rotations
-            // are only around two axes, and gimbal lock cannot occur:
-            m.rotateY(-radian_rY);
-
-            // Extract the other two angles:
-            const T cosx = std::sqrt(m.a01*m.a01 + m.a11*m.a11); // Yx,Yy
-            radian_rX = ::atan2( m.a21,  cosx); // Yz
-            radian_rZ = ::atan2(-m.a01, m.a11); // Yx,Yy
+            const double ang0 = (Y.x*Y.x + Y.y*Y.y);
+            radian_rX = ::atan2(Y.z, std::sqrt(ang0));
+            // Do we have gimbal lock?
+            if (std::fabs(ang0) <= std::numeric_limits<T>::epsilon())
+            {
+                radian_rY = ::atan2(Z.x, X.x);
+                radian_rZ = 0.0; // gimbal lock
+            }
+            else
+            {
+                radian_rY = ::atan2(-X.z, Z.z);
+                radian_rZ = ::atan2(-Y.x, Y.y);
+            }
         }
         break;
 
         case YZX_ORDER:
         {
-            // Extract the first angle:
-            radian_rY = ::atan2(m.a02, m.a00); // Zx,Xx
-
-            // Remove the first rotation so that the remaining rotations
-            // are only around two axes, and gimbal lock cannot occur:
-            m.rotateY(-radian_rY);
-
-            // Extract the other two angles:
-            const T cosx = std::sqrt(m.a11*m.a11 + m.a21*m.a21); // Yy,Yz
-            radian_rZ = ::atan2(-m.a01,  cosx); // Yx
-            radian_rX = ::atan2( m.a21, m.a11); // Yz,Yy
+            const double ang0 = (Z.x*Z.x + X.x*X.x);
+            radian_rZ = ::atan2(-Y.x, std::sqrt(ang0));
+            // Do we have gimbal lock?
+            if (std::fabs(ang0) <= std::numeric_limits<T>::epsilon())
+            {
+                radian_rX = 0.0; // gimbal lock
+                radian_rY = ::atan2(-X.z, Z.z);
+            }
+            else
+            {
+                radian_rX = ::atan2(Y.z, Y.y);
+                radian_rY = ::atan2(Z.x, X.x);
+            }
         }
         break;
-
+        //-----------------------------------------------------------------------------
         case ZXY_ORDER:
+        default:
         {
-            // Extract the first angle:
-            radian_rZ = ::atan2(m.a10, m.a11); // Xy,Yy
-
-            // Remove the first rotation so that the remaining rotations
-            // are only around two axes, and gimbal lock cannot occur:
-            m.rotateZ(-radian_rZ);
-
-            // Extract the other two angles:
-            const T cosx = std::sqrt(m.a02*m.a02 + m.a22*m.a22); // Zx,Zz
-            radian_rX = ::atan2(-m.a12,  cosx); // Zy
-            radian_rY = ::atan2( m.a02, m.a22); // Zx,Zz
+            const double ang0 = (X.y*X.y + Y.y*Y.y);
+            radian_rX = ::atan2(-Z.y, std::sqrt(ang0));
+            // Do we have gimbal lock?
+            if (std::fabs(ang0) <= std::numeric_limits<T>::epsilon())
+            {
+                radian_rY = 0.0; // gimbal lock
+                radian_rZ = ::atan2(-Y.x, X.x);
+            }
+            else
+            {
+                radian_rY = ::atan2(Z.x, Z.z);
+                radian_rZ = ::atan2(X.y, Y.y);
+            }
         }
         break;
 
         case ZYX_ORDER:
-        default:
         {
-            // Extract the first angle:
-            radian_rZ = -::atan2(m.a01, m.a00); // Yx,Xx
-
-            // Remove the first rotation so that the remaining rotations
-            // are only around two axes, and gimbal lock cannot occur:
-            m.rotateZ(-radian_rZ);
-
-            // Extract the other two angles:
-            const T cosy = std::sqrt(m.a12*m.a12 + m.a22*m.a22); // Zy,Zz
-            radian_rY = -::atan2(-m.a02,  cosy); // Zx
-            radian_rX = -::atan2(-m.a21, m.a11); // Yz,Yy
+            const double ang0 = (Y.x*Y.x + X.x*X.x);
+            radian_rY = ::atan2(Z.x, std::sqrt(ang0));
+            if (std::fabs(ang0) <= std::numeric_limits<T>::epsilon())
+            {
+                radian_rX = 0.0; // gimbal lock
+                radian_rZ = ::atan2(X.y, Y.y);
+            }
+            else
+            {
+                radian_rX = ::atan2(-Z.y, Z.z);
+                radian_rZ = ::atan2(-Y.x, X.x);
+            }
         }
         break;
 
@@ -1484,7 +1550,7 @@ Mat4<T>::getRotations(Fsr::RotationOrder order) const
 
 /*! Adapted from ilmbase ImathMatrixAlgo.
 */
-template <class T> 
+template<typename T> 
 inline bool
 checkForZeroScaleInRow(const T&       scale, 
                        const Vec3<T>& row)
@@ -1504,7 +1570,7 @@ checkForZeroScaleInRow(const T&       scale,
 
 /*! Adapted from ilmbase ImathMatrixAlgo.
 */
-template <class T>
+template<typename T>
 inline bool
 Mat4<T>::extractAndRemoveScalingAndShear(Vec3<T>& scale,
                                          Vec3<T>& shear)
@@ -1516,6 +1582,9 @@ Mat4<T>::extractAndRemoveScalingAndShear(Vec3<T>& scale,
     row[0] = Vec3<T>(a00, a01, a02);
     row[1] = Vec3<T>(a10, a11, a12);
     row[2] = Vec3<T>(a20, a21, a22);
+
+    scale.set(1.0);
+    shear.set(0.0);
 
     // Find largest amplitude value in rows:
     T maxVal = (T)0;
@@ -1542,7 +1611,7 @@ Mat4<T>::extractAndRemoveScalingAndShear(Vec3<T>& scale,
         }
     }
 
-    // Compute X scale factor. 
+    // Compute X scale factor.
     scale.x = row[0].length();
     if (!checkForZeroScaleInRow(scale.x, row[0]))
         return false;
@@ -1616,7 +1685,7 @@ Mat4<T>::extractAndRemoveScalingAndShear(Vec3<T>& scale,
 
 /*! Adapted from ilmbase ImathMatrixAlgo.
 */
-template <class T>
+template<typename T>
 inline bool
 Mat4<T>::extractScalingAndShear(Vec3<T>& scale,
                                 Vec3<T>& shear) const
@@ -1631,7 +1700,7 @@ Mat4<T>::extractScalingAndShear(Vec3<T>& scale,
 
 /*! Adapted from ilmbase ImathMatrixAlgo.
 */
-template <class T>
+template<typename T>
 inline bool 
 Mat4<T>::extractSHRT(Vec3<T>&           scaling,
                      Vec3<T>&           shearing,
@@ -1651,41 +1720,50 @@ Mat4<T>::extractSHRT(Vec3<T>&           scaling,
     return true;
 }
 
-/*! Interpolate two matrices at 't' which is between 0.0 and 1.0.
+
+/* Interpolate two matrices at 't' which is between 0.0 and 1.0.
 
     TODO: this should use quaternions instead...or decompose the
     matrices into trans/rot/scale and interpolate those...?
 */
-template <class T>
-inline void
-Mat4<T>::interpolate(const Mat4<T>& m0,
-                     const Mat4<T>& m1,
-                     T                 t)
+template<typename T, typename S>
+inline Mat4<T>
+lerp(const Mat4<T>& m0,
+     const Mat4<T>& m1,
+     S              t)
 {
-    if (t <= (T)0)
-        *this = m0;
-    else if (t >= (T)1)
-        *this = m1;
+    if (t <= (S)0)
+        return m0;
+    else if (t >= (S)1)
+        return m1;
     else
     {
-        const T inv_t = ((T)1 - t);
+        const T Tt = T(t);
+        const T inv_Tt = ((T)1 - Tt);
 
-        Vec3<T> axisX(m0.getXAxis()*inv_t + m1.getXAxis()*t);
-        Vec3<T> axisY(m0.getYAxis()*inv_t + m1.getYAxis()*t);
-        Vec3<T> axisZ(m0.getZAxis()*inv_t + m1.getZAxis()*t);
+        Vec3<T> axisX(m0.getXAxis()*inv_Tt + m1.getXAxis()*Tt);
+        Vec3<T> axisY(m0.getYAxis()*inv_Tt + m1.getYAxis()*Tt);
+        Vec3<T> axisZ(m0.getZAxis()*inv_Tt + m1.getZAxis()*Tt);
 
         // Normalizing the axes returns their lengths to use as scales:
         const Vec3<T> axes_scale(axisX.normalize(),
                                  axisY.normalize(),
                                  axisZ.normalize()); // Use slow normalize as length may be > 1.0
 
-        this->setToTranslation(m0.getTranslation()*inv_t + m1.getTranslation()*t);
-        this->setXAxis(axisX);
-        this->setYAxis(axisY);
-        this->setZAxis(axisZ);
-        this->scale(axes_scale);
+        Mat4<T> mlerp;
+        mlerp.setToTranslation(m0.getTranslation()*inv_Tt + m1.getTranslation()*Tt);
+        mlerp.setXYZAxis(axisX, axisY, axisZ);
+        mlerp.scale(axes_scale);
+        return mlerp;
     }
 }
+
+template<typename T>
+template<typename S>
+inline void
+Mat4<T>::interpolate(const Mat4<T>& m0,
+                     const Mat4<T>& m1,
+                     S              t) { *this = lerp(m0, m1, t); }
 
 } //namespace Fsr
 

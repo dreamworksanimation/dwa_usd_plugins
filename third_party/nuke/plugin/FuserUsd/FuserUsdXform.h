@@ -30,18 +30,7 @@
 #ifndef FuserUsdXform_h
 #define FuserUsdXform_h
 
-#include "FuserUsdNode.h"
-
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wconversion"
-
-#  include <pxr/usd/usdGeom/xform.h>
-
-#  pragma GCC diagnostic pop
-#endif
+#include "FuserUsdXformableNode.h"
 
 
 namespace Fsr {
@@ -52,7 +41,7 @@ namespace Fsr {
 
 /*! UsdGeomXformable node wrapper.
 */
-class FuserUsdXform : public FuserUsdNode
+class FuserUsdXform : public FuserUsdXformableNode
 {
   protected:
     Pxr::UsdGeomXformable   m_xformable_schema;     // Store the Xformable (vs. Xform) for subclasses to access

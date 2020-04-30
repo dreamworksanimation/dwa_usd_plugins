@@ -28,15 +28,22 @@
 
 
 #include "FuserUsdMesh.h"
+#include "FuserUsdShader.h"
 
 #include <Fuser/ArgConstants.h> // for attrib names constants
 #include <Fuser/ExecuteTargetContexts.h>
 #include <Fuser/MeshPrimitive.h>
+#include <Fuser/MeshUtils.h>
 #include <Fuser/NodePrimitive.h>
+#include <Fuser/GeoReader.h> // for getAttributeMapping()
 
 #include <DDImage/GeoOp.h>
 #include <DDImage/gl.h>
 #include <DDImage/noise.h> // for prandom
+
+#ifdef DWA_INTERNAL_BUILD
+#  include <zprender/RenderContext.h> // for GenerateRenderPrimsContext
+#endif
 
 
 #if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
@@ -50,6 +57,8 @@
 #  include <pxr/base/gf/matrix3d.h>
 #  include <pxr/base/gf/matrix4d.h>
 #  include <pxr/base/gf/vec3d.h>
+
+#  include <pxr/usd/usdShade/materialBindingAPI.h>
 
 #  pragma GCC diagnostic pop
 #endif
@@ -128,12 +137,31 @@ FuserUsdMesh::FuserUsdMesh(const Pxr::UsdStageRefPtr& stage,
         // TODO: implement this routine!
 #endif
 
+
+        // Find material binding and create a child Fuser Node for it:
+        //   ex.  'rel material:binding = </Root/Looks/dart_board_mat_inst>'
+
+        const Pxr::UsdShadeMaterialBindingAPI bindingAPI(usd_mesh);
+        m_material_binding = bindingAPI.ComputeBoundMaterial();
+        if (m_material_binding)
+        {
+            // This Fuser Node takes responsibility for deleting the child pointer:
+            //const Pxr::UsdPrim mat_prim = stage->GetPrimAtPath(m_material_binding.GetPath());
+            //m_children.push_back(new FuserUsdShadeMaterialNode(stage, mat_prim, args, this));
+        }
+
         if (debug())
         {
             static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
 
             std::cout << "  FuserUsdMesh::ctor('" << mesh_prim.GetPath() << "')";
             std::cout << " topo_variance=" << m_topology_variance;
+
+            std::cout << ", material=";
+            if (m_material_binding)
+                std::cout << "'" << m_material_binding.GetPath() << "'";
+            else
+                std::cout << "<none>";
 
             const Pxr::UsdAttribute purpose_attrib = usd_mesh.GetPurposeAttr();
             if (purpose_attrib)
@@ -151,6 +179,8 @@ FuserUsdMesh::FuserUsdMesh(const Pxr::UsdStageRefPtr& stage,
     {
         if (debug())
         {
+            static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
             std::cerr << "    FuserUsdMesh::ctor(" << this << "): ";
             std::cerr << "warning, node '" << mesh_prim.GetPath() << "'(" << mesh_prim.GetTypeName() << ") ";
             std::cerr << "is invalid or wrong type";
@@ -165,7 +195,11 @@ FuserUsdMesh::FuserUsdMesh(const Pxr::UsdStageRefPtr& stage,
 FuserUsdMesh::~FuserUsdMesh()
 {
     if (debug())
+    {
+        static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
         std::cout << "  FuserUsdMesh::dtor(" << this << ") '" << m_ptbased_schema.GetPath() << "'" << std::endl;
+    }
 }
 
 
@@ -189,6 +223,47 @@ int getSubdLevel(const std::string&      level)
 }
 
 
+//-------------------------------------------------------------------------------
+
+
+/*! Search for the first attrib mappings match to the nuke attrib name, or the
+    default name if not found.
+*/
+Pxr::TfToken
+FuserUsdMesh::getPrimvarForNukeAttrib(const char* nuke_attrib_name,
+                                      const char* default_primvar_name)
+{
+    if (!nuke_attrib_name || !nuke_attrib_name[0])
+        return Pxr::TfToken();
+
+    const Pxr::UsdGeomMesh usd_mesh(m_ptbased_schema.GetPrim());
+    std::vector<std::string> mappings;
+    if (FuserGeoReader::getNukeToFileAttribMappings(nuke_attrib_name, m_nuke_to_primvar, mappings))
+    {
+        // Search for the first match, likely in alphabetical order:
+        for (size_t i=0; i < mappings.size(); ++i)
+        {
+            const Pxr::TfToken primvar_name(mappings[i]);
+            if (usd_mesh.HasPrimvar(primvar_name))
+                return Pxr::TfToken(primvar_name);
+        }
+    }
+
+    // No mapping, does the default primvar name exist?
+    if (!default_primvar_name || !default_primvar_name[0])
+        return Pxr::TfToken();
+
+    const Pxr::TfToken primvar_name(default_primvar_name);
+    if (usd_mesh.HasPrimvar(primvar_name))
+        return primvar_name;
+
+    return Pxr::TfToken(); // no primvar found
+}
+
+
+//-------------------------------------------------------------------------------
+
+
 /*! Called before execution to allow node to update local data from args.
 */
 /*virtual*/ void
@@ -197,18 +272,38 @@ FuserUsdMesh::_validateState(const Fsr::NodeContext& args,
 {
     // Get the time value up to date:
     FuserUsdXform::_validateState(args, for_real);
+    //std::cout << "FuserUsdMesh::_validateState(" << this << ") '" << m_ptbased_schema.GetPath() << "'" << std::endl;
 
     // Bind the USD mesh object:
     const Pxr::UsdGeomMesh usd_mesh(m_ptbased_schema.GetPrim());
 
     const double time = getDouble("frame");//(getDouble("frame") / getDouble("fps"));
 
-    // These args are defined in the GeoReader plugin:
-    //m_attribute_mappings     = getString("reader:attribute_mappings"    );
+    // These args are defined in the GeoReader plugin - support them:
     //m_translate_render_parts =   getBool("reader:translate_render_parts");
     //m_points_render_mode     = getString("reader:points_render_mode"    );
-    //m_use_geometry_colors    =   getBool("reader:use_geometry_colors"   );
 
+
+    //---------------------------------------------------------------------------
+    // Get attibute name mappings from 'reader:attribute_mappings' arg.
+    //      ex string. 'color=Cf Cd=Cf UV=uv pscale=size  subd::hi=subd_hi subd::display=subd_display'
+    m_primvar_to_nuke.clear();
+    m_nuke_to_primvar.clear();
+    FuserGeoReader::buildAttributeMappings(getString("reader:attribute_mappings").c_str(),
+                                           m_primvar_to_nuke,
+                                           m_nuke_to_primvar);
+
+    // Search for the attrib mappings for the known default Nuke attribs:
+    m_uv_primvar_name         = getPrimvarForNukeAttrib(Fsr::NukeGeo::uvs_attrib_name,       "st"/*dflt*/);
+    m_normals_primvar_name    = getPrimvarForNukeAttrib(Fsr::NukeGeo::normals_attrib_name,   "normals"/*dflt*/);
+    m_colors_primvar_name     = getPrimvarForNukeAttrib(Fsr::NukeGeo::colors_attrib_name,    "displayColors"/*dflt*/);
+    m_opacities_primvar_name  = getPrimvarForNukeAttrib(Fsr::NukeGeo::opacities_attrib_name, "displayOpacities"/*dflt*/);
+    m_velocities_primvar_name = getPrimvarForNukeAttrib(Fsr::NukeGeo::velocity_attrib_name,  "velocities"/*dflt*/);
+    //std::cout << "  m_uv_primvar_name='" << m_uv_primvar_name << "'" << std::endl;
+    //std::cout << "  m_normals_primvar_name='" << m_normals_primvar_name << "'" << std::endl;
+    //std::cout << "  m_colors_primvar_name='" << m_colors_primvar_name << "'" << std::endl;
+    //std::cout << "  m_opacities_primvar_name='" << m_opacities_primvar_name << "'" << std::endl;
+    //std::cout << "  m_velocities_primvar_name='" << m_velocities_primvar_name << "'" << std::endl;
 
     //---------------------------------------------------------------------------
     // Translate subd options usually set by the GeoReader on import.
@@ -216,6 +311,8 @@ FuserUsdMesh::_validateState(const Fsr::NodeContext& args,
     // exist yet:
     const std::string& reader_subd_import_level  = getString("reader:subd_import_level");
     const std::string& reader_subd_render_level  = getString("reader:subd_render_level");
+    const bool         reader_subd_force_enable  = getBool(  "reader:subd_force_enable",  false);
+    const bool         reader_subd_snap_to_limit = getBool(  "reader:subd_snap_to_limit", false);
     const std::string& reader_subd_tessellator   = getString("reader:subd_tessellator" );
     if (!reader_subd_import_level.empty() && !hasArg("subd:current_level"))
     {
@@ -230,42 +327,49 @@ FuserUsdMesh::_validateState(const Fsr::NodeContext& args,
         if (render_level > 0)
             setInt("subd:render_level", render_level);
     }
+    //
+    if (reader_subd_force_enable && !hasArg("subd:force_enable"))
+        setBool("subd:force_enable", reader_subd_force_enable);
+    //
+    if (reader_subd_snap_to_limit && !hasArg("subd:snap_to_limit"))
+        setBool("subd:snap_to_limit", reader_subd_snap_to_limit);
+    //
     if (!reader_subd_tessellator.empty() && !hasArg("subd:tessellator"))
         setString("subd:tessellator", reader_subd_tessellator);
 
-
-    //---------------------------------------------------------------------------
-    // Get bbox (Extents):
+    // Get bbox (Extents). Caution - this attribute can sometimes be empty
+    // if not explicitly authored!
     m_local_bbox.setToEmptyState();
     const Pxr::UsdAttribute extents_attrib = usd_mesh.GetExtentAttr();
     if (extents_attrib)
     {
         Pxr::VtArray<Pxr::GfVec3f> extent;
         extents_attrib.Get(&extent, time);
-        assert(extent.size() == 2); // should always be 2 vec3s
-        const Pxr::GfVec3f& min = extent[0];
-        m_local_bbox.setMin(min[0], min[1], min[2]);
-        const Pxr::GfVec3f& max = extent[1];
-        m_local_bbox.setMax(max[0], max[1], max[2]);
+        // Handle empty extents:
+        if (extent.size() == 2)
+        {
+            const Pxr::GfVec3f& min = extent[0];
+            m_local_bbox.setMin(min[0], min[1], min[2]);
+            const Pxr::GfVec3f& max = extent[1];
+            m_local_bbox.setMax(max[0], max[1], max[2]);
+        }
     }
 
-    //---------------------------------------------------------------------------
     m_xform = getConcatenatedMatrixAtPrim(getPrim(), time);
     m_have_xform = !m_xform.isIdentity();
-
 
     if (debug())
     {
         static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
 
+        std::cout << "--------------------------------------------------------------------------------------" << std::endl;
         std::cout << "FuserUsdMesh::_validateState(" << this << "): for_real=" << for_real << ", time=" << time;
         std::cout << ", m_local_bbox=" << m_local_bbox;
         std::cout << ", m_have_xform=" << m_have_xform;
         if (m_have_xform)
             std::cout << ", xform" << m_xform;
-        //if (debugAttribs())
-        //    std::cout << ", arg[" << m_args << "]";
         std::cout << std::endl;
+        std::cout << "  args[" << m_args << "]" << std::endl;
     }
 
 }
@@ -344,35 +448,35 @@ FuserUsdMesh::_execute(const Fsr::NodeContext& target_context,
         return 0; // success
 
     }
-    else if (strcmp(target_name, Fsr::FuserPrimitive::RenderSceneTessellateContext::name)==0)
+    else if (strcmp(target_name, Fsr::FuserPrimitive::DDImageRenderSceneTessellateContext::name)==0)
     {
-        Fsr::FuserPrimitive::RenderSceneTessellateContext* rtess_ctx =
-            reinterpret_cast<Fsr::FuserPrimitive::RenderSceneTessellateContext*>(target);
+        Fsr::FuserPrimitive::DDImageRenderSceneTessellateContext* rtess_ctx =
+            reinterpret_cast<Fsr::FuserPrimitive::DDImageRenderSceneTessellateContext*>(target);
 
-        if (!rtess_ctx || !rtess_ctx->primitive || !rtess_ctx->scene || !rtess_ctx->ptx)
+        if (!rtess_ctx || !rtess_ctx->primitive || !rtess_ctx->render_scene || !rtess_ctx->ptx)
             return error("null objects in target '%s'. This is likely a coding error", target_name);
 
-        tessellateToRenderScene(rtess_ctx->ptx, rtess_ctx->scene);
+        tessellateToRenderScene(*rtess_ctx);
 
         return 0; // success
     }
 #ifdef DWA_INTERNAL_BUILD
-    else if (strcmp(target_name, dw::nuke::GenerateRenderPrimsContext::name)==0)
+    else if (strcmp(target_name, zpr::GenerateRenderPrimsContext::name)==0)
     {
-        dw::nuke::GenerateRenderPrimsContext* rprim_ctx =
-            reinterpret_cast<dw::nuke::GenerateRenderPrimsContext*>(target);
+        zpr::GenerateRenderPrimsContext* rprim_ctx =
+            reinterpret_cast<zpr::GenerateRenderPrimsContext*>(target);
 
-        if (!rprim_ctx || !rprim_ctx->rtx || !rprim_ctx->otx || !rprim_ctx->stx || !rprim_ctx->ptx_list)
+        if (!rprim_ctx || !rprim_ctx->rtx || !rprim_ctx->stx)
             return error("null objects in target '%s'. This is likely a coding error", target_name);
 
-        generateRenderPrims(*rprim_ctx->rtx, rprim_ctx->otx, rprim_ctx->stx, *rprim_ctx->ptx_list);
+        generateRenderPrims(*rprim_ctx->rtx, *rprim_ctx->stx);
 
         return 0; // success
     }
 #endif
 
     // Let base class handle unrecognized targets:
-    return FuserUsdNode::_execute(target_context, target_name, target, src0, src1);
+    return FuserUsdXform::_execute(target_context, target_name, target, src0, src1);
 }
 
 
@@ -486,6 +590,7 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
         if (!points_attrib)
         {
             //TF_WARN( "Invalid point attribute" );
+            std::cout << "Invalid point attribute" << std::endl;
             return false; // need points!
         }
 
@@ -496,6 +601,7 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
         if (mesh.nPoints == 0)
         {
             //TF_WARN( "Invalid point count" );
+            std::cout << "Invalid point count" << std::endl;
             return false; // need points!
         }
 
@@ -510,6 +616,7 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
         if (!verts_per_face_attrib)
         {
             //TF_WARN( "Invalid vertex count attribute" );
+            std::cout << "Invalid vertex count attribute" << std::endl;
             return false; // need vert counts!
         }
 
@@ -520,6 +627,7 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
         if (mesh.nFaces == 0)
         {
             //TF_WARN( "Invalid vertex count attribute" );
+            std::cout << "Invalid vertex count attribute" << std::endl;
             return false; // need vert counts!
         }
 
@@ -530,25 +638,27 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
 
     // Get vert indices:
     {
-        const Pxr::UsdAttribute vert_indices_attrib = usd_mesh.GetFaceVertexIndicesAttr();
-        if (!vert_indices_attrib)
+        const Pxr::UsdAttribute facevert_point_indices_attrib = usd_mesh.GetFaceVertexIndicesAttr();
+        if (!facevert_point_indices_attrib)
         {
             //TF_WARN( "Invalid face vertex indicies attribute for %s.",
             //         usd_mesh.GetPrim().GetPath().GetText());
+            std::cout << "Invalid face vertex indicies attribute" << std::endl;
             return false; // need faces!
         }
 
-        Pxr::VtIntArray usd_vert_indices;
-        vert_indices_attrib.Get(&usd_vert_indices, mesh.time);
-        mesh.nVerts = usd_vert_indices.size();
+        Pxr::VtIntArray usd_facevert_point_indices;
+        facevert_point_indices_attrib.Get(&usd_facevert_point_indices, mesh.time);
+        mesh.nVerts = usd_facevert_point_indices.size();
 
         if (mesh.nVerts == 0)
         {
-            //TF_WARN( "Invalid vertex indices count attribute" );
+            //TF_WARN( "Invalid vertex indicies count of 0" );
+            std::cout << "Invalid vertex indicies count of 0" << std::endl;
             return false; // need vert indices!
         }
 
-        mesh.vert_indices.resize(mesh.nVerts);
+        mesh.facevert_point_indices.resize(mesh.nVerts);
         if (mesh.cw_winding)
         {
             // Reverse CW to CCW winding:
@@ -558,14 +668,14 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
                 const int nFaceVerts = mesh.verts_per_face[f];
                 const int vstart = vindex;
                 for (int v=nFaceVerts-1; v >= 0; --v)
-                    mesh.vert_indices[vindex++] = usd_vert_indices[vstart + v];
+                    mesh.facevert_point_indices[vindex++] = usd_facevert_point_indices[vstart + v];
             }
             assert(vindex == (int)mesh.nVerts);
         }
         else
         {
             // CCW winding matches Nuke's default:
-            memcpy(mesh.vert_indices.data(), usd_vert_indices.data(), mesh.nVerts*sizeof(uint32_t));
+            memcpy(mesh.facevert_point_indices.data(), usd_facevert_point_indices.data(), mesh.nVerts*sizeof(uint32_t));
         }
 
 
@@ -573,16 +683,18 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
         int face_verts = 0;
         for (size_t i=0; i < mesh.nFaces; ++i)
             face_verts += mesh.verts_per_face[i];
-        if (mesh.vert_indices.size() != face_verts)
+        if ((int)mesh.facevert_point_indices.size() != face_verts)
         {
             //TF_WARN( "Invalid topology found for %s. "
             //         "Expected at least %d verticies and only got %zd.",
             //         usd_mesh.GetPrim().GetPath().GetText(), numVerticiesExpected, usdFaceIndex.size() );
             if (1)//(debug())
             {
+                static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
                 std::cerr << "FuserUsdMesh::initializeMeshSample(" << this << "):";
                 std::cerr << " error initializing mesh data in node '" << getString(Arg::Scene::file) << "'";
-                std::cerr << ", expected " << mesh.vert_indices.size() << " verticies";
+                std::cerr << ", expected " << mesh.facevert_point_indices.size() << " verticies";
                 std::cerr << " but got " << face_verts << ", igoring!";
                 std::cerr << std::endl;
             }
@@ -592,13 +704,15 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
         // Verify none of the vert values exceed the point array size:
         for (size_t i=0; i < mesh.nVerts; ++i)
         {
-            if (mesh.vert_indices[i] >= mesh.nPoints)
+            if (mesh.facevert_point_indices[i] >= mesh.nPoints)
             {
                 //TF_WARN( "Invalid topology found for %s. "
                 //         "Expected at least %d points and only got %zd.",
                 //         usd_mesh.GetPrim().GetPath().GetText(), maxPointIndex, usdPoints.size() ); 
                 if (1)//(debug())
                 {
+                    static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
                     std::cerr << "FuserUsdMesh::initializeMeshSample(" << this << "):";
                     std::cerr << " error initializing mesh data in node '" << getString(Arg::Scene::file) << "'";
                     std::cerr << ", vertex index " << i << " exceeds max point " << (mesh.nPoints-1) << ", igoring!";
@@ -611,20 +725,22 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
     }
 
     if (get_uvs)
-        getVertexUVs(mesh, mesh.uvs);
+        getVertexUVs(mesh, m_uv_primvar_name, mesh.uvs);
 
     if (get_normals)
-        getVertexNormals(mesh, mesh.normals);
+        getVertexNormals(mesh, m_normals_primvar_name, mesh.normals);
 
     if (get_colors || get_opacities)
-        getVertexColors(mesh, mesh.colors, get_opacities);
+        getVertexColors(mesh, m_colors_primvar_name, m_opacities_primvar_name, mesh.colors, get_opacities);
 
     if (get_velocities)
-        getVertexVelocities(mesh, mesh.velocities);
+        getVertexVelocities(mesh, m_velocities_primvar_name, mesh.velocities);
+
 
     if (debug())
     {
         static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
         std::cout << "      nFaces=" << mesh.nFaces;
         std::cout << ", nVerts=" << mesh.nVerts;
         std::cout << ", nPoints=" << mesh.nPoints;
@@ -637,9 +753,9 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
     // Subdivide mesh if required on read:
     if (target_subd_level == 0)
         target_subd_level = getInt("subd:import_level", 0);
-    const bool reader_subd_force_meshes = getBool("reader:subd_force_enable", false);
+    const bool subd_force_meshes = getBool("subd:force_enable", false);
     if (target_subd_level > 0 &&
-        (mesh.subd_scheme != "none" || reader_subd_force_meshes))
+        (mesh.subd_scheme != "none" || subd_force_meshes))
     {
         // Make sure we have a subdivision provider node:
         if (!m_subdivider)
@@ -650,7 +766,7 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
             // Try to find the default subdivision tessellator plugin:
             // TODO: make this a built-in Fuser node:
             if (!m_subdivider)
-                m_subdivider = Fsr::Node::create("DefaultSubd"/*node_class*/, Fsr::ArgSet());
+                m_subdivider = Fsr::Node::create("SimpleSubdiv"/*node_class*/, Fsr::ArgSet());
 
             // TODO: throw a warning if no provider?
             //if (!m_subdivider)
@@ -659,28 +775,30 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
         // Apply subdivision if we now have a subdivider:
         if (m_subdivider)
         {
-            //const bool reader_subd_force_meshes = getBool("reader:subd_snap_to_limit", false);
+            // TODO: should we simply copy all args prefixed with 'subd:' to
+            // subd_args? Or just pass a copy of this Node's args?
             Fsr::NodeContext subd_args;
             subd_args.setInt(   "subd:current_level", 0);
             subd_args.setInt(   "subd:target_level",  target_subd_level);
             subd_args.setString("subd:scheme",        mesh.subd_scheme);
+            //subd_args.setBool("subd:snap_to_limit", getBool("subd:snap_to_limit", false));
 
-            std::vector<Fsr::Vec4f> v4_uvs;
-            if (mesh.uvs.size() == mesh.nVerts)
-            {
-                v4_uvs.resize(mesh.nVerts);
-                for (size_t i=0; i < mesh.nVerts; ++i)
-                    v4_uvs[i] = mesh.uvs[i];
-            }
+            Fsr::MeshTessellateContext tessellate_ctx;
+            tessellate_ctx.verts_per_face        = &mesh.verts_per_face;
+            tessellate_ctx.vert_position_indices = &mesh.facevert_point_indices;
 
-            Fsr::MeshPrimitive::TessellateContext2 tessellate_ctx;
-            tessellate_ctx.vertsPerFace = &mesh.verts_per_face;
-            tessellate_ctx.P    = &mesh.points;
-            tessellate_ctx.Pidx = &mesh.vert_indices;
-            tessellate_ctx.N    = &mesh.normals;
-            tessellate_ctx.UV   = &v4_uvs;
-            tessellate_ctx.Cf   = &mesh.colors;
-            tessellate_ctx.VEL  = &mesh.velocities;
+            // Point data:
+            tessellate_ctx.position_lists.push_back(&mesh.points);
+
+            // Vert attribs:
+            if (mesh.normals.size() > 0)
+                tessellate_ctx.vert_vec3_attribs.push_back(&mesh.normals);
+            if (mesh.uvs.size() > 0)
+                tessellate_ctx.vert_vec2_attribs.push_back(&mesh.uvs);
+            if (mesh.colors.size() > 0)
+                tessellate_ctx.vert_vec4_attribs.push_back(&mesh.colors);
+            if (mesh.velocities.size() > 0)
+                tessellate_ctx.vert_vec3_attribs.push_back(&mesh.velocities);
 
             int res = m_subdivider->execute(subd_args,           /*target_context*/
                                             tessellate_ctx.name, /*target_name*/
@@ -688,11 +806,11 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
             if (res < 0)
             {
                 //if (res == -2 && debug())
-                //    std::cerr << "UsdMeshPrim::fillVertexBuffers()" << " error '" << m_subdivider->errorMessage() << "'" << std::endl;
+                //    std::cerr << "UsdMeshPrim::initializeMeshSample()" << " error '" << m_subdivider->errorMessage() << "'" << std::endl;
             }
 
             mesh.nFaces     = mesh.verts_per_face.size();
-            mesh.nVerts     = mesh.vert_indices.size();
+            mesh.nVerts     = mesh.facevert_point_indices.size();
             mesh.nPoints    = mesh.points.size();
             mesh.subd_level = target_subd_level;
             mesh.all_tris   = false;//(mesh.subd_scheme == Fsr::MeshPrimitive::subd_loop_type);
@@ -707,7 +825,8 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
         buildVertexNormals(mesh, mesh.normals);
 
     return true;
-}
+
+} // initializeMeshSample()
 
 
 //-------------------------------------------------------------------------------
@@ -717,16 +836,19 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
 /*! Get vertex uvs in Nuke-natural (CCW) order.
 */
 void
-FuserUsdMesh::getVertexUVs(const MeshSample&        mesh,
-                           std::vector<Fsr::Vec2f>& uvs)
+FuserUsdMesh::getVertexUVs(const MeshSample&   mesh,
+                           const Pxr::TfToken& primvar_name,
+                           Fsr::Vec2fList&     uvs)
 {
-    if (mesh.nVerts == 0)
+    uvs.clear();
+    if (mesh.nVerts == 0 || primvar_name.IsEmpty())
         return; // don't crash...
 
-    std::vector<Fsr::Vec2f> src_uvs;
+    Fsr::Vec2fList src_uvs;
 
     // Note the GetPrimvar() method automatically prefixes 'primvar:' to attribute name:
-    if (getArrayPrimvar<Pxr::GfVec2f>(m_ptbased_schema.GetPrimvar(Pxr::TfToken("uv")),
+    Pxr::UsdGeomPrimvar uv_primvar = m_ptbased_schema.GetPrimvar(primvar_name);
+    if (getArrayPrimvar<Pxr::GfVec2f>(uv_primvar,
                                       mesh.time,
                                       src_uvs,
                                       Pxr::UsdGeomTokens->faceVarying/*scope_mask*/,
@@ -749,10 +871,6 @@ FuserUsdMesh::getVertexUVs(const MeshSample&        mesh,
         else
             uvs = src_uvs; // CCW winding matches Nuke's default, copy the raw array
     }
-    else
-    {
-        uvs.clear(); // no uvs, clear output array
-    }
 
 } // getVertexUVs()
 
@@ -760,15 +878,17 @@ FuserUsdMesh::getVertexUVs(const MeshSample&        mesh,
 /*! Get vertex normals in Nuke-natural (CCW) order.
 */
 void
-FuserUsdMesh::getVertexNormals(const MeshSample&        mesh,
-                               std::vector<Fsr::Vec3f>& normals)
+FuserUsdMesh::getVertexNormals(const MeshSample&   mesh,
+                               const Pxr::TfToken& primvar_name,
+                               Fsr::Vec3fList&     normals)
 {
-    if (mesh.nVerts == 0)
+    normals.clear();
+    if (mesh.nVerts == 0 || primvar_name.IsEmpty())
         return; // don't crash...
 
     // Note the GetPrimvar() method automatically prefixes 'primvar:' to attribute name:
-    std::vector<Fsr::Vec3f> src_normals;
-    if (getArrayPrimvar<Pxr::GfVec3f>(m_ptbased_schema.GetPrimvar(Pxr::TfToken("normals")),
+    Fsr::Vec3fList src_normals;
+    if (getArrayPrimvar<Pxr::GfVec3f>(m_ptbased_schema.GetPrimvar(primvar_name),
                                       mesh.time,
                                       src_normals,
                                       Pxr::UsdGeomTokens->faceVarying/*scope_mask*/,
@@ -791,32 +911,29 @@ FuserUsdMesh::getVertexNormals(const MeshSample&        mesh,
         else
             normals = src_normals; // CCW winding matches Nuke's default, copy the raw array
     }
-    else
-    {
-        normals.clear(); // no normals, clear output array
-    }
 }
 
 
 /*! Build vertex normals based on the mesh topology.
 */
 void
-FuserUsdMesh::buildVertexNormals(const MeshSample&        mesh,
-                                 std::vector<Fsr::Vec3f>& normals)
+FuserUsdMesh::buildVertexNormals(const MeshSample& mesh,
+                                 Fsr::Vec3fList&   normals)
 {
+    normals.clear();
     if (mesh.nVerts == 0)
         return; // don't crash...
 
-    std::vector<Fsr::Vec3f> point_normals;
-    Fsr::MeshPrimitive::calcPointNormals(mesh.nPoints,
-                                         mesh.pointLocations(),
-                                         mesh.nVerts,
-                                         mesh.vertIndices(),
-                                         mesh.nFaces,
-                                         mesh.vertsPerFace(),
-                                         mesh.all_tris,
-                                         mesh.all_quads,
-                                         point_normals);
+    Fsr::Vec3fList point_normals;
+    Fsr::calcPointNormals(mesh.nPoints,
+                          mesh.pointLocations(),
+                          mesh.nVerts,
+                          mesh.faceVertPointIndices(),
+                          mesh.nFaces,
+                          mesh.vertsPerFace(),
+                          mesh.all_tris,
+                          mesh.all_quads,
+                          point_normals);
     assert(point_normals.size() == mesh.nPoints);
 
     // Copy point normals to verts, winding order is moot for this:
@@ -826,7 +943,7 @@ FuserUsdMesh::buildVertexNormals(const MeshSample&        mesh,
     {
         const int nFaceVerts = mesh.verts_per_face[f];
         for (int v=0; v < nFaceVerts; ++v, ++vindex)
-            normals[vindex] = point_normals[mesh.vert_indices[vindex]];
+            normals[vindex] = point_normals[mesh.facevert_point_indices[vindex]];
     }
 }
 
@@ -834,15 +951,17 @@ FuserUsdMesh::buildVertexNormals(const MeshSample&        mesh,
 /*! Get vertex velocities in Nuke-natural (CCW) order.
 */
 void
-FuserUsdMesh::getVertexVelocities(const MeshSample&        mesh,
-                                  std::vector<Fsr::Vec3f>& velocities)
+FuserUsdMesh::getVertexVelocities(const MeshSample&   mesh,
+                                  const Pxr::TfToken& primvar_name,
+                                  Fsr::Vec3fList&     velocities)
 {
-    if (mesh.nVerts == 0)
+    velocities.clear();
+    if (mesh.nVerts == 0 || primvar_name.IsEmpty())
         return; // don't crash...
 
     // Note the GetPrimvar() method automatically prefixes 'primvar:' to attribute name:
-    std::vector<Fsr::Vec3f> src_velocities;
-    if (getArrayPrimvar<Pxr::GfVec3f>(m_ptbased_schema.GetPrimvar(Pxr::TfToken("velocities")),
+    Fsr::Vec3fList src_velocities;
+    if (getArrayPrimvar<Pxr::GfVec3f>(m_ptbased_schema.GetPrimvar(primvar_name),
                                       mesh.time,
                                       src_velocities,
                                       Pxr::UsdGeomTokens->faceVarying/*scope_mask*/,
@@ -865,10 +984,6 @@ FuserUsdMesh::getVertexVelocities(const MeshSample&        mesh,
         else
             velocities = src_velocities; // CCW winding matches Nuke's default, copy the raw array
     }
-    else
-    {
-        velocities.clear(); // no velocities, clear output array
-    }
 }
 
 
@@ -876,27 +991,30 @@ FuserUsdMesh::getVertexVelocities(const MeshSample&        mesh,
     Translate to Vec4f's by combining displayColor and displayOpacity attributes.
 */
 void
-FuserUsdMesh::getVertexColors(const MeshSample&        mesh,
-                              std::vector<Fsr::Vec4f>& Cfs,
-                              bool                     get_opacities)
+FuserUsdMesh::getVertexColors(const MeshSample&   mesh,
+                              const Pxr::TfToken& colors_primvar_name,
+                              const Pxr::TfToken& opacities_primvar_name,
+                              Fsr::Vec4fList&     Cfs,
+                              bool                get_opacities)
 {
-    if (mesh.nVerts == 0)
+    Cfs.clear();
+    if (mesh.nVerts == 0 || (colors_primvar_name.IsEmpty() && opacities_primvar_name.IsEmpty()))
         return; // don't crash...
 
     if (getBool("reader:use_geometry_colors"))
     {
-        std::vector<Fsr::Vec3f> colors;
-        std::vector<float>         opacities;
-
         // Note the GetPrimvar() method automatically prefixes 'primvar:' to attribute name:
-        const Pxr::UsdGeomPrimvar& color_primvar = m_ptbased_schema.GetPrimvar(Pxr::TfToken("displayColor"));
+        const Pxr::UsdGeomPrimvar& color_primvar   = m_ptbased_schema.GetPrimvar(colors_primvar_name);
+        const Pxr::UsdGeomPrimvar& opacity_primvar = m_ptbased_schema.GetPrimvar(opacities_primvar_name);
+
+        Fsr::Vec3fList colors;
         getArrayPrimvar<Pxr::GfVec3f>(color_primvar,
                                       mesh.time,
                                       colors,
                                       Pxr::TfToken("")/*scope_mask*/,
                                       false/*debug*/);
 
-        const Pxr::UsdGeomPrimvar& opacity_primvar = m_ptbased_schema.GetPrimvar(Pxr::TfToken("displayOpacity"));
+        Fsr::FloatList opacities;
         getArrayPrimvar<float>(opacity_primvar,
                                mesh.time,
                                opacities,
@@ -1012,9 +1130,10 @@ FuserUsdMesh::getVertexColors(const MeshSample&        mesh,
             }
 
         }
+
+        if (Cfs.size() > 0)
+            return; // assigned colors or opacities
     }
-    if (Cfs.size() > 0)
-        return; // assigned colors or opacities
 
     if (getBool("reader:color_objects"))
     {
@@ -1031,16 +1150,18 @@ FuserUsdMesh::getVertexColors(const MeshSample&        mesh,
         Cfs.resize(mesh.nVerts);
         for (size_t i=0; i < mesh.nVerts; ++i)
             Cfs[i] = Cf;
+
+        return;
     }
-    else if (getBool("reader:color_facesets"))
+
+    if (getBool("reader:color_facesets"))
     {
         // Set the vertex color to a random value by faceset id, overwriting default:
         // TODO: implement, we need the GeomSubsets...!
-    }
-    else
-    {
-        // If missing attribs return 1,1,1,1 colors:
-        Cfs.resize(mesh.nVerts, Fsr::Vec4f(1.0f));
+
+        Cfs.resize(mesh.nVerts, Fsr::Vec4f(1.0f)); // default to white for now...
+
+        return;
     }
 
 } // getVertexColors()
@@ -1143,14 +1264,14 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
             std::cout << ", m_xform" << m_xform;
         //std::cout << ", cw_winding=" << mesh.cw_winding;
         std::cout << std::endl;
-        std::cout << "      args: " << m_args;
+        std::cout << "      args[" << m_args << "]";
         std::cout << std::endl;
     }
 
 
     //-------------------------------------------------------
     // Get Subd params to use when outputing face, vertex & point data:
-    if (mesh.subd_scheme != "none")
+    if (!mesh.subd_scheme.empty() && mesh.subd_scheme != "none")
     {
         // TODO: define these subd string constants somewhere common
         if (mesh.subd_level > 0)
@@ -1242,11 +1363,11 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
                                                  NULL/*parent*/);
         pmesh = dynamic_cast<Fsr::MeshPrimitive*>(mesh_node);
 #if DEBUG
-        assert(pmesh);
+        assert(pmesh); // shouldn't happen...
 #endif
         pmesh->setFrame(mesh.time.GetValue());
         pmesh->addFaces(mesh.nVerts,
-                        mesh.vertIndices(),
+                        mesh.faceVertPointIndices(),
                         mesh.nFaces,
                         mesh.vertsPerFace());
 
@@ -1288,9 +1409,34 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
 
         //----------------------------------------------------------------------------------------
 
-        // TODO: handle GeomSubsets!
+        // TODO: handle GeomSubsets! We do this similar to materials, by adding child nodes
+
+
 
         //----------------------------------------------------------------------------------------
+
+        // If there's a material binding create a child Fuser Node for it:
+        //   ex.  'rel material:binding = </Root/Looks/dart_board_mat_inst>'
+        if (m_material_binding)
+        {
+            // This Fuser Node takes responsibility for deleting the child pointer:
+            const Pxr::UsdPrim mat_prim = getStage()->GetPrimAtPath(m_material_binding.GetPath());
+#if DEBUG
+            assert(mat_prim.IsValid());
+#endif
+            // The material creation args are slimmed down:
+            Fsr::ArgSet mat_args;
+            mat_args.setString(Arg::node_name,   mat_prim.GetName().GetString());
+            //mat_args.setString(Arg::node_path,   );
+            mat_args.setString(Arg::Scene::path, m_material_binding.GetPath().GetString());
+            if (getBool(Arg::NukeGeo::read_debug, false))
+                mat_args.setInt(Arg::node_debug, 1/*DEBUG_1*/);
+
+            pmesh->addChild(new FuserUsdShadeMaterialNode(getStage(), mat_prim, mat_args, pmesh/*parent*/));
+        }
+
+        //----------------------------------------------------------------------------------------
+
 
     } // reload_prims
 #if DEBUG
@@ -1311,22 +1457,20 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
         DD::Image::PointList* out_points = geo_ctx.createWritablePointsThreadSafe(geoinfo_cache);
         assert(out_points); // shouldn't happen...
         out_points->resize(mesh.nPoints); // just in case...
+        Fsr::Vec3f* Parray = reinterpret_cast<Fsr::Vec3f*>(out_points->data());
 
         // Always bake the xform into the GeoInfo points (see note in
         // Fsr::PointBasedPrimitive class about why...)
         if (m_have_xform)
-            mesh.matrix.transform(reinterpret_cast<Fsr::Vec3f*>(out_points->data()),
-                                  mesh.pointLocations(),
-                                  mesh.nPoints);
+            mesh.matrix.transform(Parray, mesh.pointLocations(), mesh.nPoints);
         else
-            memcpy(reinterpret_cast<Fsr::Vec3f*>(out_points->data()),
-                   mesh.pointLocations(),
-                   mesh.nPoints*sizeof(Fsr::Vec3f));
+            memcpy(Parray, mesh.pointLocations(), mesh.nPoints*sizeof(Fsr::Vec3f));
 
 #ifdef BAKE_XFORM_INTO_POINTS
 #else
         //pmesh->setTransformAndLocalPoints(mesh.matrix, mesh.nPoints, mesh.pointLocations());
 #endif
+        geo_ctx.updateBBoxThreadSafe(geoinfo_cache);
 
         //----------------------------------------------------------------------------------------
 
@@ -1360,14 +1504,6 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
 
     } // reload_points
 
-
-    //if (debug())
-    //{
-    //    info.update_bbox();
-    //    std::cout << "      pmesh=" << pmesh << ", bbox" << info.bbox();
-    //    std::cout << std::endl;
-    //}
-
 } // geoOpGeometryEngine()
 
 
@@ -1382,8 +1518,7 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
 
 */
 void
-FuserUsdMesh::tessellateToRenderScene(DD::Image::PrimitiveContext* ptx,
-                                      DD::Image::Scene*            render_scene)
+FuserUsdMesh::tessellateToRenderScene(Fsr::FuserPrimitive::DDImageRenderSceneTessellateContext& rtess_ctx)
 {
     // TODO: figure out motionblur logic that works with ScanlineRender. I think we just need
     // to make a single sample at the Node's time.
@@ -1450,9 +1585,6 @@ FuserUsdMesh::tessellateToRenderScene(DD::Image::PrimitiveContext* ptx,
         std::cout << std::endl;
     }
 
-
-    assert(ptx && ptx->geoinfo()); // should never be NULL!
-
     // Copy the MeshSample into a VertexBuffers.
     // TODO: merge the classes so that a MeshSample *is* a VertexBuffers class, or
     //       at least a subclass of VertexBuffers.
@@ -1465,7 +1597,7 @@ FuserUsdMesh::tessellateToRenderScene(DD::Image::PrimitiveContext* ptx,
             vbuffers.PL = mesh.points;
         memcpy(vbuffers.PW.data(), vbuffers.PL.data(), sizeof(Fsr::Vec3f)*mesh.nPoints);
         //
-        vbuffers.Pidx = mesh.vert_indices;
+        vbuffers.Pidx = mesh.facevert_point_indices;
         vbuffers.interpolateChannels = DD::Image::ChannelSetInit(DD::Image::Mask_PL_ |
                                                                  DD::Image::Mask_PW_ |
                                                                  DD::Image::Mask_P_);
@@ -1516,10 +1648,10 @@ FuserUsdMesh::tessellateToRenderScene(DD::Image::PrimitiveContext* ptx,
     }
 
     // Allow vertex shaders to change values, and produce final transformed PW and N:
-    vbuffers.applyVertexShader(ptx, render_scene);
+    vbuffers.applyVertexShader(rtess_ctx);
 
     // Have vertex buffer output render prims to render scene, in mesh mode.
-    vbuffers.addToRenderScene(0/*mode*/, ptx, render_scene);
+    vbuffers.addToRenderScene(rtess_ctx, 0/*mode*/);
 }
 
 
@@ -1678,7 +1810,7 @@ FuserUsdMesh::drawMesh(DD::Image::ViewerContext*    vtx,
                 glBegin(GL_LINE_LOOP);
                 for (int v=0; v < nFaceVerts; ++v, ++vindex)
                 {
-                    const int pindex = mesh.vert_indices[vindex];
+                    const int pindex = mesh.facevert_point_indices[vindex];
 #ifdef BAKE_XFORM_INTO_POINTS
                     const Pxr::GfVec3f& P = mesh.points[pindex];
                     mesh.matrix.transform(reinterpret_cast<const Fsr::Vec3f&>(P), Pt);
@@ -1732,7 +1864,7 @@ FuserUsdMesh::drawMesh(DD::Image::ViewerContext*    vtx,
                 glBegin(GL_POLYGON);
                 for (int v=0; v < nFaceVerts; ++v, ++vindex)
                 {
-                    const int pindex = mesh.vert_indices[vindex];
+                    const int pindex = mesh.facevert_point_indices[vindex];
 
                     if (have_normals)
                         glNormal3fv(mesh.normals[vindex].array());
@@ -1768,7 +1900,7 @@ FuserUsdMesh::drawMesh(DD::Image::ViewerContext*    vtx,
                 glBegin(GL_POLYGON);
                 for (int v=0; v < nFaceVerts; ++v, ++vindex)
                 {
-                    const int pindex = mesh.vert_indices[vindex];
+                    const int pindex = mesh.facevert_point_indices[vindex];
 
                     if (have_normals)
                         glNormal3fv(mesh.normals[vindex].array());
@@ -1818,7 +1950,7 @@ FuserUsdMesh::drawMesh(DD::Image::ViewerContext*    vtx,
                 glBegin(GL_POLYGON);
                 for (int v=0; v < nFaceVerts; ++v, ++vindex)
                 {
-                    const int pindex = mesh.vert_indices[vindex];
+                    const int pindex = mesh.facevert_point_indices[vindex];
                     if (have_normals)
                         glNormal3fv(mesh.normals[vindex].array());
                     glColor4f(1.0f, 1.0f, 1.0f, mesh.colors[vindex].w);
@@ -1850,7 +1982,7 @@ FuserUsdMesh::drawMesh(DD::Image::ViewerContext*    vtx,
                 glBegin(GL_POLYGON);
                 for (int v=0; v < nFaceVerts; ++v, ++vindex)
                 {
-                    const int pindex = mesh.vert_indices[vindex];
+                    const int pindex = mesh.facevert_point_indices[vindex];
                     if (have_normals)
                         glNormal3fv(mesh.normals[vindex].array());
                     glTexCoord2fv(mesh.uvs[vindex].array());

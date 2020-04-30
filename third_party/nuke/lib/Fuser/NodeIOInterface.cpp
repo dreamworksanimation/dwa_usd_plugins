@@ -58,7 +58,11 @@ NodeIOInterface::NodeIOInterface()
     Returns the trimmed path when there's a leading extension,
     or just src_path if not. ie 'ext:foo' will return 'foo'.
 
-    If 'ext' is provided this will contain any found extension string.
+    Leading extension text up to the colon must not contain any
+    path symbols like '/\.' otherwise it's ignored.
+
+    If the 'ext' var pointer is provided this will contain any
+    found extension string.
 */
 /*static*/
 std::string
@@ -69,10 +73,11 @@ NodeIOInterface::getTrimmedPath(const char*  src_path,
         return empty_string;
 
     std::string trimmed_path;
+    bool have_path_chars = false;
     const char* e = NULL;
     for (const char* s=src_path; *s; ++s)
     {
-        if (*s==':')
+        if (*s==':' && !have_path_chars)
         {
             // ext at front:
             if (s <= src_path)
@@ -83,9 +88,15 @@ NodeIOInterface::getTrimmedPath(const char*  src_path,
             return trimmed_path;
         }
         else if (*s=='.')
+        {
             e = (s + 1); // ext at end
-        else if (*s=='/')
+            have_path_chars = true;
+        }
+        else if (*s=='/' || *s=='\\')
+        {
             e = NULL; // reset
+            have_path_chars = true;
+        }
     }
     trimmed_path = src_path;
     if (ext != NULL)

@@ -41,6 +41,8 @@
 #include <DDImage/GeoReader.h>
 #include <DDImage/GeoReaderDescription.h>
 
+#include <map> // for multimap
+
 
 namespace Fsr {
 
@@ -49,11 +51,12 @@ namespace Fsr {
 // We use namespaces to echo the namespacing in the attribute names:
 namespace NukeGeo {
 
-// The standard attrib names Nuke uses for some important attribs:
-const char* const uvs_attrib_name      = DD::Image::kUVAttrName;       // 'uvs'
-const char* const normals_attrib_name  = DD::Image::kNormalAttrName;   // 'N'
-const char* const colors_attrib_name   = DD::Image::kColorAttrName;    // 'Cf'
-const char* const velocity_attrib_name = DD::Image::kVelocityAttrName; // 'vel'
+// The standard attrib names Nuke uses for some important GeoInfo attribs:
+const char* const uvs_attrib_name       = DD::Image::kUVAttrName;       // 'uvs'
+const char* const normals_attrib_name   = DD::Image::kNormalAttrName;   // 'N'
+const char* const colors_attrib_name    = DD::Image::kColorAttrName;    // 'Cf'
+const char* const opacities_attrib_name = "Of";
+const char* const velocity_attrib_name  = DD::Image::kVelocityAttrName; // 'vel'
 
 }
 
@@ -91,6 +94,7 @@ class FSR_EXPORT FuserGeoReaderFormat : public DD::Image::GeoReaderFormat
     int         k_subd_render_level;        //!< Subd level for rendering
     bool        k_subd_snap_to_limit;       //!< Snap to limit surface after subdivision
     bool        k_subd_force_enable;        //!< Enable subd mode on all meshes
+    int         k_subd_tessellator;         //!< Tessellator scheme to use
     //
     bool        k_use_colors;               //!< Copy color attribute to the vertex color
     bool        k_color_facesets;           //!< Color the vertices in a faceset with random colors
@@ -158,9 +162,6 @@ class FSR_EXPORT FuserGeoReader : public DD::Image::GeoReader,
   protected:
     std::string            m_filename_for_reader;   //!< Trimmed filename (no leading extension)
     DD::Image::Hash        m_file_hash;             //!< If this changes reload the scene file, update UI
-
-    Fsr::KeyValueMap       m_attribute_mappings;    //!< In/out attribute name mappings
-    DD::Image::Hash        m_attrib_map_hash;       //!<
 
 
   protected:
@@ -296,11 +297,42 @@ class FSR_EXPORT FuserGeoReader : public DD::Image::GeoReader,
     //! Get the list of object names(paths) to read in during geometry_engine. Base class returns an empty set.
     virtual const std::set<std::string>& getObjectPathsForReader();
 
+    //! Get the list of material names(paths) to read in during geometry_engine. Base class returns an empty set.
+    virtual const std::set<std::string>& getMaterialPathsForReader();
+
+    //! Get the list of light names(paths) to read in during geometry_engine. Base class returns an empty set.
+    virtual const std::set<std::string>& getLightPathsForReader();
+
 
     //! Thread-safe object loader entry point called by a ThreadedGeometryEngine instance.
     bool readObject(const std::string&               path,
                     Fsr::NodeContext&                node_ctx,
                     Fsr::GeoOpGeometryEngineContext& geo_ctx);
+
+
+    //! Thread-safe object loader entry point called by a ThreadedGeometryEngine instance.
+    bool readMaterial(const std::string&               path,
+                      Fsr::NodeContext&                node_ctx,
+                      Fsr::GeoOpGeometryEngineContext& geo_ctx);
+
+
+  public:
+    //! Extract the from-to attribute name mappings from a text entry. Optional to-from mappings at same time.
+    static void     buildAttributeMappings(const char*            txt,
+                                           Fsr::KeyValueMap&      file_to_nuke_map,
+                                           Fsr::KeyValueMultiMap& nuke_to_file_map);
+
+    //! If the file_attrib exists in the attrib_map return the nuke attrib mapped name
+    std::string     getFileToNukeAttribMapping(const char*             file_attrib,
+                                               const Fsr::KeyValueMap& file_to_nuke_map);
+
+    //! Map a nuke attrib name to possible multiple file attrib names.
+    static uint32_t getNukeToFileAttribMappings(const char*                  nuke_attrib,
+                                                const Fsr::KeyValueMultiMap& nuke_to_file_map,
+                                                std::vector<std::string>&    mappings);
+
+
+
 
 
   public:

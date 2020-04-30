@@ -34,10 +34,6 @@
 
 #include <Fuser/NukeGeoInterface.h> // for GeoOpGeometryEngineContext
 
-#ifdef DWA_INTERNAL_BUILD
-#  include <dw_nuke2.1/rContext.h>
-#endif
-
 #include <DDImage/PrimitiveContext.h>
 #include <DDImage/Scene.h>
 
@@ -50,8 +46,21 @@
 
 #  include <pxr/usd/usdGeom/mesh.h>
 
+#  include <pxr/usd/usdShade/material.h>
+
 #  pragma GCC diagnostic pop
 #endif
+
+
+#ifdef DWA_INTERNAL_BUILD
+// Avoid including zprender here:
+namespace zpr {
+class RenderContext;
+class ObjectContext;
+class SurfaceContext;
+}
+#endif
+
 
 
 namespace Fsr {
@@ -62,7 +71,8 @@ namespace Fsr {
 
 /*! USD dummy placeholder node for a real geom subset (faceset).
 */
-class FuserUsdGeomSubsetNode : public FuserUsdNode
+class FuserUsdGeomSubsetNode : public FuserUsdNode,
+                               public Fsr::Node
 {
   protected:
     Pxr::UsdPrim m_prim;
@@ -78,7 +88,8 @@ class FuserUsdGeomSubsetNode : public FuserUsdNode
                            const Pxr::UsdPrim&        prim,
                            const Fsr::ArgSet&         args,
                            Fsr::Node*                 parent) :
-        FuserUsdNode(stage, args, parent),
+        FuserUsdNode(stage),
+        Fsr::Node(args, parent),
         m_prim(prim)
     {
         std::cout << "  FuserUsdGeomSubsetNode::ctor(" << this << ") '" << prim.GetPath() << "'" << std::endl;
@@ -111,53 +122,63 @@ class FuserUsdMesh : public FuserUsdXform
     // add Pxr-specific access methods like getTime() cast to Pxr::UsdTimeCode
     struct MeshSample
     {
-        Pxr::UsdTimeCode        time;           //!< Sample time
-        uint32_t                id_index;       //!< ID index (arbitrary ID, object index, etc)
+        Pxr::UsdTimeCode time;              //!< Sample time
+        uint32_t         id_index;          //!< ID index (arbitrary ID, object index, etc)
 
         // Global bbox & matrix:
-        Fsr::Box3d              bbox;           //!< Derived bbox
-        Fsr::Mat4d              matrix;         //!< Derived matrix
+        Fsr::Box3d      bbox;               //!< Derived bbox
+        Fsr::Mat4d      matrix;             //!< Derived matrix
 
         // Mesh info:
-        size_t                  nPoints;        //!< ie points.size()
-        size_t                  nVerts;         //!< ie vert_indices.size()
-        size_t                  nFaces;         //!< ie verts_per_face.size()
+        size_t          nPoints;            //!< ie points.size()
+        size_t          nVerts;             //!< ie facevert_point_indices.size()
+        size_t          nFaces;             //!< ie verts_per_face.size()
 
-        std::vector<Fsr::Vec3f> points;         //!< Local-space point locations
+        Fsr::Vec3fList  points;             //!< Local-space point locations
 
-        bool                    all_tris;       //!< Are verts part of an all-tri mesh? Don't need a face list if so.
-        bool                    all_quads;      //!< Are verts part of an all-quad mesh? Don't need a face list if so.
-        std::vector<uint32_t>   verts_per_face; //!< Per-face vert count
+        bool            all_tris;           //!< Are verts part of an all-tri mesh? Don't need a face list if so.
+        bool            all_quads;          //!< Are verts part of an all-quad mesh? Don't need a face list if so.
+        Fsr::Uint32List verts_per_face;     //!< Per-face vert count
 
-        bool                    cw_winding;     //!< Are mesh faces in clockwise (left-handed) winding order?
+        bool            cw_winding;         //!< Are mesh faces in clockwise (left-handed) winding order?
 
         // These are stored in Nuke-natural CCW winding order:
-        std::vector<uint32_t>   vert_indices;   //!< Point location indices
-        std::vector<Fsr::Vec2f> uvs;            //!< Vertex texture coord (no perspective support!)
-        std::vector<Fsr::Vec3f> normals;        //!< Vertex normal
-        std::vector<Fsr::Vec4f> colors;         //!< Vertex color (w is opacity)
-        std::vector<Fsr::Vec3f> velocities;     //!< Point velocity (TODO: how is this defined?)
+        Fsr::Uint32List facevert_point_indices; //!< Per face-vertex point location indices
+        Fsr::Vec2fList  uvs;                    //!< Vertex texture coord (no perspective support!)
+        Fsr::Vec3fList  normals;                //!< Vertex normal
+        Fsr::Vec4fList  colors;                 //!< Vertex color (w is opacity)
+        Fsr::Vec3fList  velocities;             //!< Point velocity (TODO: how is this defined?)
 
         // Subd-specific data:
-        std::string             subd_scheme;    //!< Name of subdivision scheme
-        uint32_t                subd_level;     //!< Current subd level
-        std::vector<uint32_t>   crease_indices; //!< TODO: support! 
-        std::vector<float>      crease_weights; //!< TODO: support! 
-        std::vector<uint32_t>   corner_indices; //!< TODO: support!
-        std::vector<float>      corner_weights; //!< TODO: support!
-        std::vector<uint32_t>   holes_indices;  //!< TODO: support!
+        std::string     subd_scheme;        //!< Name of subdivision scheme
+        uint32_t        subd_level;         //!< Current subd level
+        Fsr::Uint32List crease_indices;     //!< TODO: support! 
+        Fsr::FloatList  crease_weights;     //!< TODO: support! 
+        Fsr::Uint32List corner_indices;     //!< TODO: support!
+        Fsr::FloatList  corner_weights;     //!< TODO: support!
+        Fsr::Uint32List holes_indices;      //!< TODO: support!
 
-        const Fsr::Vec3f*       pointLocations() const { return points.data(); }
-        const uint32_t*         vertsPerFace()   const { return verts_per_face.data(); }
-        const uint32_t*         vertIndices()    const { return vert_indices.data(); }
+
+        const Fsr::Vec3f* pointLocations() const { return points.data(); }
+        const uint32_t*   vertsPerFace()   const { return verts_per_face.data(); }
+        const uint32_t*   faceVertPointIndices() const { return facevert_point_indices.data(); }
 
     };
 
 
   protected:
-    Pxr::UsdGeomPointBased  m_ptbased_schema;       // Store the PointBased schema (vs. Mesh) for subclasses to access
+    Pxr::UsdGeomPointBased  m_ptbased_schema;       //!< Store the PointBased schema (vs. Mesh) for subclasses to access
+    Pxr::UsdShadeMaterial   m_material_binding;     //!<
     uint32_t                m_topology_variance;    //!< Object TopologyVariances
     Fsr::Node*              m_subdivider;           //!< Subdivision provider
+    //
+    Fsr::KeyValueMap        m_primvar_to_nuke;      //!< Map USD primvar names to Nuke attrib names
+    Fsr::KeyValueMultiMap   m_nuke_to_primvar;      //!< Map Nuke attrib names to USD primvar names
+    Pxr::TfToken            m_uv_primvar_name;
+    Pxr::TfToken            m_normals_primvar_name;
+    Pxr::TfToken            m_colors_primvar_name;
+    Pxr::TfToken            m_opacities_primvar_name;
+    Pxr::TfToken            m_velocities_primvar_name;
 
     /*virtual*/ Pxr::UsdPrim getPrim() { return m_ptbased_schema.GetPrim(); }
 
@@ -185,26 +206,38 @@ class FuserUsdMesh : public FuserUsdXform
                              void*                   src0,
                              void*                   src1);
 
-    //! Get vertex normals in Nuke-natural (CCW) order.
-    void getVertexNormals(const MeshSample&        mesh,
-                          std::vector<Fsr::Vec3f>& normals);
 
-    //! Build vertex normals based on the mesh topology.
-    void buildVertexNormals(const MeshSample&        mesh,
-                            std::vector<Fsr::Vec3f>& normals);
+    //! Search for the first attrib mappings match to the nuke attrib name.
+    Pxr::TfToken getPrimvarForNukeAttrib(const char* nuke_attrib_name,
+                                         const char* default_primvar_name="");
+
+    //! Get vertex normals in Nuke-natural (CCW) order.
+    void getVertexNormals(const MeshSample&   mesh,
+                          const Pxr::TfToken& primvar_name,
+                          Fsr::Vec3fList&     normals);
 
     //! Get vertex uvs in Nuke-natural (CCW) order.
-    void getVertexUVs(const MeshSample&           mesh,
-                      std::vector<Fsr::Vec2f>& uvs);
+    void getVertexUVs(const MeshSample&   mesh,
+                      const Pxr::TfToken& primvar_name,
+                      Fsr::Vec2fList&     uvs);
 
     //! Get vertex colors/opacities in Nuke-natural (CCW) order.
-    void getVertexColors(const MeshSample&        mesh,
-                         std::vector<Fsr::Vec4f>& Cfs,
-                         bool                     get_opacities=true);
+    void getVertexColors(const MeshSample&   mesh,
+                         const Pxr::TfToken& colors_primvar_name,
+                         const Pxr::TfToken& opacities_primvar_name,
+                         Fsr::Vec4fList&     Cfs,
+                         bool                get_opacities=true);
 
     //! Get vertex velocities in Nuke-natural (CCW) order.
-    void getVertexVelocities(const MeshSample&        mesh,
-                             std::vector<Fsr::Vec3f>& velocities);
+    void getVertexVelocities(const MeshSample&   mesh,
+                             const Pxr::TfToken& primvar_name,
+                             Fsr::Vec3fList&     velocities);
+
+    //---------------------------------------------------------
+
+    //! Build vertex normals based on the mesh topology.
+    void buildVertexNormals(const MeshSample& mesh,
+                            Fsr::Vec3fList&   normals);
 
 
     //---------------------------------------------------------
@@ -235,15 +268,12 @@ class FuserUsdMesh : public FuserUsdXform
     void geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx);
 
     //! Output a USD mesh to a DD::Image::Scene render context.
-    void tessellateToRenderScene(DD::Image::PrimitiveContext* ptx,
-                                 DD::Image::Scene*            render_scene);
+    void tessellateToRenderScene(Fsr::FuserPrimitive::DDImageRenderSceneTessellateContext& rtess_ctx);
 
 #ifdef DWA_INTERNAL_BUILD
     //! Create a zpRender-compatible render primitive.
-    void generateRenderPrims(dw::nuke::rContext&       rtx,
-                             dw::nuke::ObjectContext*  otx,
-                             dw::nuke::SurfaceContext* stx,
-                             std::vector<DD::Image::PrimitiveContext>& ptx_list);
+    void generateRenderPrims(zpr::RenderContext&  rtx,
+                             zpr::SurfaceContext& stx);
 #endif
 
 };

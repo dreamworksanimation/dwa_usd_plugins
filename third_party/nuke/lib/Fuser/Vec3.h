@@ -32,6 +32,7 @@
 #include "Vec2.h"
 
 #include <DDImage/Vector3.h> // for DD::Image compatibility convenience
+#include <DDImage/Hash.h>    // for DD::Image compatibility convenience
 
 #include <cmath> // For sqrt, etc
 #include <iostream>
@@ -78,7 +79,7 @@ class FSR_EXPORT Vec3
 
     //! Copy constructor.
     template<typename S>
-    Vec3(const Vec3<S>& v) : x(T(v.x)), y(T(v.y)), z(T(v.z)) {}
+    explicit Vec3(const Vec3<S>& v) : x(T(v.x)), y(T(v.y)), z(T(v.z)) {}
 
     //! Constructor that sets all components.
     Vec3(T _x, T _y , T _z) : x(_x), y(_y), z(_z) {}
@@ -100,6 +101,10 @@ class FSR_EXPORT Vec3
     operator Vec3<double>() const;
     operator Vec3<int>()    const;
     operator DD::Image::Vector3() const;
+
+    Vec3<float>  asVec3f() const;
+    Vec3<double> asVec3d() const;
+    Vec3<int>    asVec3i() const;
 
 
     /*---------------------------*/
@@ -139,6 +144,10 @@ class FSR_EXPORT Vec3
     void               fromDDImage(const DD::Image::Vector3& b) { x = T(b.x); y = T(b.y); z = T(b.z); }
     void               toDDImage(DD::Image::Vector3& out) const;
     DD::Image::Vector3 asDDImage() const;
+
+    //! Add this to a DD::Image::Hash object, for DD::Image compatibility convenience.
+    void append(DD::Image::Hash& hash) const;
+
 
     /*---------------------------*/
     /*   Matrix Multiplication   */
@@ -204,19 +213,19 @@ class FSR_EXPORT Vec3
     T    lengthSquared() const { return (x*x + y*y + z*z); }
 
     //! Same as (this-v).length()
-    T    distanceBetween(const Vec3 &v) const { return std::sqrt((x-v.x)*(x-v.x) + (y-v.y)*(y-v.y) + (z-v.z)*(z-v.z)); }
+    T    distanceBetween(const Vec3& v) const { return std::sqrt((x-v.x)*(x-v.x) + (y-v.y)*(y-v.y) + (z-v.z)*(z-v.z)); }
 
     //! Same as (this-v).lengthSquared()
-    T    distanceSquared(const Vec3 &v) const { return (x-v.x)*(x-v.x) + (y-v.y)*(y-v.y) + (z-v.z)*(z-v.z); }
+    T    distanceSquared(const Vec3& v) const { return (x-v.x)*(x-v.x) + (y-v.y)*(y-v.y) + (z-v.z)*(z-v.z); }
 
     //! Return the scalar distance to the plane defined by ABCD.
     T    distanceFromPlane(T A, T B, T C, T D) const { return (A*x + B*y + C*z + D); }
 
     //! Dot product. Twice the area of the triangle between the vectors.
-    T    dot(const Vec3 &v) const { return (x*v.x + y*v.y + z*v.z); }
+    T    dot(const Vec3& v) const { return (x*v.x + y*v.y + z*v.z); }
 
     //! Cross product. Returns a vector at right angles to the vectors.
-    Vec3 cross(const Vec3 &v) const { return Vec3(y*v.z - z*v.y, z*v.x - x*v.z, x*v.y - y*v.x); }
+    Vec3 cross(const Vec3& v) const { return Vec3(y*v.z - z*v.y, z*v.x - x*v.z, x*v.y - y*v.x); }
 
     //! Change the vector to be unit length. Returns the original length.
     T    normalize() { T d = this->length(); if (d > (T)0) *this /= d; return d; }
@@ -225,21 +234,29 @@ class FSR_EXPORT Vec3
     T    fastNormalize();
 
     //! Return a vector of this one reflected around a normal vector.
-    Vec3 reflect(const Vec3& N) { return (N * (this->dot(N) * (T)2) - *this); }
+    Vec3 reflect(const Vec3& N) const { return (N * (this->dot(N) * (T)2) - *this); }
 
     //! Negate (flip) vector if it points in the opposite direction of N.
     void faceForward(const Vec3& N) { if (this->dot(N) < (T)0) { x=-x; y=-y; z=-z; } }
 
     //! Returns the minimum element.
-    T    minimum()                 const { return std::min(x, std::min(y, z)); }
+    T    minimum()              const { return std::min(x, std::min(y, z)); }
     Vec3 minimum(const Vec3& v) const { return Vec3(std::min(v.x, x), std::min(v.y, y), std::min(v.z, z)); }
 
     //! Returns the maximum element.
-    T    maximum()                 const { return std::max(x, std::max(y, z)); }
+    T    maximum()              const { return std::max(x, std::max(y, z)); }
     Vec3 maximum(const Vec3& v) const { return Vec3(std::max(v.x, x), std::max(v.y, y), std::max(v.z, z)); }
 
     //! Returns the absolute value of the largest element.
     T    largestAxis() const { return std::max(::fabs(x), std::max(::fabs(y), ::fabs(z))); }
+
+    //! Linear-interpolate between this Vec3 and another at t, where t=0..1.
+    template<typename S>
+    Vec3<T> interpolateTo(const Vec3<T>& b,
+                          S              t) const;
+    template<typename S>
+    Vec3<T>        lerpTo(const Vec3<T>& b,
+                          S              t) const;
 
     //! Convert to/from radians/degrees.
     void toRadians()       { x = radians(x); y = radians(y); z = radians(z); }
@@ -250,7 +267,7 @@ class FSR_EXPORT Vec3
     bool notZero() const { return (x != (T)0 || y != (T)0 || z != (T)0); }
     bool isZero()  const { return !notZero(); }
 
-    //! Round of each element if nearly one or zero.
+    //! Round off each element if nearly one or zero.
     void roundIfNearlyZero();
     void roundIfNearlyOne();
 
@@ -286,6 +303,10 @@ typedef Vec3<int>    Vec3i;
 /*        Static operations         */
 /*----------------------------------*/
 
+//! Print out components to a stream.
+template<typename T>
+std::ostream& operator << (std::ostream& o, const Vec3<T>& v);
+
 
 /*! Apply an euler rotation filter to a series of rotation keyframes (in degrees).
     rot_order can be 'XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', or 'ZYX'.  Default is 'ZXY'.
@@ -295,16 +316,35 @@ void eulerFilterRotations(std::vector<Vec3<T> >& rotations_in_degrees,
                           Fsr::RotationOrder     rot_order=Fsr::ZXY_ORDER);
 
 
-//! Interpolate between two Vec3s.
-template<typename T>
+//! Linear-interpolate between two Vec3s at t, where t=0..1.
+template<typename T, typename S>
 Vec3<T> lerp(const Vec3<T>& v0,
              const Vec3<T>& v1,
-             T t);
+             S              t);
+//! Linear-interpolate between two Vec3s at t, where t=0..1, and inv is 1-t.
+template<typename T, typename S>
+Vec3<T> lerp(const Vec3<T>& v0,
+             const Vec3<T>& v1,
+             S              t,
+             S              invt);
 
-//! Print out components to a stream.
-template<typename T>
-std::ostream& operator << (std::ostream& o, const Vec3<T>& v);
-
+//! Interpolate between three Vec3s at barycentric coord st.
+template<typename T, typename S>
+Vec3<T> interpolateAtBaryCoord(const Fsr::Vec3<T>& v0,
+                               const Fsr::Vec3<T>& v1,
+                               const Fsr::Vec3<T>& v2,
+                               const Fsr::Vec2<S>& st);
+//! Interpolate between three Vec3s at barycentric coord st, with derivatives.
+template<typename T, typename S>
+void    interpolateAtBaryCoord(const Fsr::Vec3<T>& v0,
+                               const Fsr::Vec3<T>& v1,
+                               const Fsr::Vec3<T>& v2,
+                               const Fsr::Vec2<S>& st,
+                               const Fsr::Vec2<S>& stdx,
+                               const Fsr::Vec2<S>& stdy,
+                               Fsr::Vec3<T>&       out,
+                               Fsr::Vec3<T>&       duout,
+                               Fsr::Vec3<T>&       dvout);
 
 
 /*---------------------------------------------------------------------*/
@@ -342,10 +382,18 @@ inline Vec3<T>::operator DD::Image::Vector3() const
         return this->asDDImage();
 }
 
+template<typename T>
+inline void
+Vec3<T>::append(DD::Image::Hash& hash) const
+{
+    hash.append(this->array(), 3*sizeof(T));
+}
+
 //-----------------------------------------------------------
 
 template<typename T>
-inline Vec3<T>::operator Vec3<float>() const
+inline Vec3<float>
+Vec3<T>::asVec3f() const
 {
     if (isSameType<float,T>::value)
         return *this;
@@ -353,7 +401,11 @@ inline Vec3<T>::operator Vec3<float>() const
         return Vec3<float>(float(x), float(y), float(z));
 }
 template<typename T>
-inline Vec3<T>::operator Vec3<double>() const
+inline Vec3<T>::operator Vec3<float>() const { return this->asVec3f(); }
+
+template<typename T>
+inline Vec3<double>
+Vec3<T>::asVec3d() const
 {
     if (isSameType<double,T>::value)
         return *this;
@@ -361,25 +413,104 @@ inline Vec3<T>::operator Vec3<double>() const
         return Vec3<double>(double(x), double(y), double(z));
 }
 template<typename T>
-inline Vec3<T>::operator Vec3<int>() const
+inline Vec3<T>::operator Vec3<double>() const { return this->asVec3d(); }
+
+template<typename T>
+inline Vec3<int>
+Vec3<T>::asVec3i() const
 {
     if (isSameType<int,T>::value)
         return *this;
     else
         return Vec3<int>(int(x), int(y), int(z));
 }
+template<typename T>
+inline Vec3<T>::operator Vec3<int>() const { return this->asVec3i(); }
 
 //-----------------------------------------------------------
 
 template<typename T>
+template<typename S>
+inline Vec3<T>
+Vec3<T>::interpolateTo(const Vec3<T>& b,
+                       S              t) const
+{
+    if (t < std::numeric_limits<S>::epsilon())
+        return *this; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return b; // at or after last
+    const T tT    = T(t);
+    const T invtT = (T)1 - tT;
+    return Vec3<T>(this->x*invtT + b.x*tT, this->y*invtT + b.y*tT, this->z*invtT + b.z*tT);
+}
+template<typename T>
+template<typename S>
+inline Vec3<T>
+Vec3<T>::lerpTo(const Vec3<T>& b, S t) const { return this->interpolateTo(b, t); }
+
+template<typename T, typename S>
 inline Vec3<T>
 lerp(const Vec3<T>& v0,
      const Vec3<T>& v1,
-     T t)
+     S              t)
 {
-    const T it = (T)1 - t;
-    return Vec3<T>(v0.x*it + v1.x*t, v0.y*it + v1.y*t, v0.z*it + v1.z*t);
+    if (t < std::numeric_limits<S>::epsilon())
+        return v0; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return v1; // at or after last
+    const T tT    = T(t);
+    const T invtT = (T)1 - tT;
+    return Vec3<T>(v0.x*invtT + v1.x*tT, v0.y*invtT + v1.y*tT, v0.z*invtT + v1.z*tT);
 }
+template<typename T, typename S>
+inline Vec3<T>
+lerp(const Vec3<T>& v0,
+     const Vec3<T>& v1,
+     S              t,
+     S              invt)
+{
+    if (t < std::numeric_limits<S>::epsilon())
+        return v0; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return v1; // at or after last
+    const T tT    = T(t);
+    const T invtT = T(invt);
+    return Vec3<T>(v0.x*invtT + v1.x*tT, v0.y*invtT + v1.y*tT, v0.z*invtT + v1.z*tT);
+}
+
+// Interpolate between three Vec3s at barycentric coord st.
+template<typename T, typename S>
+inline Vec3<T>
+interpolateAtBaryCoord(const Fsr::Vec3<T>& v0,
+                       const Fsr::Vec3<T>& v1,
+                       const Fsr::Vec3<T>& v2,
+                       const Fsr::Vec2<S>& st)
+{
+    return Vec3<T>(v0 + ((v1 - v0)*T(st.x)) + ((v2 - v0)*T(st.y)));
+}
+
+// Interpolate between three Vec3s at barycentric coord st, with derivatives.
+template<typename T, typename S>
+inline void
+interpolateAtBaryCoord(const Fsr::Vec3<T>& v0,
+                       const Fsr::Vec3<T>& v1,
+                       const Fsr::Vec3<T>& v2,
+                       const Fsr::Vec2<S>& st,
+                       const Fsr::Vec2<S>& stdx,
+                       const Fsr::Vec2<S>& stdy,
+                       Fsr::Vec3<T>&       out,
+                       Fsr::Vec3<T>&       duout,
+                       Fsr::Vec3<T>&       dvout)
+{
+    const Fsr::Vec3<T> e01 = (v1 - v0);
+    const Fsr::Vec3<T> e02 = (v2 - v0);
+    const Fsr::Vec3<T> dt = (e01*T(st.x)) + (e02*T(st.y));
+    out   = v0 + dt;
+    duout = (e01*T(stdx.x)) + (e02*T(stdx.y)) - dt;
+    dvout = (e01*T(stdy.x)) + (e02*T(stdy.y)) - dt;
+}
+
+//-----------------------------------------------------------
 
 #ifdef DWA_INTERNAL_BUILD
 // Use a non-releasable DWA fast normalize routine when building internally.
@@ -423,7 +554,7 @@ Vec3<T>::orientAroundNormal(Vec3<T> N,
         const T s = (T)1 / ((T)1 + N.z);
         x = -(in.x*( iN.z + ( iN.y*iN.y*s)) + in.y*(        (-iN.x*iN.y*s)) + in.z*iN.x),
         y = -(in.x*(        (-iN.x*iN.y*s)) + in.y*( iN.z + ( iN.x*iN.x*s)) + in.z*iN.y),
-        z=  -(in.x*(-iN.x                 ) + in.y*(-iN.y                 ) + in.z*iN.z);
+        z = -(in.x*(-iN.x                 ) + in.y*(-iN.y                 ) + in.z*iN.z);
     }
     // No flipping required:
     const T s = (T)1 / ((T)1 + N.z);

@@ -23,6 +23,7 @@ pxr_plugin(${PXR_PACKAGE}
 
     CPPFILES
         usdReader.cpp
+        abcReader.cpp
 
 )
 
@@ -31,6 +32,7 @@ install(
         usdaReader.tcl
         usdcReader.tcl
         usdzReader.tcl
+        abcReader.tcl
     DESTINATION
         ${PXR_INSTALL_SUBDIR}/plugin
 )

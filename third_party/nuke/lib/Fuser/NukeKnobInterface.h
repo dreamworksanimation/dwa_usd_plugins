@@ -59,6 +59,16 @@ namespace Fsr {
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------
 
+//! Helper to set knob to a color via label html tags.
+FSR_EXPORT
+void setKnobLabel(DD::Image::Knob* k,
+                  const char*      label,
+                  const char*      color="");
+
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+
 
 /*! Helper class to pass to get/set methods that deal with DD::Image::ArrayKnobs.
 */
@@ -154,6 +164,8 @@ bool getBoolValue(DD::Image::Knob* k) { return ((k)?(k->get_value() > 0.5):false
     only store into floats (like XYZ_knob), so we leverage that to copy into Fuser
     double-precision Vector/Matrix classes.
 
+
+    TODO: add default value args to all these!
 */
 
 FSR_EXPORT
@@ -255,13 +267,13 @@ void getVec3Knob(const char*                     name,
 //! Copy a 4-float knob to a Fsr::Vec4d.
 FSR_EXPORT
 void getVec4Knob(DD::Image::Knob*                k,
-                     const DD::Image::OutputContext& context,
-                     Fsr::Vec4d&                     value);
+                 const DD::Image::OutputContext& context,
+                 Fsr::Vec4d&                     value);
 FSR_EXPORT
 void getVec4Knob(const char*                     name,
-                     const DD::Image::Op*            op,
-                     const DD::Image::OutputContext& context,
-                     Fsr::Vec4d&                     value);
+                 const DD::Image::Op*            op,
+                 const DD::Image::OutputContext& context,
+                 Fsr::Vec4d&                     value);
 
 //-------------------------------------------------------------------------
 
@@ -363,14 +375,14 @@ void storeMat4dInKnob(const Fsr::Mat4d&               value,
 FSR_EXPORT
 void storeDoublesInKnob(DD::Image::Knob*        k,
                         const ArrayKnobDoubles& vals,
-                        int                     knob_index_start,
+                        int                     element_offset,
                         int                     view);
 FSR_EXPORT
 void storeDoublesInKnob(DD::Image::Knob*           k,
                         const std::vector<double>& values,
                         int                        doubles_per_value,
                         const std::vector<double>& times,
-                        int                        knob_index_start,
+                        int                        element_offset,
                         int                        view);
 
 //-------------------------------------------------------------------------
@@ -424,50 +436,75 @@ getKnobValue(DD::Image::Knob*                k,
     DD::Image::Hash dummy_hash;
     k->store(store_type, value, dummy_hash, context);
 }
+
 //-------------------------------------------------------------------------
+
 inline void getStringKnob(DD::Image::Knob* k, const DD::Image::OutputContext& context, const char*& value)
     { getKnobValue<const char*>(k, context, DD::Image::StringPtr, &value); }
+
 inline void getStringKnob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, const char*& value)
     { getStringKnob(op->knob(name), context, value); }
+
 inline void getStringKnob(DD::Image::Knob* k, const DD::Image::OutputContext& context, std::string& value)
     { getKnobValue<std::string>(k, context, DD::Image::StlStringPtr, &value); }
+
 inline void getStringKnob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, std::string& value)
     { getStringKnob(op->knob(name), context, value); }
+
 //-------------------------------------------------------------------------
+
 inline void getDoubleKnob(DD::Image::Knob* k, const DD::Image::OutputContext& context, double& value)
     { getKnobValue<double>(k, context, DD::Image::DoublePtr, &value); }
+
 inline void getDoubleKnob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, double& value)
     { getDoubleKnob(op->knob(name), context, value); }
+
 inline void getFloatKnob(DD::Image::Knob* k, const DD::Image::OutputContext& context, float& value)
     { getKnobValue<float>(k, context, DD::Image::FloatPtr, &value); }
+
 inline void getFloatKnob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, float& value)
     { getFloatKnob(op->knob(name), context, value); }
+
 inline void getIntKnob(DD::Image::Knob* k, const DD::Image::OutputContext& context, int& value)
     { getKnobValue<int>(k, context, DD::Image::IntPtr, &value); }
+
 inline void getIntKnob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, int& value)
     { getIntKnob(op->knob(name), context, value); }
+
 inline void getUnsignedIntKnob(DD::Image::Knob* k, const DD::Image::OutputContext& context, uint32_t& value)
     { getKnobValue<uint32_t>(k, context, DD::Image::UnsignedIntPtr, &value); }
+
 inline void getUnsignedIntKnob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, uint32_t& value)
     { getUnsignedIntKnob(op->knob(name), context, value); }
+
 inline void getBoolKnob(DD::Image::Knob* k, const DD::Image::OutputContext& context, bool& value)
     { getKnobValue<bool>(k, context, DD::Image::BoolPtr, &value); }
+
 inline void getBoolKnob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, bool& value)
     { getBoolKnob(op->knob(name), context, value); }
+
 //-------------------------------------------------------------------------
+
 inline void getVec2Knob(DD::Image::Knob* k, const DD::Image::OutputContext& context, Fsr::Vec2d& value)
     { getKnobValue<double>(k, context, DD::Image::DoublePtr, value.array()); }
+
 inline void getVec2Knob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, Fsr::Vec2d& value)
     { getVec2Knob(op->knob(name), context, value); }
+
 inline void getVec3Knob(DD::Image::Knob* k, const DD::Image::OutputContext& context, Fsr::Vec3d& value)
     { getKnobValue<double>(k, context, DD::Image::DoublePtr, value.array()); }
+
 inline void getVec3Knob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, Fsr::Vec3d& value)
     { getVec3Knob(op->knob(name), context, value); }
+
 inline void getVec4Knob(DD::Image::Knob* k, const DD::Image::OutputContext& context, Fsr::Vec4d& value)
     { getKnobValue<double>(k, context, DD::Image::DoublePtr, value.array()); }
+
 inline void getVec4Knob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, Fsr::Vec4d& value)
     { getVec4Knob(op->knob(name), context, value); }
+
 //-------------------------------------------------------------------------
+
 inline void getMat4Knob(DD::Image::Knob* k, const DD::Image::OutputContext& context, Fsr::Mat4d& value)
 {
 #if 1

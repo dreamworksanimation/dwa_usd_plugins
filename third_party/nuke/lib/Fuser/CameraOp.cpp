@@ -198,7 +198,7 @@ FuserCameraOp::addTransformKnobs(DD::Image::Knob_Callback f)
                                          &this->localtransform_,
                                          &this->axis_knob,
                                          &this->_worldMatrixProvider);
-    //SceneXform::addLookatKnobs(f);
+    SceneXform::addLookatKnobs(f);
 }
 
 
@@ -515,9 +515,8 @@ FuserCameraOp::build_handles(DD::Image::ViewerContext* vtx)
     // Local knobs are drawn/manipulated in parent's space context,
     // so mult in just parent xform. vtx->modelmatrix will be saved
     // in each build-knob entry:
-    // TODO: mult the double-precision matrices together first so there's only one down convert here
-    vtx->modelmatrix *= m_input_matrix.asDDImage();
-    vtx->modelmatrix *= m_parent_matrix.asDDImage();
+    const Fsr::Mat4d concat_parent_matrix(m_input_matrix * m_parent_matrix);
+    vtx->modelmatrix *= concat_parent_matrix.asDDImage();
 
     // Let op build any of its local-space handles (3D transform, 2D controls, etc):
     if (k_editable)

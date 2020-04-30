@@ -72,6 +72,9 @@ const DD::Image::GroupType group_sort_order[] =
 };
 
 
+static char buf[1024];
+
+
 /*!
 */
 class ViewGeoAttributes : public GeoOp
@@ -167,8 +170,6 @@ SetFlags(f, Knob::ENDLINE);
         build_scene(*scene_);
         const unsigned nObjects = scene_->objects();
 
-        char buf[1024];
-
         {
             List_KnobI* list = knob("attribute_contents")->listKnob();
             assert(list);
@@ -200,36 +201,48 @@ SetFlags(f, Knob::ENDLINE);
                 snprintf(buf, 1024, "%d", obj); list->cell(row, 0) = buf; // obj index
 
                 const unsigned nAttribs = info.get_attribcontext_count();
-                // Put the 'name' attribute first:
                 int name_attrib = -1;
-                for (unsigned i=0; i < nAttribs; ++i)
+                if (nAttribs == 0)
                 {
-                    assert(info.get_attribcontext(i));
-                    const AttribContext& attrib = *info.get_attribcontext(i);
-                    if (attrib.empty())
-                        continue;
-                    if (strcmp(attrib.name, DD::Image::kNameAttrName)==0)
+                    // No attribs:
+                    list->cell(row, 1) = "<empty>"; // name
+                    list->cell(row, 2) = "<empty>"; // scope
+                    list->cell(row, 3) = "<empty>"; // type
+                    list->cell(row, 4) = "<empty>"; // value
+                    ++row;
+                }
+                else
+                {
+                    // Put the 'name' attribute first:
+                    for (unsigned i=0; i < nAttribs; ++i)
                     {
-                        name_attrib = i;
-                        list->cell(row, 1) = attrib.name; // name
-                        list->cell(row, 2) = scope_types[attrib.group]; // scope
-                        if (attrib.attribute->size() == 1)
-                            list->cell(row, 3) = attrib_types[attrib.type]; // type
-                        else
+                        assert(info.get_attribcontext(i));
+                        const AttribContext& attrib = *info.get_attribcontext(i);
+                        if (attrib.empty())
+                            continue;
+                        if (strcmp(attrib.name, DD::Image::kNameAttrName)==0)
                         {
-                            snprintf(buf, 1024, "%s[%d]", attrib_types[attrib.type], attrib.attribute->size());
-                            list->cell(row, 3) = buf; // type
-                        }
-                        if (attrib.type == STRING_ATTRIB)
-                            snprintf(buf, 1024, "'%s'", attrib.attribute->string(0));
-                        else if (attrib.type == STD_STRING_ATTRIB)
-                            snprintf(buf, 1024, "'%s'", attrib.attribute->stdstring(0).c_str());
-                        else
-                            snprintf(buf, 1024, "[error]");
-                        list->cell(row, 4) = buf;
-                        ++row;
+                            name_attrib = i;
+                            list->cell(row, 1) = attrib.name; // name
+                            list->cell(row, 2) = scope_types[attrib.group]; // scope
+                            if (attrib.attribute->size() == 1)
+                                list->cell(row, 3) = attrib_types[attrib.type]; // type
+                            else
+                            {
+                                snprintf(buf, 1024, "%s[%d]", attrib_types[attrib.type], attrib.attribute->size());
+                                list->cell(row, 3) = buf; // type
+                            }
+                            if (attrib.type == STRING_ATTRIB)
+                                snprintf(buf, 1024, "'%s'", attrib.attribute->string(0));
+                            else if (attrib.type == STD_STRING_ATTRIB)
+                                snprintf(buf, 1024, "'%s'", attrib.attribute->stdstring(0).c_str());
+                            else
+                                snprintf(buf, 1024, "[error]");
+                            list->cell(row, 4) = buf; // value
+                            ++row;
 
-                        break;
+                            break;
+                        }
                     }
                 }
 
@@ -240,7 +253,7 @@ SetFlags(f, Knob::ENDLINE);
 
                     for (unsigned i=0; i < nAttribs; ++i)
                     {
-                        if (i == name_attrib)
+                        if ((int)i == name_attrib)
                             continue; // already done!
 
                         assert(info.get_attribcontext(i));
@@ -380,7 +393,7 @@ SetFlags(f, Knob::ENDLINE);
 
             list->deleteAllItemsNoChanged();
 
-            if (k_select_obj >= 0 && k_select_obj < nObjects)
+            if (k_select_obj >= 0 && k_select_obj < (int)nObjects)
             {
                 const GeoInfo& info = scene_->object(k_select_obj);
 
@@ -429,8 +442,8 @@ SetFlags(f, Knob::ENDLINE);
                     else if (fsr_node)
                     {
                         // Fuser node:
-                        list->cell(row, 1) = "<Class>";
-                        list->cell(row, 2) = prim->Class();
+                        list->cell(row, 1) = "<FsrClass>";
+                        list->cell(row, 2) = fsr_node->fuserNodeClass();
                         ++row;
 
                         // Get arg set sorted alphabetically:
@@ -443,7 +456,16 @@ SetFlags(f, Knob::ENDLINE);
                             list->cell(row, 2) = it->second; // value
                             ++row;
                         }
+
+                        // TODO: make this a recursive call:
+                        if (fsr_node->numChildren() > 0)
+                        {
+                            for (unsigned i=0; i < fsr_node->numChildren(); ++i)
+                                addFuserNode(i, fsr_node->getChild(i), list, row);
+                        }
+
                         ++prim_cnt;
+
                     }
                     else
                     {
@@ -458,6 +480,44 @@ SetFlags(f, Knob::ENDLINE);
 
         return true; // call this again
     }
+
+    //!
+    void addFuserNode(int              offset,
+                      const Fsr::Node* node,
+                      List_KnobI*      list,
+                      int&             row)
+    {
+        list->cell(row, 0) = "   |<child>";
+        list->cell(row, 1) = "--------";
+        list->cell(row, 2) = "";
+        ++row;
+
+        // Fuser child node:
+        snprintf(buf, 1024, "   | %d", offset);
+        list->cell(row, 0) = buf; // child index
+        list->cell(row, 1) = "<Class>";
+        list->cell(row, 2) = node->fuserNodeClass();
+        ++row;
+
+        // Get arg set sorted alphabetically:
+        Fsr::KeyValueSortedMap sorted_args;
+        node->args().getAsSorted(sorted_args);
+        for (Fsr::KeyValueSortedMap::const_iterator it=sorted_args.begin(); it != sorted_args.end(); ++it)
+        {
+            list->cell(row, 0) = "";         // prim index
+            list->cell(row, 1) = it->first;  // name
+            list->cell(row, 2) = it->second; // value
+            ++row;
+        }
+
+        if (node->numChildren() > 0)
+        {
+            for (unsigned i=0; i < node->numChildren(); ++i)
+                addFuserNode(i, node->getChild(i), list, row);
+        }
+
+    }
+
 
 };
 

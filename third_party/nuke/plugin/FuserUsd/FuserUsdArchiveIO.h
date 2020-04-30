@@ -53,17 +53,12 @@ namespace Fsr {
 
 //-------------------------------------------------------------------------------
 
-//!
-bool isRenderablePrim(const Pxr::UsdPrim& prim);
 
 //!
-bool isBoundablePrim(const Pxr::UsdPrim& prim);
-
-
 Pxr::UsdPrim findMatchingPrimByType(const Pxr::UsdPrim& prim,
                                     const std::string&  prim_type);
 
-
+//!
 Pxr::UsdPrim findFirstMatchingPrim(const Pxr::UsdStageRefPtr& stage,
                                    const std::string&         start_path,
                                    const std::string&         prim_type);

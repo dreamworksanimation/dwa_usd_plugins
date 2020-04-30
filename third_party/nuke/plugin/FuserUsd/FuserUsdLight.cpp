@@ -169,7 +169,7 @@ FuserUsdLight::_execute(const Fsr::NodeContext& target_context,
     }
 
     // Let base class handle unrecognized targets:
-    return FuserUsdNode::_execute(target_context, target_name, target, src0, src1);
+    return FuserUsdXform::_execute(target_context, target_name, target, src0, src1);
 }
 
 

@@ -810,7 +810,7 @@ NodePrimitive::vertex_shader(int                          vert,
 */
 /*virtual*/
 void
-NodePrimitive::tessellate(DD::Image::Scene*            scene,
+NodePrimitive::tessellate(DD::Image::Scene*            render_scene,
                           DD::Image::PrimitiveContext* ptx) const
 {
     //std::cout << "NodePrimitive(" << getName() << ")::tessellate(" << this << ") m_node=" << m_node << std::endl;
@@ -818,8 +818,10 @@ NodePrimitive::tessellate(DD::Image::Scene*            scene,
         return;
 
     // Execute node to generate Nuke render prims:
-    RenderSceneTessellateContext rtess_ctx(this, scene, ptx);
-    m_node->execute(Fsr::NodeContext()/*target_context*/, RenderSceneTessellateContext::name, &rtess_ctx/*target*/);
+    DDImageRenderSceneTessellateContext rtess_ctx(this, ptx, render_scene);
+    m_node->execute(Fsr::NodeContext()/*target_context*/,
+                    DDImageRenderSceneTessellateContext::name,
+                    &rtess_ctx/*target*/);
 }
 
 //-----------------------------------------------------------------

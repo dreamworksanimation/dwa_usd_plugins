@@ -78,8 +78,8 @@ class FSR_EXPORT Box3
 
     //! Copy constructor
     template<typename S>
-    Box3(const Box3<S>& b) : min(T(b.min.x), T(b.min.y), T(b.min.z)),
-                             max(T(b.max.x), T(b.max.y), T(b.max.z)) {}
+    explicit Box3(const Box3<S>& b) : min(T(b.min.x), T(b.min.y), T(b.min.z)),
+                                      max(T(b.max.x), T(b.max.y), T(b.max.z)) {}
 
     Box3(const T array[6]) { memcpy(&this->min.x, array, 6*sizeof(T)); }
 
@@ -93,8 +93,11 @@ class FSR_EXPORT Box3
 
     explicit Box3(const Vec3<T>& v) : min(v), max(v) {}
 
-    explicit Box3(const Vec3<T>* points,
+    //! The resulting Box3 is the intersection of all the source points.
+    template<typename S>
+    explicit Box3(const Vec3<S>* points,
                   size_t         nPoints) { set(points, nPoints); }
+    //! The resulting Box3 is the intersection of all the source points transformed by 'xform'.
     template<typename S>
     explicit Box3(const Vec3<S>* points,
                   size_t         nPoints,
@@ -123,9 +126,12 @@ class FSR_EXPORT Box3
     void set(const Vec3<T>& v) { this->min = v; this->max = v; }
     //!
     void set(const Box3<T>& b) { *this = b; }
-    //!
-    void set(const Vec3<T>* points,
+
+    //! The resulting Box3 is the intersection of all the source points.
+    template<typename S>
+    void set(const Vec3<S>* points,
              size_t         nPoints);
+    //! The resulting Box3 is the intersection of all the source points transformed by 'xform'.
     template<typename S>
     void set(const Vec3<S>* points,
              size_t         nPoints,
@@ -156,6 +162,9 @@ class FSR_EXPORT Box3
     void                   toDDImage(DD::Image::Box3& out) const;
     inline DD::Image::Box3 asDDImage() const;
 
+    //! Add this to a DD::Image::Hash object, for DD::Image compatibility convenience.
+    void append(DD::Image::Hash& hash) const;
+
 
     /*---------------------------*/
     /*     Component Access      */
@@ -178,6 +187,9 @@ class FSR_EXPORT Box3
     T cy() const { return (this->min.y + this->max.y) / (T)2; } //!< center Y
     T cz() const { return (this->min.z + this->max.z) / (T)2; } //!< center Z
 
+    //! Return a Vec3 with width/height/depth in it.
+    Vec3<T> getDimensions() const { return Vec3<T>(this->w(), this->h(), this->d()); }
+
     //! Return the xyz coordinate of the bbox center.
     Vec3<T> getCenter() const { return (this->min + this->max) / (T)2; }
 
@@ -189,8 +201,8 @@ class FSR_EXPORT Box3
     T    maxDim() const { return std::max(this->min.maximum(), this->max.maximum()); }
 
     //! Returns true if point is inside the box.
-    bool isInside(const Vec3<T>& p) const;
-    bool isInside(T x, T y, T z) const;
+    bool pointIsInside(const Vec3<T>& p) const;
+    bool pointIsInside(T x, T y, T z) const;
 
     //! Expand or contract the box by a set amount.
     void pad(T d)              { this->min -= d; this->max += d; }
@@ -202,6 +214,12 @@ class FSR_EXPORT Box3
     void shift(T x, T y, T z)    { shift(Vec3<T>(x, y, z)); }
     void shiftMin(T x, T y, T z) { this->min += Vec3<T>(x, y, z); }
     void shiftMax(T x, T y, T z) { this->max += Vec3<T>(x, y, z); }
+
+    // TODO: these currently shift, is it more natural for them to do pad...?
+    Box3<T>  operator +  (const Vec3<T>& v) const { return Box3<T>(min+v, max+v); }
+    Box3<T>& operator += (const Vec3<T>& v)       { min += v; max += v; return *this; }
+    Box3<T>  operator -  (const Vec3<T>& v) const { return Box3<T>(min-v, max-v); }
+    Box3<T>& operator -= (const Vec3<T>& v)       { min -= v; max -= v; return *this; }
 
     //! Union the box with another. If this one is empty the other (non-empty) box is copied.
     void    expand(const Box3<T>& b,
@@ -231,11 +249,13 @@ class FSR_EXPORT Box3
                                   const Mat4<T>& m,
                                   Box2<T>&       box2D_out) const;
 
-    //! Interpolate between two bboxes.
-    Box3<T> interpolate(const Box3<T>& b,
-                        T              t) const;
-    Box3<T>        lerp(const Box3<T>& b,
-                        T              t) const;
+    //! Interpolate between this Box3 and another at t, where t=0..1.
+    template<typename S>
+    Box3<T> interpolateTo(const Box3<T>& b,
+                          S              t) const;
+    template<typename S>
+    Box3<T>        lerpTo(const Box3<T>& b,
+                          S              t) const;
 
 
   private:
@@ -269,7 +289,7 @@ typedef Box3<int>    Box3i;
 
 //! Print out components to a stream.
 template<typename T>
-std::ostream& operator << (std::ostream& o, const Vec3<T>& v);
+std::ostream& operator << (std::ostream& o, const Box3<T>& b);
 
 
 //! Build untransformed and transformed bboxes in one pass.
@@ -280,6 +300,17 @@ void getLocalAndTransformedBbox(const Vec3<T>*      points,
                                 const Fsr::Mat4<S>& xform,
                                 Fsr::Box3<S>&       xformed_bbox);
 
+//! Linear-interpolate between two Box3s at t, where t=0..1.
+template<typename T, typename S>
+Box3<T> lerp(const Box3<T>& v0,
+             const Box3<T>& v1,
+             S              t);
+//! Linear-interpolate between two Box3s at t, where t=0..1, and inv is 1-t.
+template<typename T, typename S>
+Box3<T> lerp(const Box3<T>& v0,
+             const Box3<T>& v1,
+             S              t,
+             S              invt);
 
 
 
@@ -288,6 +319,17 @@ void getLocalAndTransformedBbox(const Vec3<T>*      points,
 /*                   Inline Function Implementations                   */
 /*---------------------------------------------------------------------*/
 /*---------------------------------------------------------------------*/
+
+template<typename T>
+inline std::ostream& operator << (std::ostream& o, const Box3<T>& b)
+{
+    //o.setf(ios::fixed, ios::floatfield);
+    //o.precision(7);
+    o << '[' << b.min << ' ' << b.max << ']';
+    return o;
+}
+
+//-----------------------------------------------------------
 
 template<typename T>
 inline
@@ -312,17 +354,6 @@ Box3<T>::setToOne()
 {
     min.x = min.y = min.z = (T)1;
     max.x = max.y = max.z = (T)1;
-}
-
-template<typename T>
-inline std::ostream& operator << (std::ostream& o, const Box3<T>& b)
-{
-    //o.setf(ios::fixed, ios::floatfield);
-    //o.precision(7);
-    o << '[' << b.min.x << ' ' << b.min.y << ' ' << b.min.z << ", "
-             << b.max.x << ' ' << b.max.y << ' ' << b.max.z << ']'
-      << '(' << b.w() << ' ' << b.h() << ' ' << b.d() << ')';
-    return o ;
 }
 
 //-----------------------------------------------------------
@@ -372,6 +403,13 @@ inline Box3<T>::operator DD::Image::Box3() const
         return reinterpret_cast<DD::Image::Box3&>(const_cast<Box3<T>&>(*this));
     else
         return this->asDDImage();
+}
+
+template<typename T>
+inline void
+Box3<T>::append(DD::Image::Hash& hash) const
+{
+    hash.append(this->array(), 6*sizeof(T));
 }
 
 //-----------------------------------------------------------
@@ -434,7 +472,7 @@ Box3<T>::isEmpty() const
 
 template<typename T>
 inline bool
-Box3<T>::isInside(T x, T y, T z) const
+Box3<T>::pointIsInside(T x, T y, T z) const
 {
     const bool is_outside = (x < this->min.x || x > this->max.x ||
                              y < this->min.y || y > this->max.y ||
@@ -443,7 +481,7 @@ Box3<T>::isInside(T x, T y, T z) const
 }
 template<typename T>
 inline bool
-Box3<T>::isInside(const Vec3<T>& p) const { return isInside(p.x, p.y, p.z); }
+Box3<T>::pointIsInside(const Vec3<T>& p) const { return pointIsInside(p.x, p.y, p.z); }
 
 template<typename T>
 inline void
@@ -492,8 +530,9 @@ Box3<T>::expand(const DD::Image::Box3& b,
 }
 
 template<typename T>
+template<typename S>
 inline void
-Box3<T>::set(const Vec3<T>* points,
+Box3<T>::set(const Vec3<S>* points,
              size_t         nPoints)
 {
     if (nPoints == 0)
@@ -628,21 +667,56 @@ Box3<T>::project(const Mat4<T>& m,
 
 //! Interpolate between two bounding-boxes.
 template<typename T>
+template<typename S>
 inline Box3<T>
-Box3<T>::interpolate(const Box3<T>& b,
-                     T              t) const
+Box3<T>::interpolateTo(const Box3<T>& b,
+                       S              t) const
 {
     if (t < std::numeric_limits<T>::epsilon())
         return *this; // before or at first
     else if (t > ((T)1 - std::numeric_limits<T>::epsilon()))
         return b; // at or after last
-    else
-        return Box3<T>(b.min*((T)1 - t) + b.min*t,
-                       b.max*((T)1 - t) + b.max*t); // lerp
+    const T tT    = T(t);
+    const T invtT = (T)1 - tT;
+    return Box3<T>(b.min*invtT + b.min*tT,
+                   b.max*invtT + b.max*tT);
 }
 template<typename T>
+template<typename S>
 inline Box3<T>
-Box3<T>::lerp(const Box3<T>& b, T t) const { return this->interpolate(b, t); }
+Box3<T>::lerpTo(const Box3<T>& b, S t) const { return this->interpolateTo(b, t); }
+
+template<typename T, typename S>
+inline Box3<T>
+lerp(const Box3<T>& b0,
+     const Box3<T>& b1,
+     S              t)
+{
+    if (t < std::numeric_limits<S>::epsilon())
+        return b0; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return b1; // at or after last
+    const T tT    = T(t);
+    const T invtT = (T)1 - tT;
+    return Box3<T>(b0.min*invtT + b1.min*tT,
+                   b0.max*invtT + b1.max*tT);
+}
+template<typename T, typename S>
+inline Box3<T>
+lerp(const Box3<T>& b0,
+     const Box3<T>& b1,
+     S              t,
+     S              invt)
+{
+    if (t < std::numeric_limits<S>::epsilon())
+        return b0; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return b1; // at or after last
+    const T tT    = T(t);
+    const T invtT = T(invt);
+    return Box3<T>(b0.min*invtT + b1.min*tT,
+                   b0.max*invtT + b1.max*tT);
+}
 
 
 } //namespace Fsr

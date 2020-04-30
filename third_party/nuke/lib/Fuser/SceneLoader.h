@@ -120,6 +120,12 @@ class FSR_EXPORT SceneLoader : public Fsr::NodeIOInterface,
         bool        euler_filter_enable;    //!< Enable euler filter on rotations
         bool        parent_extract_enable;  //!< Split the parent xform out from the local
         //
+        bool        k_copy_specular;
+        int         k_hero_view;
+        //
+        int         k_cam_frame_mode;
+        double      k_cam_frame_offset;
+        //
         bool        read_debug;             //!< Print debug info during file loading
         bool        archive_debug;          //!< Print debug info during archive file handling
     };

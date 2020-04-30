@@ -30,10 +30,9 @@
 #include "FuserUsdNode.h"
 
 #include <Fuser/ArgConstants.h> // for attrib names constants
-#include <Fuser/ExecuteTargetContexts.h>
 
-#include <DDImage/GeoInfo.h>
-#include <DDImage/GeometryList.h>
+//#include <DDImage/GeoInfo.h>
+//#include <DDImage/GeometryList.h>
 
 
 #if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
@@ -42,11 +41,11 @@
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
 
+// For 'prim.IsA<>' tests:
 #  include <pxr/usd/usdGeom/scope.h>
 #  include <pxr/usd/usdGeom/xform.h>
 #  include <pxr/usd/usdGeom/camera.h>
 #  include <pxr/usd/usdGeom/mesh.h>
-
 #  include <pxr/usd/usdShade/shader.h>
 #  include <pxr/usd/usdShade/material.h>
 
@@ -62,89 +61,21 @@ namespace Fsr {
 
 /*!
 */
-FuserUsdNode::FuserUsdNode(const Pxr::UsdStageRefPtr& stage,
-                           const Fsr::ArgSet&         args,
-                           Fsr::Node*                 parent) :
-    Fsr::XformableNode(args, parent),
+FuserUsdNode::FuserUsdNode(const Pxr::UsdStageRefPtr& stage) :
     m_stage(stage),
     m_time(0.0)
 {
-    // Copy geo debug into primary node debug:
-    const bool geo_debug = args.getBool(Arg::NukeGeo::read_debug, false);
-    if (geo_debug)
-        setBool(Arg::node_debug, true);
-
-#if 0
-    if (debug())
-    {
-        static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
-
-        std::cout << "      FuserUsdNode::ctor(" << this << "):";
-        std::cout << " frame=" << getDouble("frame") << ", output_frame=" << getDouble("output_frame");
-        std::cout << ", fps=" << getDouble("fps");
-        std::cout << std::endl;
-        std::cout << "        fsrUSDIO:node:class='" << getString("fsrUSDIO:node:class") << "'" << std::endl;
-        std::cout << "        path='" << getString(Arg::Scene::path) << "'" << std::endl;
-    }
-#endif
+    //
 }
 
 
 /*!
 */
+/*virtual*/
 FuserUsdNode::~FuserUsdNode()
 {
     // Don't release the archive here! We want the archive pointer to
     // stick around for multiple uses of the same FuserUsdNode path.
-
-    //abc_archive_map.releaseCache(getString(Arg::Scene::file));
-}
-
-
-/*! Called before evaluation starts to allow node to prep any data prior to rendering.
-    Updates time value and possibly local transform.
-*/
-/*virtual*/ void
-FuserUsdNode::_validateState(const Fsr::NodeContext& args,
-                             bool                    for_real)
-{
-    Fsr::XformableNode::_validateState(args, for_real);
-
-    m_time = getDouble("frame") / getDouble("fps");
-
-    const bool get_xform = getBool("reader:apply_matrix", true);
-    if (get_xform)
-    {
-        // TODO: implement! m_xform = getTransformAtTime(AbcSearch::getParentXform(object()), m_time);
-        m_have_xform = !m_xform.isIdentity();
-    }
-    else
-    {
-        m_xform.setToIdentity();
-        m_have_xform = false;
-    }
-
-    // Clear the bbox:
-    m_local_bbox.setToEmptyState();
-}
-
-
-/*! Prints an unrecognized-target warning in debug mode and returns 0 (success).
-*/
-/*virtual*/ int
-FuserUsdNode::_execute(const Fsr::NodeContext& target_context,
-                       const char*             target_name,
-                       void*                   target,
-                       void*                   src0,
-                       void*                   src1)
-{
-    // Don't throw an error on an unrecognized target:
-    if (debug())
-    {
-        std::cerr << fuserNodeClass() << ": warning, cannot handle target type '" << target_name << "'";
-        std::cerr << ", ignoring." << std::endl;
-    }
-    return 0; // no user-abort
 }
 
 
@@ -152,52 +83,234 @@ FuserUsdNode::_execute(const Fsr::NodeContext& target_context,
 //-------------------------------------------------------------------------------
 
 
-/*!
 
-    UsdTyped/
-        UsdGeomImageable/
-            * UsdGeomScope *
-            UsdGeomXformable/
-                * UsdGeomCamera *
-                * UsdGeomXform *
-                UsdGeomBoundable/
-                    UsdGeomGprim/
-                        * UsdGeomCapsule *
-                        * UsdGeomCone *
-                        * UsdGeomCube *
-                        * UsdGeomCylinder *
-                        * UsdGeomPointBased *
-                        * UsdGeomSphere *
-                    * UsdGeomPointInstancer *
+/*! Make sure the prim is Loaded, and is Valid, Defined, and Active.
+    Returns false if prim is not Valid, not Active, not Defined, or
+    it failed to Load.
 
+    This fails silently so if you want specific info about why the
+    prim is not useable call the version that returns an ErrorNode
+    which will contain that info.
 */
-static void findXformNodes(const Pxr::UsdPrim&                       prim,
-                           std::vector<Pxr::UsdPrimSiblingIterator>& xformables)
+/*static*/
+bool
+FuserUsdNode::isLoadedAndUseablePrim(const Pxr::UsdPrim& prim)
 {
-    std::cout << "  findXformNodes() prim='" << prim.GetPath() << "'" << std::endl;
+    // Only load Prims that are Active (enabled) and not Abstract:
+    if (!prim.IsActive() || prim.IsAbstract())
+        return false;
 
-#if 1
-    for (auto child=TfMakeIterator(prim.GetAllChildren()); child; ++child)
-#else
-    for (auto child=TfMakeIterator(prim.GetFilteredChildren(Pxr::UsdPrimIsModel)); child; ++child)
+    // Expand (load) all payloads - this can be expensive, but we can't
+    // avoid it since we need to traverse the payload's graph too.
+    if (!prim.IsLoaded())
+    {
+        //std::cout << "LOADING '" << prim.GetPath() << "'" << std::endl;
+        // Don't load decendents automatically:
+        // Note this works even though we're dealing with a const prim...:
+        prim.Load(Pxr::UsdLoadWithDescendants);//Pxr::UsdLoadWithoutDescendants
+    }
+
+    // Only consider Prims that are now Loaded, Valid (filled) and
+    // Defined (not an over), and test again that it's still Active:
+    if (!prim.IsLoaded() || !prim.IsDefined() || !prim.IsValid() || !prim.IsActive())
+        return false;
+
+    return true; // prim ok!
+}
+
+
+/*! Make sure the prim is Loaded, and is Valid, Defined, and Active.
+
+    Returns NULL if no error otherwise a newly allocated ErrorNode which
+    will contains more specific info about the error. The calling method
+    must take ownership of the allocation and delete it after copying
+    any relevant info.
+
+    The returned ErrorNode will detail if the prim is not Valid,
+    not Active, not Defined, or it failed to Load.
+*/
+/*static*/
+Fsr::ErrorNode*
+FuserUsdNode::isLoadedAndUseablePrim(const char*         fsr_builder_class,
+                                     const Pxr::UsdPrim& prim,
+                                     const char*         prim_load_path,
+                                     bool                debug_loading)
+{
+    if (!prim.IsValid())
+        return new Fsr::ErrorNode(fsr_builder_class,
+                                  -2,
+                                  "prim '%s' is not Valid() for an unknown USD reason.",
+                                   prim.GetName().GetString().c_str());
+
+    // Only handle Prims that are Active (enabled) and not Abstract:
+    if (!prim.IsActive())
+        return new Fsr::ErrorNode(fsr_builder_class, -2, "could not load inactive prim '%s'", prim_load_path);
+
+    if (prim.IsAbstract())
+        return new Fsr::ErrorNode(fsr_builder_class, -2, "could not load abstract prim '%s'", prim_load_path);
+
+    // Make sure the prim is loaded before checking IsActive again, IsValid, or IsDefined:
+    if (!prim.IsLoaded())
+    {
+        if (debug_loading)
+        {
+            static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
+            std::cout << "      prim.IsLoaded=" << prim.IsLoaded() << " ... LOADING NOW!" << std::endl;
+        }
+
+        // Load the prim here. LoadWithoutDescendents mean load the parents of
+        // this node and the node itself, but not any children:
+        prim.Load(Pxr::UsdLoadWithoutDescendants/*Pxr::UsdLoadWithDescendants*/);
+
+        // Check if the load happened:
+        if (!prim.IsLoaded())
+        {
+            // Hard to debug this logic unless this prints an error to shell:
+            if (debug_loading)
+            {
+                static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
+                std::cerr << "FuserUsdNode::isLoadedAndUseablePrim('" << prim_load_path << "'): ";
+                std::cerr << "error, could not load undefined USD prim type <" << prim.GetTypeName() << ">";
+                std::cerr << ", ignored" << std::endl;
+            }
+            return new Fsr::ErrorNode(fsr_builder_class,
+                                      -2,
+                                      "prim '%s' could not be Loaded() for an unknown USD reason.",
+                                      prim.GetName().GetString().c_str());
+        }
+    }
+
+
+    // Ok the prim is now loaded and introspectable, let's print some info
+    // about it:
+    if (debug_loading)
+    {
+        static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
+        std::cout << "      ";
+        //if (object_index >= 0)
+        //    std::cout << object_index;
+        std::cout << "'" << prim_load_path << "': ";
+        std::cout << " IsValid=" << prim.IsValid();
+        if (!prim.IsValid())
+        {
+            std::cout << " - skipping";
+        }
+        else
+        {
+            std::cout << ", IsLoaded=" << prim.IsLoaded();
+            if (prim.GetTypeName() != "")
+                std::cout << ", type='" << prim.GetTypeName() << "'";
+
+            std::cout << ", HasPayload=" << prim.HasPayload();
+#if 0
+            if (prim.HasPayload())
+            {
+                Pxr::SdfPayload payload;
+                if (prim.GetMetadata<Pxr::SdfPayload>(Pxr::SdfFieldKeys->Payload, &payload))
+                {
+                    std::cout << ", payload='" << payload.GetAssetPath() << "'";
+                }
+            }
 #endif
-    {
-        std::cout << "    node'" << child->GetPath() << "'[" << child->GetTypeName() << "]";
-        Pxr::SdfPrimSpecHandle spec = child->GetPrimDefinition();
-        if (spec)
-            std::cout << ", Kind='" << spec->GetKind() << "'";
-        std::cout << ", IsAbstract=" << child->IsAbstract();
-        //std::cout << ", isModel=" << child->IsModel();
-        //std::cout << ", isCamera=" << child->IsA<Pxr::UsdGeomCamera>();
-        //std::cout << ", isScope=" << child->IsA<Pxr::UsdGeomScope>();
-        std::cout << ", isXform=" << child->IsA<Pxr::UsdGeomXformable>();
+
+#if 0
+            // TODO: Ignore variant sets for now:
+            Pxr::UsdVariantSets variantSets = prim.GetVariantSets();
+            std::vector<std::string> names; variantSets.GetNames(&names);
+            std::cout << ", variants[";
+            for (size_t i=0; i < names.size(); ++i)
+            {
+                const std::string& variantName = names[i];
+                std::string variantValue =
+                        variantSets.GetVariantSet(
+                                variantName).GetVariantSelection();
+                std::cout << " " << variantName << ":" << variantValue;
+            }
+            std::cout << " ]";
+#endif
+
+            printPrimAttributes(" attribs", prim, false/*verbose*/, std::cout);
+        }
         std::cout << std::endl;
-
-        if (child->IsA<Pxr::UsdGeomXformable>())
-            xformables.push_back(child);
-
-        findXformNodes(*child, xformables);
     }
+
+
+    // Handle prim states that don't allow us to create anything:
+    if (!prim.IsActive())
+    {
+        // Prim may have been de-activated after Loading()
+        return new Fsr::ErrorNode(fsr_builder_class, -2, "could not load inactive prim '%s'", prim_load_path);
+    }
+
+    if (!prim.IsValid())
+        return new Fsr::ErrorNode(fsr_builder_class, -2, "could not load invalid prim '%s'", prim_load_path);
+
+    if (!prim.IsDefined())
+    {
+        // Hard to debug this logic unless this always prints an error to shell:
+        {
+            static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
+            std::cerr << "FuserUsdNode::isLoadedAndUseablePrim('" << prim_load_path << "'): ";
+            std::cerr << "error, could not load undefined USD prim type <" << prim.GetTypeName() << ">";
+            std::cerr << ", ignored" << std::endl;
+        }
+        return new Fsr::ErrorNode(fsr_builder_class,
+                                  -2,
+                                  "could not load undefined prim '%s' of type '%s'",
+                                  prim_load_path,
+                                  prim.GetTypeName().GetString().c_str());
+    }
+
+    // No error!
+    return NULL;
+}
+
+
+/*! Is the prim able to be rendered (rasterized)?
+*/
+/*static*/ bool
+FuserUsdNode::isRenderablePrim(const Pxr::UsdPrim& prim)
+{
+    if (prim.IsA<Pxr::UsdGeomMesh>())
+        return true;
+
+    // TODO: check for other renderable types here? Curves? Volumes? Pointclouds?
+
+    return false;
+}
+
+
+/*! Does the prim support bounds (a bounding-box)?
+*/
+/*static*/ bool
+FuserUsdNode::isBoundablePrim(const Pxr::UsdPrim& prim)
+{
+    // TODO: this logic is from the UsdKatana plugin - do we need the same?
+#if 0
+    if (prim.IsModel() &&
+        ((!prim.IsGroup()) || PxrUsdKatanaUtils::ModelGroupIsAssembly(prim)))
+        return true;
+
+    if (PxrUsdKatanaUtils::PrimIsSubcomponent(prim))
+        return true;
+
+#endif
+    return prim.IsA<Pxr::UsdGeomBoundable>();
+}
+
+
+/*! Is the prim a usdShade prim?
+*/
+/*static*/ bool
+FuserUsdNode::isShadingPrim(const Pxr::UsdPrim& prim)
+{
+    return (prim.IsA<Pxr::UsdShadeMaterial>()  ||
+            prim.IsA<Pxr::UsdShadeNodeGraph>() ||
+            prim.IsA<Pxr::UsdShadeShader>());
 }
 
 

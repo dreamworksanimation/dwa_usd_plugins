@@ -179,7 +179,7 @@ FuserAxisOp::addTransformKnobs(DD::Image::Knob_Callback f)
                                          &this->localtransform_,
                                          &this->axis_knob,
                                          &this->_worldMatrixProvider);
-    //SceneXform::addLookatKnobs(f);
+    SceneXform::addLookatKnobs(f);
 }
 
 

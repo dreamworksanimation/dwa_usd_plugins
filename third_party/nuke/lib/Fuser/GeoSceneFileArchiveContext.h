@@ -30,6 +30,7 @@
 #define Fuser_GeoSceneFileArchiveContext_h
 
 #include "Node.h" // for NodeFilterPatternList, string, vector
+#include "ExecuteTargetContexts.h"
 
 #include <DDImage/Hash.h>
 
@@ -70,8 +71,8 @@ class FSR_EXPORT GeoSceneFileArchiveContext
     //
     std::vector<std::string>    populate_path_masks;    //!< Archive path population mask patterns
     //
-    std::set<std::string>       selected_paths;         //!< List of enabled node paths
-    DD::Image::Hash             selected_paths_hash;    //!< Hash values of selected paths
+    Fsr::NodePathSelections     selected_node_paths;    //!< List of enabled(selected) node paths
+    DD::Image::Hash             selected_node_paths_hash;   //!< Hash values of selected node paths
     //
     std::string                 archive_context_id;     //!< Archive context identifier string
     DD::Image::Hash             archive_context_hash;   //!< Hash value for archive context

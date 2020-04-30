@@ -52,7 +52,7 @@ namespace Fsr {
 //-------------------------------------------------------------------------
 
 static const char* default_attribute_mappings =
-   "color=Cf   Cd=Cf\n"
+   "color=Cf Cd=Cf\n"
    "UV=uv\n"
 #ifdef DWA_INTERNAL_BUILD
    "pscale=size\n"
@@ -65,7 +65,10 @@ static const char* default_attribute_mappings =
 static Fsr::StringSet attrib_const_strings;
 
 enum { SUBD_OFF, SUBD_LO, SUBD_HI, SUBD_DISPLAY, SUBD_1, SUBD_2, SUBD_3, SUBD_4, SUBD_5 };
-const char* const subd_levels[] = {"off", "subd_lo", "subd_hi", "subd_display", "1", "2", "3", "4", 0 };
+const char* const subd_levels[] = { "off", "subd_lo", "subd_hi", "subd_display", "1", "2", "3", "4", 0 };
+
+enum { SUBD_TESSELLATOR_OPENSUBDIV, SUBD_TESSELLATOR_SIMPLESUBDIV };
+const char* const subd_tessellators[] = { "OpenSubdiv", "SimpleSubdiv", 0 };
 
 enum { POINTS_ARE_POINTCLOUD_SPHERES, POINTS_ARE_POINTCLOUD_DISCS, POINTS_ARE_PARTICLES };
 const char* const points_modes[] = { "pointclouds-spheres", "pointcloud-discs", "particles", 0 };
@@ -100,6 +103,7 @@ enum
     SUBD_RENDER_LEVEL_KNOB,
     SUBD_FORCE_ENABLE_KNOB,
     SUBD_SNAP_TO_LIMIT_KNOB,
+    SUBD_TESSELLATOR_KNOB,
     //
     POINTS_MODE_KNOB,
     USE_COLORS_KNOB,
@@ -127,6 +131,7 @@ static const KnobMap knob_map[] =
     { "subd_render_level",    "reader:subd_render_level"  }, // SUBD_RENDER_LEVEL_KNOB,
     { "subd_force_enable",    "reader:subd_force_enable"  }, // SUBD_FORCE_ENABLE_KNOB,
     { "subd_snap_to_limit",   "reader:subd_snap_to_limit" }, // SUBD_SNAP_TO_LIMIT_KNOB,
+    { "subd_tessellator",     "reader:subd_tessellator"   }, // SUBD_TESSELLATOR_KNOB,
     //
     { "point_render_mode",    "reader:point_render_mode"  }, // POINTS_MODE_KNOB,
     { "use_geometry_colors",  "reader:use_geometry_colors"}, // USE_COLORS_KNOB,
@@ -169,6 +174,7 @@ FuserGeoReaderFormat::FuserGeoReaderFormat(ReadGeo* geo)
     k_subd_render_level     = SUBD_OFF;
     k_subd_force_enable     = false;
     k_subd_snap_to_limit    = false;
+    k_subd_tessellator      = SUBD_TESSELLATOR_OPENSUBDIV;
     //
     k_use_colors            = true;
     k_color_facesets        = false;
@@ -212,17 +218,15 @@ FuserGeoReaderFormat::addTimeOptionsKnobs(Knob_Callback f)
         Tooltip(f,  "If true allow non-integer frame samples to be read from file.\n"
                     "Only available if we're not manually setting the frame.");
     Newline(f);
-    Double_knob(f, &k_set_frame, "lock_frame", "set read frame");
+    Double_knob(f, &k_set_frame, "set_frame", "set read frame");
         SetFlags(f, Knob::EARLY_STORE | Knob::NO_MULTIVIEW); ClearFlags(f, Knob::SLIDER);
         ClearFlags(f, Knob::LOG_SLIDER);
         Tooltip(f, "Use this frame number when 'read on each frame' is false.");
-    // TODO: change the name of lock_frame to 'set_frame' in nuke_plugins-5.0, and enable this
-    // obsolete knob mapping:
-    //Obsolete_knob(f, "lock_frame", "knob set_frame $value");
+    Obsolete_knob(f, "lock_frame", "knob set_frame $value");
 
     Double_knob(f, &k_frames_per_second, IRange(1,96), knob_map[FPS_KNOB].readerKnob, "frame rate");
         SetFlags(f, Knob::EARLY_STORE | Knob::NO_MULTIVIEW | Knob::NO_ANIMATION); ClearFlags(f, Knob::SLIDER | Knob::STARTLINE);
-        Tooltip(f, "This is the frame rate (frames per second) used to sample the abc file.");
+        Tooltip(f, "This is the frame rate (frames per second) used to sample the geometry file.");
 }
 
 
@@ -308,6 +312,12 @@ FuserGeoReaderFormat::addPrimOptionsKnobs(Knob_Callback f)
                     "The will make the resulting mesh more accurate to the ideal subd surface profile "
                     "(the 'limit surface') but will not allow the mesh to be further subdivided properly "
                     "since the point locations are no longer aligned with the original cage.");
+    Enumeration_knob(f, &k_subd_tessellator, subd_tessellators, knob_map[SUBD_TESSELLATOR_KNOB].readerKnob, "tessellator");
+        ClearFlags(f, Knob::STARTLINE);
+        Tooltip(f,  "Tessellator scheme to use for subdividing\n"
+                    "OpenSubdiv (default, uses the OpenSubdiv library)\n"
+                    "SimpleSubdiv (buggy, naive, kinda-sorta-works, use as fallback only)\n"
+                    "\n");
     Obsolete_knob(f, "import_subd_level", "knob subd_import_level $value");
     Obsolete_knob(f, "render_subd_level", "knob subd_render_level $value");
     //------------------------------------
@@ -358,7 +368,7 @@ FuserGeoReaderFormat::extraKnobs(Knob_Callback f)
 {
     //std::cout << "FuserGeoReaderFormat::extraKnobs()" << std::endl;
     Tab_knob(f, "AttributeMap");
-    Text_knob(f, "mapping syntax: '<abc attrib name>=<out attrib name>'");
+    Text_knob(f, "mapping syntax: '<file attrib name>=<out attrib name>'");
     Newline(f);
     Multiline_String_knob(f, &k_attribute_mappings, knob_map[ATTRIBUTE_MAPPINGS_KNOB].readerKnob, "attribute mappings", 10/*lines*/);
         SetFlags(f, Knob::EARLY_STORE);
@@ -397,6 +407,7 @@ FuserGeoReaderFormat::append(DD::Image::Hash& hash)
     hash.append(k_subd_render_level);
     hash.append(k_subd_force_enable);
     hash.append(k_subd_snap_to_limit);
+    hash.append(k_subd_tessellator);
     //
     hash.append(k_points_mode);
     //
@@ -484,6 +495,7 @@ FuserGeoReader::filePathForReader()
         m_filename_for_reader = NodeIOInterface::getTrimmedPath(geo->fname());
     }
 
+    //std::cout << "FuserGeoReader::filePathForReader() filename=" << m_filename_for_reader << std::endl;
     return m_filename_for_reader.c_str();
 }
 
@@ -592,6 +604,7 @@ FuserGeoReader::get_geometry_hash(DD::Image::Hash* geo_hashes)
         knob_hash.append(options->k_subd_render_level);
         knob_hash.append(options->k_subd_force_enable);
         knob_hash.append(options->k_subd_snap_to_limit);
+        knob_hash.append(options->k_subd_tessellator);
         //
         knob_hash.append(options->k_points_mode);
         //
@@ -638,7 +651,7 @@ FuserGeoReader::get_geometry_hash(DD::Image::Hash* geo_hashes)
         geo_hashes[Group_Object    ].append(knob_hash);
         geo_hashes[Group_Attributes].append(knob_hash);
     }
-    //std::cout << "  hash out=" << std::hex << geo_hashes[Group_Points] << std::dec << std::endl;
+    //std::cout << "  hash out=" << std::hex << geo_hashes[Group_Points].value() << std::dec << std::endl;
 }
 
 
@@ -707,42 +720,6 @@ FuserGeoReader::_validate(const bool for_real)
         //std::cout << " file='" << geo->getFilename() << "'" << std::endl;
     }
 
-
-    // Get attribute name mappings - only updates on text changes:
-    DD::Image::Hash attrib_map_hash;
-    Knob* k = geo->knob("attribute_mappings"); if (k) attrib_map_hash.append(k->get_text());
-    if (attrib_map_hash != m_attrib_map_hash)
-    {
-        m_attrib_map_hash = attrib_map_hash;
-        m_attribute_mappings.clear();
-
-        const char* str = k->get_text();
-        if (str && str[0])
-        {
-            std::vector<std::string> mappings; mappings.reserve(5);
-            Fsr::stringSplit(str, ";, \t\n\r", mappings);
-            for (unsigned i=0; i < mappings.size(); ++i)
-            {
-                const std::string& mapping = mappings[i];
-
-                // Split mapping into from/to:
-                size_t a = mapping.find_first_of('=');
-                if (a == std::string::npos)
-                    continue; // no '=' sign, skip it
-
-                std::string from(mapping.substr(0, a));
-                std::string to(mapping.substr(a+1, std::string::npos));
-
-                // Skip empty mappings:
-                if (from.empty() || to.empty())
-                    continue;
-
-                m_attribute_mappings[from] = to;
-                //std::cout << "  '" << mapping << "': '" << from << "'->'" << to << "'" << std::endl;
-            }
-        }
-    }
-
     DD::Image::Hash file_hash = getFileHash();
     if (file_hash != m_file_hash)
     {
@@ -765,6 +742,30 @@ FuserGeoReader::getObjectPathsForReader()
 }
 
 
+/*! Get the list of material names(paths) to read in during geometry_engine.
+    Base class returns an empty set.
+*/
+/*virtual*/
+const std::set<std::string>&
+FuserGeoReader::getMaterialPathsForReader()
+{
+    static std::set<std::string> empty_set;
+    return empty_set;
+}
+
+
+/*! Get the list of light names(paths) to read in during geometry_engine.
+    Base class returns an empty set.
+*/
+/*virtual*/
+const std::set<std::string>&
+FuserGeoReader::getLightPathsForReader()
+{
+    static std::set<std::string> empty_set;
+    return empty_set;
+}
+
+
 /*! Calls _updateReaderUI() if Nuke is in GUI mode.
 */
 void
@@ -775,6 +776,91 @@ FuserGeoReader::updateReaderUI()
         this->_validate(false);
         _updateReaderUI();
     }
+}
+
+
+/*! Extract the to/from attribute name mappings from a text entry.
+
+    Name mapping syntax: <file-attrib-name>=<out-attrib-name>'
+
+    If out-attrib-name is empty then the file attrib is ignored.
+    Examples:
+       color=Cf, Cd=Cf, UV=uv, st=uv  (more than one mapping on a line)
+       pscale=size
+       render_part_dwa_mm_part_enum=  (empty mapping, file attrib is ignored)
+*/
+/*static*/
+void
+FuserGeoReader::buildAttributeMappings(const char*            txt,
+                                       Fsr::KeyValueMap&      file_to_nuke_map,
+                                       Fsr::KeyValueMultiMap& nuke_to_file_map)
+{
+    //std::cout << "FuserGeoReader::buildAttributeMappings('" << txt << "')" << std::endl;
+    file_to_nuke_map.clear();
+    nuke_to_file_map.clear();
+
+    if (!txt || !txt[0])
+        return;
+
+    std::vector<std::string> mappings; mappings.reserve(10);
+    Fsr::stringSplit(txt, ";, \t\n\r", mappings);
+
+    for (unsigned i=0; i < mappings.size(); ++i)
+    {
+        const std::string& mapping = mappings[i];
+
+        // Split mapping into from/to:
+        size_t a = mapping.find_first_of('=');
+        if (a == std::string::npos)
+            continue; // no '=' sign, skip it
+
+        const std::string file_attrib = stringTrim(mapping.substr(0, a));
+        const std::string nuke_attrib = stringTrim(mapping.substr(a+1, std::string::npos));
+
+        // Skip empty mappings:
+        if (file_attrib.empty() || nuke_attrib.empty())
+            continue;
+
+        file_to_nuke_map[file_attrib] = nuke_attrib;
+        nuke_to_file_map.insert(std::pair<std::string, std::string>(nuke_attrib, file_attrib));
+        //std::cout << "  '" << mapping << "': file'" << file_attrib << "'->nuke'" << nuke_attrib << "'" << std::endl;
+    }
+}
+
+
+/*! If the file_attrib exists in the attrib_map return the nuke attrib mapped name.
+*/
+/*static*/
+std::string
+FuserGeoReader::getFileToNukeAttribMapping(const char*             file_attrib,
+                                           const Fsr::KeyValueMap& file_to_nuke_map)
+{
+    const Fsr::KeyValueMap::const_iterator it = file_to_nuke_map.find(std::string(file_attrib));
+    if (it != file_to_nuke_map.end())
+        return it->second;
+    return std::string();
+}
+
+
+/*! Map a nuke attrib name to possible multiple file attrib names.
+    The order of preference is likely alphabetical.
+*/
+/*static*/
+uint32_t
+FuserGeoReader::getNukeToFileAttribMappings(const char*                  nuke_attrib,
+                                            const Fsr::KeyValueMultiMap& nuke_to_file_map,
+                                            std::vector<std::string>&    mappings)
+{
+    const uint32_t nVals = (uint32_t)nuke_to_file_map.count(std::string(nuke_attrib));
+    mappings.clear();
+    if (nVals > 0)
+    {
+        mappings.reserve(nVals);
+        Fsr::KeyValueMultiMap::const_iterator it = nuke_to_file_map.find(std::string(nuke_attrib));
+        for (uint32_t i=0; i < nVals; ++i, ++it)
+            mappings.push_back(it->second);
+    }
+    return nVals;
 }
 
 
@@ -939,9 +1025,66 @@ FuserGeoReader::readObject(const std::string&               path,
     // from 'scene:file' and cached by the Fsr::NodePrimitive.
     // Adds DD::Image::Primitives to GeometryList, and updates animating info:
     int added_objects = Fsr::NodePrimitive::addGeometryToScene(fuserIOClass(),     /* .so plugin name */
-                                                          prim_creation_mode, /* immediate/deferred */
-                                                          node_ctx,
-                                                          geo_ctx);
+                                                               prim_creation_mode, /* immediate/deferred */
+                                                               node_ctx,
+                                                               geo_ctx);
+    if (added_objects < 0)
+    {
+        //throw geo error
+        return true;
+    }
+
+    return true;
+}
+
+
+/*! Thread-safe object loader entry point called by ThreadedGeometryEngine instance.
+    Returns false on user-abort.
+*/
+bool
+FuserGeoReader::readMaterial(const std::string&               path,
+                             Fsr::NodeContext&                node_ctx,
+                             Fsr::GeoOpGeometryEngineContext& geo_ctx)
+{
+    //std::cout << "      FuserGeoReader::readObject(" << this << ") thread=" << std::hex << DD::Image::Thread::GetThreadId() << std::dec;
+    //std::cout << ", path='" << path << "'" << std::endl;
+
+    //if (debug)
+    //    std::cout << "       " << obj << ": path='" << path << "'" << std::endl;
+
+    const FuserGeoReaderFormat* options = dynamic_cast<FuserGeoReaderFormat*>(geo->handler());
+    if (!options)
+        return true;  // don't crash...
+    const int prim_creation_mode = options->k_prim_creation_mode;
+
+    node_ctx.setString(Arg::node_name,   Fsr::fileNameFromPath(path));
+    node_ctx.setString(Arg::node_path,   path); // TODO: this path may change to be different than Scene::path
+    node_ctx.setString(Arg::Scene::path, path);
+
+#if 0
+    node_ctx.setInt("object_index", geo_ctx.obj_index_start);
+
+    node_ctx.setString("enabled_facesets", enabled_facesets);
+    node_ctx.setInt("faceset_index_offset", faceset_index_offset);
+
+    // Add the arguments that controls what kind of Fuser Scene Node will get
+    // constructed by the fsrAbcIO plugin.
+    //
+    // Some of these node class names are semi-Alembic specific, like 'Subd' and 'NuPatch',
+    // while most are generic like 'Camera', 'Xform', and 'Light':
+
+    node_ctx.setString("fsrUsdIO:node:class", ref.nodeName());
+#endif
+
+    //std::cout << "FuserGeoReader: args: " << node_ctx.args() << std::endl;
+
+    // TODO: shouldn't need to pass in plugin name 'AbcIO' here, it should be extracted
+    // from 'scene:file' and cached by the Fsr::NodePrimitive.
+    // Adds DD::Image::Primitives to GeometryList, and updates animating info:
+    int added_objects = Fsr::NodePrimitive::addGeometryToScene(fuserIOClass(),     /* .so plugin name */
+                                                               prim_creation_mode, /* immediate/deferred */
+                                                               node_ctx,
+                                                               geo_ctx);
     if (added_objects < 0)
     {
         //throw geo error
@@ -984,14 +1127,19 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
                                 DD::Image::GeometryList& out)
 {
     assert(geo); // shouldn't happen...
+    //std::cout << "FuserGeoReader::geometry_engine(" << this << ") rebuild=" << geo->rebuild_mask();
+    //std::cout << ", handler=" << geo->handler() << std::endl;
 
     if (geo->rebuild_mask() == 0x0)
         return; // no changes, don't bother reading anything
 
     const FuserGeoReaderFormat* options = dynamic_cast<FuserGeoReaderFormat*>(geo->handler());
     if (!options)
+    {
+        std::cerr << "FuserGeoReader::geometry_engine(): warning, no GeoReaderFormat object, ";
+        std::cerr << "this is likely a coding error!" << std::endl;
         return;  // don't crash...
-
+    }
 
     const bool   read_on_each_frame = options->k_read_on_each_frame;
     const double set_frame          = options->k_set_frame;
@@ -1061,12 +1209,12 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
         return; // user-abort
 
     // 
-    const std::set<std::string>& selected_paths = getObjectPathsForReader();
+    const std::set<std::string>& selected_object_paths = getObjectPathsForReader();
 
     // Figure out if we want to run the engine multithreaded:
     int num_threads = DD::Image::Thread::numThreads;
-    if ((int)selected_paths.size() < num_threads)
-        num_threads = (int)selected_paths.size();
+    if ((int)selected_object_paths.size() < num_threads)
+        num_threads = (int)selected_object_paths.size();
 
     // This gets passed to the worker threads:
     GeometryEngineThreadContext geo_thread_ctx(this,
@@ -1076,18 +1224,17 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
                                                &scene);
 
     // Assign the selected object range to the context to process:
-    geo_thread_ctx.next = selected_paths.begin();
-    geo_thread_ctx.end  = selected_paths.end();
+    geo_thread_ctx.next = selected_object_paths.begin();
+    geo_thread_ctx.end  = selected_object_paths.end();
 
     //----------------------------------------------------------------------------
 
     //int particle_index = 0; // so that the index is unique across all objects
-    int obj = 0;
     if (reload_prims)
     {
         // Clears all objects:
         out.delete_objects();
-        obj = out.objects(); // New object index to use should always be 0
+        int obj = out.objects(); // New object index to use should always be 0
         assert(obj == 0); // should always be 0!
 
         // Why do we need this here to make the gui update...?  I suppose it's because
@@ -1101,10 +1248,10 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
     if (debug)
     {
         std::cout << "    reader_frame=" << reader_frame << ", output_frame=" << output_frame;
-        std::cout << ", selected nodes=" << selected_paths.size();
+        std::cout << ", selected object nodes=" << selected_object_paths.size();
     }
 
-    if (selected_paths.size() == 0)
+    if (selected_object_paths.size() == 0)
     {
         if (debug)
             std::cout << std::endl;
@@ -1156,6 +1303,7 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
             node_ctx.setString(knob_map[SUBD_RENDER_LEVEL_KNOB ].fuserPrimAttrib, subd_levels[options->k_subd_render_level]);
             node_ctx.setBool(  knob_map[SUBD_FORCE_ENABLE_KNOB ].fuserPrimAttrib, options->k_subd_force_enable );
             node_ctx.setBool(  knob_map[SUBD_SNAP_TO_LIMIT_KNOB].fuserPrimAttrib, options->k_subd_snap_to_limit);
+            node_ctx.setString(knob_map[SUBD_TESSELLATOR_KNOB  ].fuserPrimAttrib, subd_tessellators[options->k_subd_tessellator]);
             //
             node_ctx.setString(knob_map[POINTS_MODE_KNOB   ].fuserPrimAttrib, points_modes[options->k_points_mode]);
             node_ctx.setBool(  knob_map[USE_COLORS_KNOB    ].fuserPrimAttrib, options->k_use_colors    );
@@ -1177,7 +1325,7 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
 
     if (debug)
     {
-        std::cout << " num_objects=" << selected_paths.size();
+        std::cout << " num_objects=" << selected_object_paths.size();
         std::cout << ", num_threads=" << num_threads;
         std::cout << std::endl;
     }

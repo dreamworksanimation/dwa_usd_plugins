@@ -31,6 +31,8 @@
 #define FuserUsdShader_h
 
 #include "FuserUsdNode.h"
+#include <Fuser/ShaderNode.h>
+#include <Fuser/MaterialNode.h>
 
 
 #if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
@@ -40,6 +42,7 @@
 #  pragma GCC diagnostic ignored "-Wconversion"
 
 #  include <pxr/usd/usdShade/shader.h>
+#  include <pxr/usd/usdShade/nodeGraph.h>
 #  include <pxr/usd/usdShade/material.h>
 
 #  pragma GCC diagnostic pop
@@ -54,50 +57,53 @@ namespace Fsr {
 
 /*! USD dummy placeholder node for a real shader.
 */
-class FuserUsdShaderNode : public FuserUsdNode
+class FuserUsdShadeShaderNode : public FuserUsdNode,
+                                public Fsr::ShaderNode
 {
   protected:
-    Pxr::UsdPrim m_prim;
+    Pxr::UsdShadeShader m_shader_schema;
 
-    /*virtual*/ Pxr::UsdPrim getPrim() { return m_prim; }
+    /*virtual*/ Pxr::UsdPrim getPrim() { return m_shader_schema.GetPrim(); }
 
 
   public:
     //! Returns the class name, must implement.
-    /*virtual*/ const char* fuserNodeClass() const { return "UsdShaderNode"; }
+    /*virtual*/ const char* fuserNodeClass() const { return "UsdShadeShaderNode"; }
 
-    FuserUsdShaderNode(const Pxr::UsdStageRefPtr& stage,
-                       const Pxr::UsdPrim&        prim,
-                       const Fsr::ArgSet&         args,
-                       Fsr::Node*                 parent) :
-        FuserUsdNode(stage, args, parent),
-        m_prim(prim)
-    {
-        //std::cout << "  FuserUsdShaderNode::ctor(" << this << ") '" << prim.GetPath() << "'" << std::endl;
-    }
+    FuserUsdShadeShaderNode(const Pxr::UsdStageRefPtr& stage,
+                            const Pxr::UsdPrim&        shader_prim,
+                            const Fsr::ArgSet&         args,
+                            Fsr::Node*                 parent);
 
 
-    //! Do nothing, silence warning.
+    //! Called before execution to allow node to update local data from args.
+    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+                                    bool                    for_real);
+
+
+    //! Return abort (-1) on user-interrupt so processing can be interrupted.
     /*virtual*/ int _execute(const Fsr::NodeContext& target_context,
                              const char*             target_name,
                              void*                   target,
                              void*                   src0,
-                             void*                   src1)
-    {
-        return 0; // success
-    }
+                             void*                   src1);
 
 };
 
 
+//--------------------------------------------------------------------------
+//--------------------------------------------------------------------------
+
+
 /*! USD dummy placeholder node for a real shader node graph (material shader network).
 */
-class FuserUsdShadeNodeGraphNode : public FuserUsdNode
+class FuserUsdShadeNodeGraphNode : public FuserUsdNode,
+                                   public Fsr::MaterialNode
 {
   protected:
-    Pxr::UsdPrim m_prim;
+    Pxr::UsdShadeNodeGraph m_nodegraph_schema;
 
-    /*virtual*/ Pxr::UsdPrim getPrim() { return m_prim; }
+    /*virtual*/ Pxr::UsdPrim getPrim() { return m_nodegraph_schema.GetPrim(); }
 
 
   public:
@@ -105,25 +111,60 @@ class FuserUsdShadeNodeGraphNode : public FuserUsdNode
     /*virtual*/ const char* fuserNodeClass() const { return "UsdShadeNodeGraphNode"; }
 
     FuserUsdShadeNodeGraphNode(const Pxr::UsdStageRefPtr& stage,
-                               const Pxr::UsdPrim&        prim,
+                               const Pxr::UsdPrim&        nodegraph_prim,
                                const Fsr::ArgSet&         args,
-                               Fsr::Node*                 parent) :
-        FuserUsdNode(stage, args, parent),
-        m_prim(prim)
-    {
-        //std::cout << "  FuserUsdShadeNodeGraphNode::ctor(" << this << ") '" << prim.GetPath() << "'" << std::endl;
-    }
+                               Fsr::Node*                 parent);
 
 
-    //! Do nothing, silence warning.
+    //! Called before execution to allow node to update local data from args.
+    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+                                    bool                    for_real);
+
+
+    //! Return abort (-1) on user-interrupt so processing can be interrupted.
     /*virtual*/ int _execute(const Fsr::NodeContext& target_context,
                              const char*             target_name,
                              void*                   target,
                              void*                   src0,
-                             void*                   src1)
-    {
-        return 0; // success
-    }
+                             void*                   src1);
+
+};
+
+
+//--------------------------------------------------------------------------
+//--------------------------------------------------------------------------
+
+
+/*! USD dummy placeholder node for a real shader node graph (material shader network).
+*/
+class FuserUsdShadeMaterialNode : public FuserUsdShadeNodeGraphNode
+{
+  protected:
+    Pxr::UsdShadeMaterial m_material_schema;
+
+    /*virtual*/ Pxr::UsdPrim getPrim() { return m_material_schema.GetPrim(); }
+
+
+  public:
+    //! Returns the class name, must implement.
+    /*virtual*/ const char* fuserNodeClass() const { return "UsdShadeMaterialNode"; }
+
+    FuserUsdShadeMaterialNode(const Pxr::UsdStageRefPtr& stage,
+                              const Pxr::UsdPrim&        material_prim,
+                              const Fsr::ArgSet&         args,
+                              Fsr::Node*                 parent);
+
+    //! Called before execution to allow node to update local data from args.
+    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+                                    bool                    for_real);
+
+
+    //! Return abort (-1) on user-interrupt so processing can be interrupted.
+    /*virtual*/ int _execute(const Fsr::NodeContext& target_context,
+                             const char*             target_name,
+                             void*                   target,
+                             void*                   src0,
+                             void*                   src1);
 
 };
 

@@ -33,6 +33,7 @@
 #include "Vec3.h"
 
 #include <DDImage/Vector4.h> // for DD::Image compatibility convenience
+#include <DDImage/Hash.h>    // for DD::Image compatibility convenience
 
 #include <cmath> // For sqrt, etc
 #include <iostream>
@@ -60,7 +61,7 @@ class FSR_EXPORT Vec4
 
     //! Copy constructor.
     template<typename S>
-    Vec4(const Vec4<S>& v) : x(T(v.x)), y(T(v.y)), z(T(v.z)), w(T(v.w)) {}
+    explicit Vec4(const Vec4<S>& v) : x(T(v.x)), y(T(v.y)), z(T(v.z)), w(T(v.w)) {}
 
     //! Constructor that sets all components.
     Vec4(T _x, T _y , T _z=(T)0, T _w=(T)1) : x(_x), y(_y), z(_z), w(_w) {}
@@ -123,6 +124,9 @@ class FSR_EXPORT Vec4
     void               fromDDImage(const DD::Image::Vector4& b) { x = T(b.x); y = T(b.y); z = T(b.z); w = T(b.w); }
     void               toDDImage(DD::Image::Vector4& out) const;
     DD::Image::Vector4 asDDImage() const;
+
+    //! Add this to a DD::Image::Hash object, for DD::Image compatibility convenience.
+    void append(DD::Image::Hash& hash) const;
 
 
     /*---------------------------*/
@@ -193,10 +197,10 @@ class FSR_EXPORT Vec4
     T    lengthSquared() const { return (x*x + y*y + z*z); }
 
     //! Same as (this-v).length()
-    T    distanceBetween(const Vec4 &v) const { return std::sqrt((x-v.x)*(x-v.x) + (y-v.y)*(y-v.y) + (z-v.z)*(z-v.z)); }
+    T    distanceBetween(const Vec4& v) const { return std::sqrt((x-v.x)*(x-v.x) + (y-v.y)*(y-v.y) + (z-v.z)*(z-v.z)); }
 
     //! Same as (this-v).lengthSquared()
-    T    distanceSquared(const Vec4 &v) const { return (x-v.x)*(x-v.x) + (y-v.y)*(y-v.y) + (z-v.z)*(z-v.z); }
+    T    distanceSquared(const Vec4& v) const { return (x-v.x)*(x-v.x) + (y-v.y)*(y-v.y) + (z-v.z)*(z-v.z); }
 
     //! Return the scalar distance to the plane defined by ABCD.
     T    distanceFromPlane(T A, T B, T C, T D) const { return A*x + B*y + C*z + D; }
@@ -224,6 +228,14 @@ class FSR_EXPORT Vec4
     //! Returns the absolute value of the largest XYZ element - w is ignored.
     T    largestAxis() const { return std::max(::fabs(x), std::max(::fabs(y), ::fabs(z))); }
 
+    //! Linear-interpolate between this Vec4 and another at t, where t=0..1.
+    template<typename S>
+    Vec4<T> interpolateTo(const Vec4<T>& b,
+                          S              t) const;
+    template<typename S>
+    Vec4<T>        lerpTo(const Vec4<T>& b,
+                          S              t) const;
+
 
   private:
     template <typename R, typename S> struct isSameType       { enum {value = 0}; };
@@ -248,6 +260,36 @@ typedef Vec4<int>    Vec4i;
 template<typename T>
 std::ostream& operator << (std::ostream& o, const Vec4<T>& v);
 
+
+//! Linear-interpolate between two Vec3s at t, where t=0..1.
+template<typename T, typename S>
+Vec4<T> lerp(const Vec4<T>& v0,
+             const Vec4<T>& v1,
+             S              t);
+//! Linear-interpolate between two Vec3s at t, where t=0..1, and inv is 1-t.
+template<typename T, typename S>
+Vec4<T> lerp(const Vec4<T>& v0,
+             const Vec4<T>& v1,
+             S              t,
+             S              invt);
+
+//! Interpolate between three Vec3s at barycentric coord st.
+template<typename T, typename S>
+Vec4<T> interpolateAtBaryCoord(const Fsr::Vec4<T>& v0,
+                               const Fsr::Vec4<T>& v1,
+                               const Fsr::Vec4<T>& v2,
+                               const Fsr::Vec2<S>& st);
+//! Interpolate between three Vec4s at barycentric coord st, with derivatives.
+template<typename T, typename S>
+void    interpolateAtBaryCoord(const Fsr::Vec4<T>& v0,
+                               const Fsr::Vec4<T>& v1,
+                               const Fsr::Vec4<T>& v2,
+                               const Fsr::Vec2<S>& st,
+                               const Fsr::Vec2<S>& stdx,
+                               const Fsr::Vec2<S>& stdy,
+                               Fsr::Vec4<T>&       out,
+                               Fsr::Vec4<T>&       duout,
+                               Fsr::Vec4<T>&       dvout);
 
 
 /*---------------------------------------------------------------------*/
@@ -285,6 +327,13 @@ inline Vec4<T>::operator DD::Image::Vector4() const
         return this->asDDImage();
 }
 
+template<typename T>
+inline void
+Vec4<T>::append(DD::Image::Hash& hash) const
+{
+    hash.append(this->array(), 4*sizeof(T));
+}
+
 //-----------------------------------------------------------
 
 template<typename T>
@@ -313,6 +362,87 @@ inline Vec4<T>::operator Vec4<int>() const
 }
 
 //-----------------------------------------------------------
+
+template<typename T>
+template<typename S>
+inline Vec4<T>
+Vec4<T>::interpolateTo(const Vec4<T>& b,
+                       S              t) const
+{
+    if (t < std::numeric_limits<S>::epsilon())
+        return *this; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return b; // at or after last
+    const T tT    = T(t);
+    const T invtT = (T)1 - tT;
+    return Vec4<T>(this->x*invtT + b.x*tT, this->y*invtT + b.y*tT, this->z*invtT + b.z*tT, this->w*invtT + b.w*tT);
+}
+template<typename T>
+template<typename S>
+inline Vec4<T>
+Vec4<T>::lerpTo(const Vec4<T>& b, S t) const { return this->interpolateTo(b, t); }
+
+template<typename T, typename S>
+inline Vec4<T>
+lerp(const Vec4<T>& v0,
+     const Vec4<T>& v1,
+     S              t)
+{
+    if (t < std::numeric_limits<S>::epsilon())
+        return v0; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return v1; // at or after last
+    const T tT    = T(t);
+    const T invtT = (T)1 - tT;
+    return Vec4<T>(v0.x*invtT + v1.x*tT, v0.y*invtT + v1.y*tT, v0.z*invtT + v1.z*tT);
+}
+template<typename T, typename S>
+inline Vec4<T>
+lerp(const Vec4<T>& v0,
+     const Vec4<T>& v1,
+     S              t,
+     S              invt)
+{
+    if (t < std::numeric_limits<S>::epsilon())
+        return v0; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return v1; // at or after last
+    const T tT    = T(t);
+    const T invtT = T(invt);
+    return Vec4<T>(v0.x*invtT + v1.x*tT, v0.y*invtT + v1.y*tT, v0.z*invtT + v1.z*tT, v0.w*invtT + v1.w*tT);
+}
+
+// Interpolate between three Vec4s at barycentric coord st.
+template<typename T, typename S>
+inline Vec4<T>
+interpolateAtBaryCoord(const Fsr::Vec4<T>& v0,
+                       const Fsr::Vec4<T>& v1,
+                       const Fsr::Vec4<T>& v2,
+                       const Fsr::Vec2<S>& st)
+{
+    return Vec4<T>(v0 + ((v1 - v0)*T(st.x)) + ((v2 - v0)*T(st.y)));
+}
+
+// Interpolate between three Vec3s at barycentric coord st, with derivatives.
+template<typename T, typename S>
+inline void
+interpolateAtBaryCoord(const Fsr::Vec4<T>& v0,
+                       const Fsr::Vec4<T>& v1,
+                       const Fsr::Vec4<T>& v2,
+                       const Fsr::Vec2<S>& st,
+                       const Fsr::Vec2<S>& stdx,
+                       const Fsr::Vec2<S>& stdy,
+                       Fsr::Vec4<T>&       out,
+                       Fsr::Vec4<T>&       duout,
+                       Fsr::Vec4<T>&       dvout)
+{
+    const Fsr::Vec4<T> e01 = (v1 - v0);
+    const Fsr::Vec4<T> e02 = (v2 - v0);
+    const Fsr::Vec4<T> dt = (e01*T(st.x)) + (e02*T(st.y));
+    out   = v0 + dt;
+    duout = (e01*T(stdx.x)) + (e02*T(stdx.y)) - dt;
+    dvout = (e01*T(stdy.x)) + (e02*T(stdy.y)) - dt;
+}
 
 } //namespace Fsr
 

@@ -1642,6 +1642,9 @@ if context.buildImaging:
 if context.buildUsdview:
     requiredDependencies += [PYOPENGL, PYSIDE]
 
+if context.buildNuke:
+    requiredDependencies += [OPENSUBDIV]
+
 # Assume zlib already exists on Linux platforms and don't build
 # our own. This avoids potential issues where a host application
 # loads an older version of zlib than the one we'd build and link
@@ -1939,7 +1942,3 @@ if context.buildKatana:
 if context.buildHoudini:
     Print("See documentation at http://openusd.org/docs/Houdini-USD-Plugins.html "
           "for setting up the Houdini plugin.\n")
-
-if context.buildNuke:
-    Print("See documentation at http://openusd.org/docs/Nuke-USD-Plugins.html "
-          "for setting up the Nuke plugin.\n")

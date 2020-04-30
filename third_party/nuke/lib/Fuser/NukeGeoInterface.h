@@ -63,29 +63,59 @@ namespace Fsr {
     managed by a GeoOpGeometryEngineContext.
 
     For example you can use these during rendering in Primitive methods
-    like tessellat() since the GeometryList object pointers are stable
+    like tessellate() since the GeometryList object pointers are stable
     by that point.
 */
 
-//! Get an Attribute value from the Group_Object level of a GeoInfo. *** Not thread safe! ***
-FSR_EXPORT std::string getObjectString(const DD::Image::GeoInfo& info,
-                                       const char*               name);
+//! Return the GeoInfo's point array cast to a Vec3f. *** Not thread safe! ***
+FSR_EXPORT const Fsr::Vec3f* getObjectPointArray(const DD::Image::GeoInfo& info);
 
-FSR_EXPORT int         getObjectInt(const DD::Image::GeoInfo& info,
-                                    const char*               name);
+
+//! Get an Attribute value from the 'Group_Object' level of a GeoInfo. *** Not thread safe! ***
+FSR_EXPORT std::string getObjectString(const DD::Image::GeoInfo& info,
+                                       const char*               attrib_name,
+                                       const std::string&        dflt_val=empty_string);
+
+FSR_EXPORT int32_t     getObjectInt(const DD::Image::GeoInfo& info,
+                                    const char*               attrib_name,
+                                    int32_t                   dflt_val=0);
 
 FSR_EXPORT float       getObjectFloat(const DD::Image::GeoInfo& info,
-                                      const char*               name);
+                                      const char*               attrib_name,
+                                      float                     dflt_val=0.0f);
+
+// Casts an int attribute to a bool.
+FSR_EXPORT bool        getObjectBool(const DD::Image::GeoInfo& info,
+                                     const char*               attrib_name,
+                                     bool                      dflt_val=false);
+
 
 //! Does the object have a named attribute. *** Not thread safe! ***
 FSR_EXPORT bool        hasObjectAttrib(const DD::Image::GeoInfo& info,
-                                       const char*               name);
+                                       const char*               attrib_name);
 
 //! Get the data array of a DD::Image::Attribute, or NULL if not found. *** Not thread safe! ***
 FSR_EXPORT void*       getAttribData(const DD::Image::GeoInfo& info,
-                                     DD::Image::GroupType      group,
-                                     const char*               name,
-                                     DD::Image::AttribType     type);
+                                     DD::Image::GroupType      attrib_group,
+                                     const char*               attrib_name,
+                                     DD::Image::AttribType     attrib_type);
+
+
+//! Set an Attribute value at the 'Group_Object' level of a GeoInfo. *** Not thread safe! ***
+FSR_EXPORT void        setObjectString(const char*              attrib_name,
+                                       const std::string&       attrib_value,
+                                       uint32_t                 obj_index,
+                                       DD::Image::GeometryList& geometry_list);
+
+FSR_EXPORT void        setObjectInt(const char*              attrib_name,
+                                    int32_t                  attrib_value,
+                                    uint32_t                 obj_index,
+                                    DD::Image::GeometryList& geometry_list);
+
+FSR_EXPORT void        setObjectFloat(const char*              attrib_name,
+                                      float                    attrib_value,
+                                      uint32_t                 obj_index,
+                                      DD::Image::GeometryList& geometry_list);
 
 
 //-------------------------------------------------------------------------
@@ -103,10 +133,10 @@ class FSR_EXPORT GeoInfo
     //!
     GeoInfo(DD::Image::GeoInfo* info);
     //!
-    GeoInfo(int               obj_index,
+    GeoInfo(uint32_t          obj_index,
             DD::Image::GeoOp* geo);
     //!
-    GeoInfo(int                            obj_index,
+    GeoInfo(uint32_t                       obj_index,
             const DD::Image::GeometryList& geometry_list);
 
 
@@ -114,7 +144,7 @@ class FSR_EXPORT GeoInfo
 #if 0
     //!
     std::string getObjectString(const char* attrib) const;
-    int         getObjectInt(const char* attrib) const;
+    int32_t     getObjectInt(const char* attrib) const;
     float       getObjectFloat(const char* attrib) const;
 
     //!
@@ -150,7 +180,7 @@ class FSR_EXPORT GeoInfo
 class FSR_EXPORT GeoInfoCacheRef
 {
   public:
-    int                             obj;                //!< Object index inside GeometryList
+    int32_t                         obj;                //!< Object index inside GeometryList
     Fsr::Box3f                      bbox;               //!< Copy of cache bbox
     DD::Image::PointList*           points_list;        //!< Points list
     DD::Image::PrimList*            primitives_list;    //!< Primitives list
@@ -165,11 +195,11 @@ class FSR_EXPORT GeoInfoCacheRef
     GeoInfoCacheRef(const GeoInfoCacheRef& b);
 
     //! Constructs the contents from the obj_index's GeoInfo::Cache in a GeoOp's cache list.
-    GeoInfoCacheRef(int               obj_index,
+    GeoInfoCacheRef(uint32_t          obj_index,
                     DD::Image::GeoOp* geo);
 
     //! Constructs the contents from the obj_index's GeoInfo::Cache in the GeometryList.
-    GeoInfoCacheRef(int                            obj_index,
+    GeoInfoCacheRef(uint32_t                       obj_index,
                     const DD::Image::GeometryList& geometry_list);
 
     //! Copy operator copies private AttribContextList, updating pointer.
@@ -224,9 +254,9 @@ class FSR_EXPORT GeoOpGeometryEngineContext
 {
   public:
 #ifdef DWA_INTERNAL_BUILD
-    typedef std::map<std::string, int> ObjectIndexMap;
+    typedef std::map<std::string, uint32_t> ObjectIndexMap;
 #else
-    typedef std::unordered_map<std::string, int> ObjectIndexMap;
+    typedef std::unordered_map<std::string, uint32_t> ObjectIndexMap;
 #endif
 
     /*! These contexts are stored in a static map keyed to the pointer of the GeoOp
@@ -340,13 +370,23 @@ class FSR_EXPORT GeoOpGeometryEngineContext
     //----------------------------------------------------------------------
 
 
+    //! Calc a bbox from current PointList, updating the one in the GeoInfo cache and our copy.
+    void                  updateBBoxThreadSafe(GeoInfoCacheRef& geoinfo_cache);
+    //! Set the bbox in the GeoInfo cache and our copy.
+    void                  setBBoxThreadSafe(GeoInfoCacheRef&  geoinfo_cache,
+                                            const Fsr::Box3f& bbox);
+
+
+    //----------------------------------------------------------------------
+
+
     //! Set an Attribute value at the Group_Object level of a GeoInfo.
     void setObjectStringThreadSafe(GeoInfoCacheRef&   geoinfo_cache,
                                    const char*        attrib_name,
                                    const std::string& attrib_value);
     void    setObjectIntThreadSafe(GeoInfoCacheRef& geoinfo_cache,
                                    const char*      attrib_name,
-                                   int              attrib_value);
+                                   int32_t          attrib_value);
     void  setObjectFloatThreadSafe(GeoInfoCacheRef& geoinfo_cache,
                                    const char*      attrib_name,
                                    float            attrib_value);
@@ -361,7 +401,7 @@ class FSR_EXPORT GeoOpGeometryEngineContext
     void    setPrimitiveIntThreadSafe(GeoInfoCacheRef&   geoinfo_cache,
                                       uint32_t           prim_index,
                                       const char*        attrib_name,
-                                      int                attrib_value);
+                                      int32_t            attrib_value);
     void  setPrimitiveFloatThreadSafe(GeoInfoCacheRef&   geoinfo_cache,
                                       uint32_t           prim_index,
                                       const char*        attrib_name,
@@ -389,25 +429,25 @@ GeoInfo::GeoInfo(DD::Image::GeoInfo* info) :
 }
 //!
 inline
-GeoInfo::GeoInfo(int               obj_index,
+GeoInfo::GeoInfo(uint32_t          obj_index,
                  DD::Image::GeoOp* geo) :
     m_info(NULL)
 {
     if (geo && geo->scene() && geo->scene()->object_list())
     {
         DD::Image::GeometryList& geometry_list = *geo->scene()->object_list();
-        assert(obj_index >= 0 && obj_index < (int)geometry_list.size());
+        assert(obj_index < (uint32_t)geometry_list.size());
         m_info = &geometry_list[obj_index];
     }
     assert(m_info);
 }
 //!
 inline
-GeoInfo::GeoInfo(int                            obj_index,
+GeoInfo::GeoInfo(uint32_t                       obj_index,
                  const DD::Image::GeometryList& geometry_list) :
     m_info(NULL)
 {
-    assert(obj_index >= 0 && obj_index < (int)geometry_list.size());
+    assert(obj_index < (uint32_t)geometry_list.size());
     m_info = const_cast<DD::Image::GeoInfo*>(&geometry_list[obj_index]);
 }
 

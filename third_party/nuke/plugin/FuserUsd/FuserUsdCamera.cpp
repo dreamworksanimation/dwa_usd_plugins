@@ -171,7 +171,7 @@ FuserUsdCamera::_execute(const Fsr::NodeContext& target_context,
     }
 
     // Let base class handle unrecognized targets:
-    return FuserUsdNode::_execute(target_context, target_name, target, src0, src1);
+    return FuserUsdXform::_execute(target_context, target_name, target, src0, src1);
 }
 
 
@@ -195,12 +195,27 @@ FuserUsdCamera::importSceneOp(DD::Image::Op*     op,
     if (debug)
         std::cout << "    FuserUsdCamera::importSceneOp('" << camera->node_name() << "')" << std::endl;
 
+    Pxr::UsdPrim camera_prim = m_camera_schema.GetPrim();
+
+#if 0
+    // If camera has a rotation-order hint use that for the decompose rotate order:
+    const Pxr::UsdAttribute& rot_order_hint_attrib = camera_prim.GetAttribute(Pxr::TfToken("rotateOrderHint"));
+    if (rot_order_hint_attrib.IsValid() && rot_order_hint_attrib.GetTypeName().GetType().IsA<std::string>())
+    {
+        const Pxr::UsdTimeCode timecode = Pxr::UsdTimeCode(*it);
+        const double converge_dist = getPrimAttribDouble(converge_dist_attrib, timecode);
+
+    }
+#endif
+
+
+
+
 const bool allow_anim = true;
 
     // Import the Xform data into the Axis_Knob:
     FuserUsdXform::importSceneOp(op, args);
 
-    Pxr::UsdPrim camera_prim = m_camera_schema.GetPrim();
     //std::cout << "    FuserUsdCamera::importSceneOp('" << camera_prim.GetName() << "')" << std::endl;
 
     //std::cout << "    parent is '" << camera_prim.GetPath().GetParentPath() << "'" << std::endl;
@@ -325,13 +340,19 @@ const bool allow_anim = true;
                         near[i] = clipping_range[i][0];
                         far[i]  = clipping_range[i][1];
                     }
-                    Fsr::storeDoublesInKnob(camera->knob("near"), near, 1/*nVals*/, clipping_range.times, 0/*element_offset*/, -1/*view*/);
-                    Fsr::storeDoublesInKnob(camera->knob("far" ), far,  1/*nVals*/, clipping_range.times, 0/*element_offset*/, -1/*view*/);
+                    Fsr::storeDoublesInKnob(camera->knob("near"), near, 1/*nDblPerVal*/,
+                                            clipping_range.times,
+                                            0/*element_offset*/, -1/*view*/);
+                    Fsr::storeDoublesInKnob(camera->knob("far" ), far,  1/*nDblPerVal*/,
+                                            clipping_range.times,
+                                            0/*element_offset*/, -1/*view*/);
                 }
 
             }
             else if (name == Pxr::UsdGeomTokens->horizontalApertureOffset)
             {
+                // Convert aperture offset in mm to offset in aperture ratio
+                // using horizontalAperture value:
                 const AttribDoubles haperture_offset(attrib);
                 if (haperture_offset.isValid())
                 {
@@ -339,15 +360,20 @@ const bool allow_anim = true;
                     std::vector<double> win_tx(nSamples);
                     for (size_t i=0; i < nSamples; ++i)
                     {
-                        const double haperture  = getPrimAttribDouble(camera_prim, "horizontalAperture", haperture_offset.timeCode(i));
+                        // Get horiz aperture width and scale offset:
+                        const double haperture = getPrimAttribDouble(camera_prim, "horizontalAperture", haperture_offset.timeCode(i));
                         win_tx[i] = haperture_offset.value(i) / (haperture / 2.0);
                     }
-                    Fsr::storeDoublesInKnob(camera->knob("win_translate"), win_tx, 1/*nVals*/, haperture_offset.times, 0/*element_offset*/, -1/*view*/);
+                    Fsr::storeDoublesInKnob(camera->knob("win_translate"), win_tx, 1/*nDblPerVal*/,
+                                            haperture_offset.times,
+                                            0/*element_offset*/, -1/*view*/);
                 }
 
             }
             else if (name == Pxr::UsdGeomTokens->verticalApertureOffset)
             {
+                // Convert aperture offset in mm to offset in aperture ratio
+                // using verticalAperture value:
                 const AttribDoubles vaperture_offset(attrib);
                 if (vaperture_offset.isValid())
                 {
@@ -355,10 +381,13 @@ const bool allow_anim = true;
                     std::vector<double> win_ty(nSamples);
                     for (size_t i=0; i < nSamples; ++i)
                     {
-                        const double haperture  = getPrimAttribDouble(camera_prim, "horizontalAperture", vaperture_offset.timeCode(i));
-                        win_ty[i] = vaperture_offset.value(i) / (haperture / 2.0);
+                        // Get vert aperture height and scale offset:
+                        const double vaperture = getPrimAttribDouble(camera_prim, "verticalAperture", vaperture_offset.timeCode(i));
+                        win_ty[i] = vaperture_offset.value(i) / (vaperture / 2.0);
                     }
-                    Fsr::storeDoublesInKnob(camera->knob("win_translate"), win_ty, 1/*nVals*/, vaperture_offset.times, 1/*element_offset*/, -1/*view*/);
+                    Fsr::storeDoublesInKnob(camera->knob("win_translate"), win_ty, 1/*nDblPerVal*/,
+                                            vaperture_offset.times,
+                                            1/*element_offset*/, -1/*view*/);
                 }
 
             }

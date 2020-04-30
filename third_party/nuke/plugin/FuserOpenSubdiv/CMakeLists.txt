@@ -16,12 +16,11 @@ endif()
 pxr_plugin(${PXR_PACKAGE}
     LIBRARIES
         Fuser
-        #
-        opensubdiv
-        #
+        ${OPENSUBDIV_LIBRARIES}
         ${NUKE_DDIMAGE_LIBRARY}
 
     INCLUDE_DIRS
+        ${OPENSUBDIV_INCLUDE_DIRS}
         ${NUKE_INCLUDE_DIRS}
 
     CPPFILES

@@ -27,19 +27,23 @@ pxr_static_library(${PXR_PACKAGE}
         LightOp.h
         Lookat.h
         Mat4.h
+        MaterialNode.h
         MeshPrimitive.h
+        MeshUtils.h
         Node.h
         NodeContext.h
         NodeIOInterface.h
         NodePrimitive.h
         NukeGeoInterface.h
         NukeKnobInterface.h
+        NukePixelInterface.h
         PointBasedPrimitive.h
         Primitive.h
         RayContext.h
         SceneLoader.h
         SceneOpExtender.h
         SceneXform.h
+        ShaderNode.h
         Time.h
         Vec2.h
         Vec3.h
@@ -56,7 +60,9 @@ pxr_static_library(${PXR_PACKAGE}
         GeoReader.cpp
         GeoSceneGraphReader.cpp
         LightOp.cpp
+        MaterialNode.cpp
         MeshPrimitive.cpp
+        MeshUtils.cpp
         Node.cpp
         NodeIOInterface.cpp
         NodePrimitive.cpp
@@ -65,5 +71,6 @@ pxr_static_library(${PXR_PACKAGE}
         PointBasedPrimitive.cpp
         SceneLoader.cpp
         SceneXform.cpp
+        ShaderNode.cpp
         XformableNode.cpp
 )

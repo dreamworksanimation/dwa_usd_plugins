@@ -49,7 +49,8 @@ namespace Fsr {
 
 // Define some common-usage types:
 
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
+// Only enable unordered_map on full C++11 support:
 typedef std::map<std::string, std::string> KeyValueMap;
 typedef std::set<std::string>              StringSet;
 #else
@@ -57,6 +58,8 @@ typedef std::set<std::string>              StringSet;
 typedef std::unordered_map<std::string, std::string> KeyValueMap;
 typedef std::unordered_set<std::string>              StringSet;
 #endif
+//
+typedef std::multimap<std::string, std::string>      KeyValueMultiMap;
 
 // Sorted variants:
 typedef std::map<std::string, std::string> KeyValueSortedMap;
@@ -67,7 +70,6 @@ extern FSR_EXPORT std::string empty_string;
 
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------
-
 
 /*! Convenience wrapper class around a KeyValueMap providing
     argument get/set access methods.
@@ -83,7 +85,7 @@ extern FSR_EXPORT std::string empty_string;
 class FSR_EXPORT ArgSet
 {
   public:
-    //! Default ctor in an empty set
+    //! Default ctor is an empty set
     ArgSet();
     //! Copy ctors.
     ArgSet(const ArgSet&);
@@ -124,16 +126,16 @@ class FSR_EXPORT ArgSet
     bool has(const char*        key) const;
 
     //! Get an arg's string value
-    const std::string& get(const std::string& key) const;
-    const std::string& get(const char*        key) const;
-    const std::string& operator[] (const std::string& key) const { return get(key); }
-    const std::string& operator[] (const char*        key) const { return get(key); }
+    const std::string& get(const std::string& key) const { return getString(key); }
+    const std::string& get(const char*        key) const { return getString(key); }
+    const std::string& operator[] (const std::string& key) const { return getString(key); }
+    const std::string& operator[] (const char*        key) const { return getString(key); }
 
     //! Set a new arg or change an existing one.
-    void  set(const std::string& key, const std::string& value) { m_args[key] = value; }
-    void  set(const std::string& key, const char*        value) { m_args[key] = value; }
-    void  set(const char*        key, const std::string& value) { m_args[std::string(key)] = value; }
-    void  set(const char*        key, const char*        value) { m_args[std::string(key)] = std::string(value); }
+    void  set(const std::string& key, const std::string& value) { setString(key, value); }
+    void  set(const std::string& key, const char*        value) { setString(key, value); }
+    void  set(const char*        key, const std::string& value) { setString(key, value); }
+    void  set(const char*        key, const char*        value) { setString(key, value); }
 
     //! Removes the arg from the ArgSet.
     void  remove(const std::string& key);
@@ -194,21 +196,21 @@ class FSR_EXPORT ArgSet
     //-------------------------------------------------------------------------
     // Typed write access. These are just naive string conversions!
     //-------------------------------------------------------------------------
-    void   setString(const std::string& key, const std::string& value);
-    void   setString(const std::string& key, const char*        value);
-    void   setString(const char*        key, const std::string& value);
-    void   setString(const char*        key, const char*        value);
+    void setString(const std::string& key, const std::string& value);
+    void setString(const std::string& key, const char*        value);
+    void setString(const char*        key, const std::string& value);
+    void setString(const char*        key, const char*        value);
     //
-    void      setInt(const std::string& key, int       value);
-    void   setDouble(const std::string& key, double    value);
-    void     setBool(const std::string& key, bool      value);
-    void     setHash(const std::string& key, HashValue value);
+    void    setInt(const std::string& key, int       value);
+    void setDouble(const std::string& key, double    value);
+    void   setBool(const std::string& key, bool      value);
+    void   setHash(const std::string& key, HashValue value);
     //
-    void    setVec2d(const std::string& key, const Fsr::Vec2d& value);
-    void    setVec3d(const std::string& key, const Fsr::Vec3d& value);
-    void    setVec4d(const std::string& key, const Fsr::Vec4d& value);
+    void  setVec2d(const std::string& key, const Fsr::Vec2d& value);
+    void  setVec3d(const std::string& key, const Fsr::Vec3d& value);
+    void  setVec4d(const std::string& key, const Fsr::Vec4d& value);
     //
-    void    setMat4d(const std::string& key, const Fsr::Mat4d& value);
+    void  setMat4d(const std::string& key, const Fsr::Mat4d& value);
 
 
   private:
@@ -225,7 +227,7 @@ class FSR_EXPORT ArgSet
 /*---------------------------------------------------------------------*/
 /*---------------------------------------------------------------------*/
 
-inline ArgSet::ArgSet() { }
+inline ArgSet::ArgSet() { m_args.clear(); }
 inline ArgSet::ArgSet(const ArgSet& b) : m_args(b.m_args) {}
 inline ArgSet::ArgSet(const KeyValueMap& b) : m_args(b) {}
 inline ArgSet& ArgSet::operator= (const ArgSet& b) { m_args = b.m_args; return *this; }
@@ -243,13 +245,6 @@ inline void ArgSet::remove(const std::string& key)
         m_args.erase(it);
 }
 inline void ArgSet::remove(const char* key) { remove(std::string(key)); }
-
-inline const std::string& ArgSet::get(const std::string& key) const
-{
-    const KeyValueMap::const_iterator it = m_args.find(key);
-    return (it != m_args.end()) ? it->second : Fsr::empty_string;
-}
-inline const std::string& ArgSet::get(const char* key) const { return get(std::string(key)); }
 
 //! TODO: this is redundant until we (if ever) support expressions in arg values:
 inline const std::string& ArgSet::getUnexpandedValue(const std::string& key) const { return get(key); }
@@ -269,10 +264,10 @@ inline Fsr::Vec3d ArgSet::getVec3d(const char* key, Fsr::Vec3d dflt) const { ret
 inline Fsr::Vec4d ArgSet::getVec4d(const char* key, Fsr::Vec4d dflt) const { return getVec4d(std::string(key), dflt); }
 inline Fsr::Mat4d ArgSet::getMat4d(const char* key, Fsr::Mat4d dflt) const { return getMat4d(std::string(key), dflt); }
 
-inline void ArgSet::setString(const std::string& key, const std::string& value) { set(key, value); }
-inline void ArgSet::setString(const std::string& key, const char*        value) { set(key, value); }
-inline void ArgSet::setString(const char*        key, const std::string& value) { set(std::string(key), value); }
-inline void ArgSet::setString(const char*        key, const char*        value) { set(std::string(key), std::string(value)); }
+inline void ArgSet::setString(const std::string& key, const std::string& value) { m_args[key] = value; }
+inline void ArgSet::setString(const std::string& key, const char*        value) { m_args[key] = std::string(value); }
+inline void ArgSet::setString(const char*        key, const std::string& value) { m_args[std::string(key)] = value; }
+inline void ArgSet::setString(const char*        key, const char*        value) { m_args[std::string(key)] = std::string(value); }
 
 
 } // namespace Fsr

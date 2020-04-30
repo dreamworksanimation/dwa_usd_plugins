@@ -228,7 +228,7 @@ class FSR_EXPORT GeoSceneGraphReader : public FuserGeoReader
     */
     virtual void _getSelectedNodePaths(const Fsr::NodeFilterPatternList& node_filter_patterns,
                                        const DD::Image::Hash&            node_filter_hash,
-                                       std::set<std::string>&            selected_paths,
+                                       Fsr::NodePathSelections&          selected_paths,
                                        DD::Image::Hash*                  selected_paths_hash);
 
 
@@ -301,9 +301,19 @@ class FSR_EXPORT GeoSceneGraphReader : public FuserGeoReader
 
 
     /*! Get the list of object names(paths) to read in during geometry_engine.
-        Returns the current archive context's 'selected_paths' string set.
+        Returns the current archive context's 'selected_node_paths.objects' string set.
     */
     /*virtual*/ const std::set<std::string>& getObjectPathsForReader();
+
+    /*! Get the list of material names(paths) to read in during geometry_engine.
+        Returns the current archive context's 'selected_node_paths.materials' string set.
+    */
+    /*virtual*/ const std::set<std::string>& getMaterialPathsForReader();
+
+    /*! Get the list of light names(paths) to read in during geometry_engine.
+        Returns the current archive context's 'selected_node_paths.lights' string set.
+    */
+    /*virtual*/ const std::set<std::string>& getLightPathsForReader();
 
 
     /*! Build a list of mask patterns from a arbitrary mask string.

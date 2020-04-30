@@ -27,6 +27,7 @@
 /// @author Jonathan Egstad
 
 #include "PointBasedPrimitive.h"
+#include "ExecuteTargetContexts.h" // for PrimitiveViewerContext
 
 #include <DDImage/PrimitiveContext.h>
 #include <DDImage/Material.h>
@@ -38,9 +39,6 @@ namespace Fsr {
 
 
 //---------------------------------------------------------------------------------
-
-
-/*static*/ const char* FuserPrimitive::RenderSceneTessellateContext::name = "RenderSceneTessellate";
 
 
 /*! This empty dtor is necessary to avoid GCC 'undefined reference to `vtable...' link error.
@@ -221,17 +219,36 @@ PointBasedPrimitive::VertexBuffers::resizeVerts(size_t nVerts)
      VEL.resize(nVerts);
 }
 void
-PointBasedPrimitive::VertexBuffers::resizePolyFaces(size_t nPolyFaces)
+PointBasedPrimitive::VertexBuffers::resizePolyFaces(size_t          nPolyFaces,
+                                                    const uint32_t* verts_per_face)
 {
+    allQuads = allTris = false;
     if (nPolyFaces == 0)
     {
         if (vertsPerFace.size() > 0)
-            vertsPerFace = Fsr::UintList(); // release allocation
+            vertsPerFace = Fsr::Uint32List(); // release allocation
     }
-    else
+    else if (verts_per_face)
     {
-        vertsPerFace.resize(nPolyFaces);
-        allQuads = false;
+        // Test the face counts:
+        const uint32_t* vpf = verts_per_face;
+        allQuads = allTris = true;
+        for (size_t i=0; i < nPolyFaces; ++i)
+        {
+            const uint32_t numFaceVerts = *vpf++;
+            if (numFaceVerts != 3)
+                allTris = false;
+            else if (numFaceVerts != 4)
+                allQuads = false;
+        }
+        // If allTris or allQuads, clear vertsPerFace:
+        if (allTris || allQuads)
+            vertsPerFace = Fsr::Uint32List(); // release allocation
+        else
+        {
+            vertsPerFace.resize(nPolyFaces);
+            memcpy(vertsPerFace.data(), verts_per_face, sizeof(uint32_t)*nPolyFaces);
+        }
     }
 }
 
@@ -320,14 +337,17 @@ PointBasedPrimitive::tessellate(DD::Image::Scene*            render_scene,
                            numVerts(),
                            numFaces());
 
+    DDImageRenderSceneTessellateContext rtess_ctx(this, ptx, render_scene);
+
     // This may perform subdivision on the vertex buffers:
-    fillVertexBuffers(ptx, render_scene, vbuffers);
+    fillVertexBuffers(rtess_ctx, vbuffers);
 
     // Allow vertex shaders to change values, and produce final transformed PW and N:
-    applyVertexShader(ptx, render_scene, vbuffers);
+    applyVertexShader(rtess_ctx, vbuffers);
 
-    // Have vertex buffer output render prims to render scene, in mesh mode.
-    addToRenderScene(0/*mode*/, ptx, render_scene, vbuffers);
+    // Have vertex buffer output render prims to render scene, possibly
+    // with a material override:
+    addToRenderScene(vbuffers, rtess_ctx, 0/*mode*/);
 }
 
 
@@ -343,17 +363,17 @@ PointBasedPrimitive::tessellate(DD::Image::Scene*            render_scene,
     The final PW is created in applyVertexShader().
 */
 /*virtual*/ void
-PointBasedPrimitive::fillVertexBuffers(DD::Image::PrimitiveContext* ptx,
-                                       DD::Image::Scene*            render_scene,
-                                       VertexBuffers&               vbuffers) const
+PointBasedPrimitive::fillVertexBuffers(const DDImageRenderSceneTessellateContext& rtess_ctx,
+                                       VertexBuffers&                             vbuffers) const
 {
     //std::cout << "  PointBasedPrimitive::fillVertexBuffers('" << path() << "')";
     //std::cout << " nPoints=" << ptx->geoinfo()->points();
     //std::cout << " nVerts=" << numVerts() << std::endl;
 
-    assert(ptx && ptx->geoinfo()); // Should always be non-zero!
+    if (!rtess_ctx.isValid())
+        return; // don't crash
 
-    const DD::Image::GeoInfo& info = *ptx->geoinfo();
+    const DD::Image::GeoInfo& info = *rtess_ctx.ptx->geoinfo();
     if (info.points() == 0)
         return; // don't crash
 
@@ -437,14 +457,14 @@ PointBasedPrimitive::fillVertexBuffers(DD::Image::PrimitiveContext* ptx,
 
     //------------------------------------------------------------------
     // Motionblur:
-    if (render_scene->mb_scene())
+    if (rtess_ctx.render_scene->mb_scene())
     {
         // TODO: match up Fsr::FuserPrimitive in mb_geoinfo, if they're not topology-varying:
-        if (ptx->mb_geoinfo())
+        if (rtess_ctx.ptx->mb_geoinfo())
         {
             memset(vbuffers.VEL.data(), 0, nVerts*sizeof(Fsr::Vec3f));
             //for (size_t v=0; v < nVerts; ++v)
-            //    vbuffers.VEL[v] = (ptx->mb_geoinfo()->point_array()[pindex] - vbuffers.PL[v]);
+            //    vbuffers.VEL[v] = (rtess_ctx.ptx->mb_geoinfo()->point_array()[pindex] - vbuffers.PL[v]);
             vbuffers.interpolateChannels += DD::Image::ChannelSetInit(DD::Image::Mask_VEL_);
         }
         else
@@ -491,13 +511,12 @@ std::cout << "]" << std::endl;
     the VertexBuffer, possibly changing values.
 */
 /*virtual*/ void
-PointBasedPrimitive::applyVertexShader(DD::Image::PrimitiveContext* ptx,
-                                       DD::Image::Scene*            render_scene,
-                                       VertexBuffers&               vbuffers) const
+PointBasedPrimitive::applyVertexShader(const DDImageRenderSceneTessellateContext& rtess_ctx,
+                                       VertexBuffers&                             vbuffers) const
 {
     // just in case...
-    if (ptx->primitive() == this)
-        vbuffers.applyVertexShader(ptx, render_scene, m_xform);
+    if (rtess_ctx.isValid())
+        vbuffers.applyVertexShader(rtess_ctx, m_xform);
 }
 
 
@@ -529,12 +548,12 @@ PointBasedPrimitive::applyVertexShader(DD::Image::PrimitiveContext* ptx,
 
 */
 void
-PointBasedPrimitive::VertexBuffers::applyVertexShader(DD::Image::PrimitiveContext* ptx,
-                                                      DD::Image::Scene*            render_scene,
-                                                      const Fsr::Mat4d&            local_xform)
+PointBasedPrimitive::VertexBuffers::applyVertexShader(const DDImageRenderSceneTessellateContext& rtess_ctx,
+                                                      const Fsr::Mat4d&                          local_xform)
 {
-    assert(ptx && ptx->geoinfo()); // Should always be non-zero!
-    const DD::Image::GeoInfo& info = *ptx->geoinfo();
+    if (!rtess_ctx.isValid())
+        return; // don't crash!
+    const DD::Image::GeoInfo& info = *rtess_ctx.ptx->geoinfo();
 
     const size_t nPoints = numPoints();
     const size_t nVerts  = numVerts();
@@ -587,8 +606,8 @@ PointBasedPrimitive::VertexBuffers::applyVertexShader(DD::Image::PrimitiveContex
     if (info.render_mode >= DD::Image::RENDER_TEXTURED)
     {
         // Grab the assigned shader first from the Primitive then from the GeoInfo:
-        if (ptx->primitive()->material() && ptx->primitive()->material()->channels() != DD::Image::Mask_None)
-            shader = ptx->primitive()->material();
+        if (rtess_ctx.ptx->primitive()->material() && rtess_ctx.ptx->primitive()->material()->channels() != DD::Image::Mask_None)
+            shader = rtess_ctx.ptx->primitive()->material();
         else if (info.material && info.material->channels() != DD::Image::Mask_None)
             shader = info.material;
 
@@ -597,7 +616,7 @@ PointBasedPrimitive::VertexBuffers::applyVertexShader(DD::Image::PrimitiveContex
             shader = NULL;
     }
 #else
-    // If its == Iop::default_input() then don't bother as we're
+    // If it's == Iop::default_input() then don't bother as we're
     // replacing the functionality of Iop::vertex_shader().
     //
     /* In GeoInfo.h:
@@ -630,8 +649,8 @@ PointBasedPrimitive::VertexBuffers::applyVertexShader(DD::Image::PrimitiveContex
     else if (info.render_mode >= DD::Image::RENDER_TEXTURED)
     {
         // Grab the assigned shader first from the Primitive then from the GeoInfo:
-        if (ptx->primitive()->material() && ptx->primitive()->material()->channels() != DD::Image::Mask_None)
-            shader = ptx->primitive()->material();
+        if (rtess_ctx.ptx->primitive()->material() && rtess_ctx.ptx->primitive()->material()->channels() != DD::Image::Mask_None)
+            shader = rtess_ctx.ptx->primitive()->material();
         else if (info.material && info.material->channels() != DD::Image::Mask_None)
             shader = info.material;
 
@@ -689,10 +708,10 @@ PointBasedPrimitive::VertexBuffers::applyVertexShader(DD::Image::PrimitiveContex
         renderstate.displacement  = ?              //!< displacement coefficients
 #endif
 
-        vtx.set_scene(render_scene);
+        vtx.set_scene(rtess_ctx.render_scene);
         vtx.set_geoinfo(&info);
-        vtx.set_transforms(ptx->transforms());
-        vtx.set_primitive(ptx->primitive());
+        vtx.set_transforms(rtess_ctx.ptx->transforms());
+        vtx.set_primitive(rtess_ctx.ptx->primitive());
         //
         vtx.set_renderstate(NULL); // not required for vertex shader...?
         vtx.set_rprimitive(NULL);  // not required for vertex shader.
@@ -707,7 +726,7 @@ PointBasedPrimitive::VertexBuffers::applyVertexShader(DD::Image::PrimitiveContex
 
         // Primitive vertex attributes are stored in a packed list of all Prims in
         // the GeoInfo, so we need to know the Prim's offset in that list:
-        const uint32_t prim_vertattrib_offset = ptx->primitive()->vertex_offset();
+        const uint32_t prim_vertattrib_offset = rtess_ctx.ptx->primitive()->vertex_offset();
 
         for (size_t v=0; v < nVerts; ++v)
         {
@@ -716,8 +735,8 @@ PointBasedPrimitive::VertexBuffers::applyVertexShader(DD::Image::PrimitiveContex
             // In case vertex_shaders need the vertex or point indices:
             // TODO: this is not valid if the point or vertex count has been changed
             // by fillVertexBuffers!!!!
-            const_cast<uint32_t*>(ptx->indices())[DD::Image::Group_Vertices] = prim_vertattrib_offset + (int)v;
-            const_cast<uint32_t*>(ptx->indices())[DD::Image::Group_Points  ] = pindex;
+            const_cast<uint32_t*>(rtess_ctx.ptx->indices())[DD::Image::Group_Vertices] = prim_vertattrib_offset + (int)v;
+            const_cast<uint32_t*>(rtess_ctx.ptx->indices())[DD::Image::Group_Points  ] = pindex;
 
             //if (v < 5 || abs(int(v - nVerts)) <= 5)
             //    printVert(v, std::cout);
@@ -752,24 +771,20 @@ PointBasedPrimitive::VertexBuffers::applyVertexShader(DD::Image::PrimitiveContex
     TODO: attempt to override the render material...
 */
 /*virtual*/ void
-PointBasedPrimitive::addToRenderScene(int                          mode,
-                                      DD::Image::PrimitiveContext* ptx,
-                                      DD::Image::Scene*            render_scene,
-                                      VertexBuffers&               vbuffers) const
+PointBasedPrimitive::addToRenderScene(const VertexBuffers&                 vbuffers,
+                                      DDImageRenderSceneTessellateContext& rtess_ctx,
+                                      int                                  mode) const
 {
-#if 1
-    // Have vertex buffer output render prims to render scene, in mesh mode.
-    vbuffers.addToRenderScene(0/*mode*/, ptx, render_scene);
-#else
+#if 0
     // Attempt to override the material used by the renderer:
     // TODO: this fails miserably...
-    DD::Image::RenderMode saved_render_mode = ptx->geoinfo()->render_mode;
-    DD::Image::Iop*       saved_material    = ptx->geoinfo()->material;
+    DD::Image::RenderMode saved_render_mode = rtess_ctx.ptx->geoinfo()->render_mode;
+    DD::Image::Iop*       saved_material    = rtess_ctx.ptx->geoinfo()->material;
 
 #if 1
 static ColoredShader2 default_solid_shader;
-const_cast<DD::Image::GeoInfo*>(ptx->geoinfo())->render_mode = DD::Image::RENDER_TEXTURED;
-const_cast<DD::Image::GeoInfo*>(ptx->geoinfo())->material    = &default_solid_shader;
+const_cast<DD::Image::GeoInfo*>(rtess_ctx.ptx->geoinfo())->render_mode = DD::Image::RENDER_TEXTURED;
+const_cast<DD::Image::GeoInfo*>(rtess_ctx.ptx->geoinfo())->material    = &default_solid_shader;
 #else
     	  // Assign material to primitive based on parent object render setting:
 	  static SolidShader solid_shader(0);
@@ -782,12 +797,14 @@ const_cast<DD::Image::GeoInfo*>(ptx->geoinfo())->material    = &default_solid_sh
 		m = &solid_shader;
 	  }
 #endif
+#endif
 
-    // Have vertex buffer output render prims to render scene, in mesh mode.
-    vbuffers.addToRenderScene(0/*mode*/, ptx, render_scene);
+    // Have vertex buffer output render prims to render scene, in mesh mode:
+    vbuffers.addToRenderScene(rtess_ctx, 0/*mode*/);
 
-    const_cast<DD::Image::GeoInfo*>(ptx->geoinfo())->render_mode = saved_render_mode;
-    const_cast<DD::Image::GeoInfo*>(ptx->geoinfo())->material    = saved_material;
+#if 0
+    const_cast<DD::Image::GeoInfo*>(rtess_ctx.ptx->geoinfo())->render_mode = saved_render_mode;
+    const_cast<DD::Image::GeoInfo*>(rtess_ctx.ptx->geoinfo())->material    = saved_material;
 #endif
 }
 
@@ -795,9 +812,8 @@ const_cast<DD::Image::GeoInfo*>(ptx->geoinfo())->material    = &default_solid_sh
 /*!
 */
 void
-PointBasedPrimitive::VertexBuffers::addToRenderScene(int                          mode,
-                                                     DD::Image::PrimitiveContext* ptx,
-                                                     DD::Image::Scene*            render_scene) const
+PointBasedPrimitive::VertexBuffers::addToRenderScene(DDImageRenderSceneTessellateContext& rtess_ctx,
+                                                     int                                  mode) const
 {
     if (mode == 0)
     {
@@ -808,7 +824,7 @@ PointBasedPrimitive::VertexBuffers::addToRenderScene(int                        
             const size_t nFaces = (numVerts() / 3);
             uint32_t v0 = 0; // global vert count
             for (size_t f=0; f < nFaces; ++f, v0 += 3)
-                addRenderTriangleToScene( v0, v0+1, v0+2, ptx, render_scene);
+                addRenderTriangleToScene( v0, v0+1, v0+2, rtess_ctx);
         }
         else if (allQuads && (numVerts() % 4) == 0)
         {
@@ -816,8 +832,8 @@ PointBasedPrimitive::VertexBuffers::addToRenderScene(int                        
             uint32_t v0 = 0; // global vert count
             for (size_t f=0; f < nFaces; ++f, v0 += 4)
             {
-                addRenderTriangleToScene(  v0, v0+1, v0+2, ptx, render_scene);
-                addRenderTriangleToScene(v0+2, v0+3,   v0, ptx, render_scene);
+                addRenderTriangleToScene(  v0, v0+1, v0+2, rtess_ctx);
+                addRenderTriangleToScene(v0+2, v0+3,   v0, rtess_ctx);
             }
         }
         else
@@ -832,13 +848,13 @@ PointBasedPrimitive::VertexBuffers::addToRenderScene(int                        
                     if (nFaceVerts == 3)
                     {
                         // Triangle:
-                        addRenderTriangleToScene(v0, v0+1, v0+2, ptx, render_scene);
+                        addRenderTriangleToScene(v0, v0+1, v0+2, rtess_ctx);
                     }
                     else if (nFaceVerts == 4)
                     {
                         // Quad:
-                        addRenderTriangleToScene(  v0, v0+1, v0+2, ptx, render_scene);
-                        addRenderTriangleToScene(v0+2, v0+3,   v0, ptx, render_scene);
+                        addRenderTriangleToScene(  v0, v0+1, v0+2, rtess_ctx);
+                        addRenderTriangleToScene(v0+2, v0+3,   v0, rtess_ctx);
                     }
                     else
                     {
@@ -846,7 +862,7 @@ PointBasedPrimitive::VertexBuffers::addToRenderScene(int                        
                         // TODO: support ngons...?   :(
                         const uint32_t last_vert = v0 + nFaceVerts - 1;
                         for (uint32_t v=v0+1; v < last_vert; ++v)
-                            addRenderTriangleToScene(v0, v, v+1, ptx, render_scene);
+                            addRenderTriangleToScene(v0, v, v+1, rtess_ctx);
                     }
                 }
                 v0 += nFaceVerts;
@@ -866,20 +882,19 @@ PointBasedPrimitive::VertexBuffers::addToRenderScene(int                        
     with to concatenate the GeoInfo and Fsr::Primitive's transforms.
 */
 void
-PointBasedPrimitive::VertexBuffers::addRenderTriangleToScene(size_t                       v0,
-                                                             size_t                       v1,
-                                                             size_t                       v2,
-                                                             DD::Image::PrimitiveContext* ptx,
-                                                             DD::Image::Scene*            render_scene) const
+PointBasedPrimitive::VertexBuffers::addRenderTriangleToScene(size_t                               v0,
+                                                             size_t                               v1,
+                                                             size_t                               v2,
+                                                             DDImageRenderSceneTessellateContext& rtess_ctx) const
 {
 #if DEBUG
     assert(v0 < numVerts());
     assert(v1 < numVerts());
     assert(v2 < numVerts());
-    assert(ptx && ptx->geoinfo());
+    assert(rtess_ctx.isValid());
 #endif
     // The Scene will delete this allocation when the render is done:
-    DD::Image::rTriangle* tri = new DD::Image::rTriangle(ptx->geoinfo(), ptx->primitive());
+    DD::Image::rTriangle* tri = new DD::Image::rTriangle(rtess_ctx.ptx->geoinfo(), rtess_ctx.ptx->primitive());
     getVert(v0, tri->v[0]);
     getVert(v1, tri->v[1]);
     getVert(v2, tri->v[2]);
@@ -892,7 +907,7 @@ PointBasedPrimitive::VertexBuffers::addRenderTriangleToScene(size_t             
     // We don't bother pre-clipping and using the add_clipped_render_primitive()
     // method.
     //
-    render_scene->add_render_primitive(tri, ptx);
+    rtess_ctx.render_scene->add_render_primitive(tri, rtess_ctx.ptx);
 }
 
 
@@ -1270,7 +1285,14 @@ std::cout << "    nSceneGeoInfos=" << nSceneGeoInfos << ":" << std::endl;
                 const DD::Image::GeoInfo& scene_info = geometry_list[j];
                 const uint32_t nPrims = scene_info.primitives();
                 for (uint32_t i=0; i < nPrims; ++i)
+#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
                     if (info->primitive(i)->getPrimitiveType() > FUSER_NODE_PRIMITIVE_TYPE)
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+                    if (info->primitive(i)->getPrimitiveType() > FUSER_NODE_PRIMITIVE_TYPE)
+#pragma GCC diagnostic pop
+#endif
                         ++nVBs;
             }
 std::cout << "      nVBs=" << nVBs << std::endl;
@@ -1287,7 +1309,14 @@ std::cout << "      nVBs=" << nVBs << std::endl;
                     for (uint32_t i=0; i < nPrims; ++i)
                     {
                         const DD::Image::Primitive* prim = info->primitive(i);
+#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
                         if (prim->getPrimitiveType() > FUSER_NODE_PRIMITIVE_TYPE)
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+                        if (prim->getPrimitiveType() > FUSER_NODE_PRIMITIVE_TYPE)
+#pragma GCC diagnostic pop
+#endif
                         {
 #if 0
                             PointBasedPrimitive::VertexBuffers* vb = new PointBasedPrimitive::VertexBuffers();

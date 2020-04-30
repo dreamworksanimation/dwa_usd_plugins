@@ -74,7 +74,7 @@ FuserUsdXform::FuserUsdXform(const Pxr::UsdStageRefPtr& stage,
                              const Pxr::UsdPrim&        xform_prim,
                              const Fsr::ArgSet&         args,
                              Fsr::Node*                 parent) :
-    FuserUsdNode(stage, args, parent)
+    FuserUsdXformableNode(stage, args, parent)
 {
     //std::cout << "    FuserUsdXform::ctor(" << this << "): xform'" << xform_prim.GetPath() << "'" << std::endl;
 
@@ -108,7 +108,7 @@ FuserUsdXform::_validateState(const Fsr::NodeContext& args,
                               bool                    for_real)
 {
     // Get the time value up to date:
-    FuserUsdNode::_validateState(args, for_real);
+    FuserUsdXformableNode::_validateState(args, for_real);
 
     if (0)//(debug())
     {
@@ -204,7 +204,7 @@ FuserUsdXform::_execute(const Fsr::NodeContext& target_context,
     }
 
     // Let base class handle unrecognized targets:
-    return FuserUsdNode::_execute(target_context, target_name, target, src0, src1);
+    return FuserUsdXformableNode::_execute(target_context, target_name, target, src0, src1);
 }
 
 
@@ -614,7 +614,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
 #endif
             {
                 //std::cout << "        time=" << axis_vals.time << std::endl;
-                //std::cout << " local_xform" << l2w_xform << std::endl;
+                //std::cout << " local_xform" << local_xform << std::endl;
 
                 // Decompose the matrix into AxisKnob-compatible values:
                 if (!axis_vals_list[j].extractFromMatrix(local_xform,

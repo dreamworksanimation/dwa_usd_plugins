@@ -30,6 +30,7 @@
 
 #include "Mat4.h"
 #include "NukeGeoInterface.h"
+#include "MeshUtils.h" // for calcPointNormals()
 
 #include <DDImage/PrimitiveContext.h>
 #include <DDImage/Material.h>
@@ -45,8 +46,7 @@ namespace Fsr {
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------
 
-/*static*/ const char* MeshPrimitive::TessellateContext::name = "MeshPrimitiveTessellate";
-/*static*/ const char* MeshPrimitive::TessellateContext2::name = "MeshPrimitiveTessellate2"; // tmp ctx
+/*static*/ const char* MeshPrimitive::TessellateContext::name = "FsrMeshPrimitiveTessellate";
 
 
 /*! 
@@ -58,7 +58,7 @@ static Fsr::Node* buildMeshPrimitive(const char*        builder_class,
     return new MeshPrimitive(args, parent);
 }
 
-// Register plugin:
+// Register fsrMeshPrimitive plugin:
 /*static*/ FSR_EXPORT
 const Fsr::Node::Description
 MeshPrimitive::description("fsrMeshPrimitive"/*plugin name*/, buildMeshPrimitive/*ctor*/);
@@ -85,7 +85,8 @@ MeshPrimitive::MeshPrimitive(const Fsr::ArgSet& args,
     Fsr::PointBasedPrimitive(args),
     m_tessellator(NULL)
 {
-    //
+    //if (debug())
+    //    std::cout << "MeshPrimitive::ctor(" << this << ") args[" << m_args << "]" << std::endl;
 }
 
 
@@ -94,15 +95,16 @@ MeshPrimitive::MeshPrimitive(const Fsr::ArgSet& args,
 MeshPrimitive::MeshPrimitive(const Fsr::ArgSet& args,
                              double             frame,
                              size_t             nVerts,
-                             const uint32_t*    vertIndices,
+                             const uint32_t*    faceVertPointIndices,
                              size_t             nFaces,
                              const uint32_t*    nVertsPerFace) :
     Fsr::PointBasedPrimitive(args, frame),
     m_tessellator(NULL)
 {
-    //std::cout << "MeshPrimitive::ctor(" << this << ") frame=" << frame << std::endl;
+    //if (debug())
+    //    std::cout << "MeshPrimitive::ctor(" << this << ") frame=" << frame << std::endl;
     addFaces(nVerts,
-             vertIndices,
+             faceVertPointIndices,
              nFaces,
              nVertsPerFace);
 }
@@ -110,16 +112,17 @@ MeshPrimitive::MeshPrimitive(const Fsr::ArgSet& args,
 
 /*!
 */
-MeshPrimitive::MeshPrimitive(const Fsr::ArgSet&   args,
-                             double               frame,
-                             const Fsr::UintList& vertIndices,
-                             const Fsr::UintList& nVertsPerFace) :
+MeshPrimitive::MeshPrimitive(const Fsr::ArgSet&     args,
+                             double                 frame,
+                             const Fsr::Uint32List& faceVertPointIndices,
+                             const Fsr::Uint32List& nVertsPerFace) :
     Fsr::PointBasedPrimitive(args, frame),
     m_tessellator(NULL)
 {
-    //std::cout << "MeshPrimitive::ctor(" << this << ") frame=" << frame << std::endl;
-    addFaces(vertIndices.size(),
-             vertIndices.data(),
+    //if (debug())
+    //    std::cout << "MeshPrimitive::ctor(" << this << ") frame=" << frame << std::endl;
+    addFaces(faceVertPointIndices.size(),
+             faceVertPointIndices.data(),
              nVertsPerFace.size(),
              nVertsPerFace.data());
 }
@@ -132,13 +135,13 @@ MeshPrimitive::MeshPrimitive(const Fsr::ArgSet&   args,
 */
 void
 MeshPrimitive::addFace(uint32_t        nFaceVerts,
-                       const uint32_t* vertIndices)
+                       const uint32_t* faceVertPointIndices)
 {
     if (nFaceVerts < 3)
         return; // face must have at least 3 verts
 
     const uint32_t nVertsPerFace[] = { nFaceVerts };
-    addFaces(nFaceVerts, vertIndices, 1/*nFaces*/, nVertsPerFace);
+    addFaces(nFaceVerts, faceVertPointIndices, 1/*nFaces*/, nVertsPerFace);
 }
 
 
@@ -146,7 +149,7 @@ MeshPrimitive::addFace(uint32_t        nFaceVerts,
 */
 void
 MeshPrimitive::addFaces(size_t          nVerts,
-                        const uint32_t* vertIndices,
+                        const uint32_t* faceVertPointIndices,
                         size_t          nFaces,
                         const uint32_t* nVertsPerFace)
 {
@@ -168,7 +171,7 @@ MeshPrimitive::addFaces(size_t          nVerts,
     // Current vertex count is the starting vert of the new face:
     uint32_t vstart = (uint32_t)vertex_.size();
     for (uint32_t i=0; i < nVerts; ++i)
-        vertex_.push_back(vertIndices[i]);
+        vertex_.push_back(faceVertPointIndices[i]);
 
     // Add vert start/count:
     for (size_t f=0; f < nFaces; ++f)
@@ -372,7 +375,7 @@ MeshPrimitive::get_vertex_faces(int               vert,
 
     // Have to make this call writable and spoof the int list to an unsigned int list:
     const_cast<MeshPrimitive*>(this)->getVertexConnectedFaces(vert,
-                                                         reinterpret_cast<Fsr::UintList&>(faces));
+                                                         reinterpret_cast<Fsr::Uint32List&>(faces));
     //std::cout << "get_vertex_faces(" << vert << ")" << std::endl;
     //for (uint32_t i=0; i < faces.size(); ++i)
     //    std::cout << "  " << i << ": " << faces[i] << std::endl;
@@ -427,7 +430,7 @@ MeshPrimitive::get_geometric_normal(int                         vert,
 
     Fsr::Vec3f N(0.0f, 0.0f, 0.0f);
 
-    Fsr::UintList connected_verts;
+    Fsr::Uint32List connected_verts;
     const_cast<MeshPrimitive*>(this)->getVertexConnectedVerts(vert, connected_verts);
     const size_t nConnectedVerts = connected_verts.size();
     if (nConnectedVerts < 2)
@@ -555,178 +558,21 @@ MeshPrimitive::IntersectsRay(const DD::Image::Ray&       ray,
 
 
 /*!
-    TODO: move this to PointBased class.
-*/
-/*static*/ bool
-MeshPrimitive::calcPointNormals(size_t            nPoints,
-                                const Fsr::Vec3f* points,
-                                size_t            nVerts,
-                                const uint32_t*   vert_indices,
-                                size_t            nFaces,
-                                const uint32_t*   verts_per_face,
-                                bool              all_tris,
-                                bool              all_quads,
-                                Fsr::Vec3fList&   point_normals)
-{
-    if (nPoints == 0 || nVerts == 0 || nFaces == 0)
-        return false;
-
-    point_normals.resize(nPoints);
-    memset(point_normals.data(), 0, nPoints*sizeof(Fsr::Vec3f));
-
-    // This temp array stores per-point weights (just the count for now):
-    std::vector<float> point_normal_weights(nPoints);
-    memset(point_normal_weights.data(), 0, nPoints*sizeof(float));
-
-    // For each face get its geometric normal and add it to its points:
-    Fsr::Vec3f N;
-    int vindex = 0; // global vert count
-    if (all_tris && nVerts == (nFaces*3))
-    {
-        // Faster version for triangle meshes:
-        for (size_t f=0; f < nFaces; ++f)
-        {
-            // CCW winding order!
-            const uint32_t p0 = vert_indices[vindex++]; // v0
-            const uint32_t p1 = vert_indices[vindex++]; // v1
-            const uint32_t p2 = vert_indices[vindex++]; // v2
-            N = (points[p1] - points[p0]).cross(points[p2] - points[p0]);
-            // Add normal to each point:
-            point_normals[p0] += N; point_normal_weights[p0] += 1.0f;
-            point_normals[p1] += N; point_normal_weights[p1] += 1.0f;
-            point_normals[p2] += N; point_normal_weights[p2] += 1.0f;
-        }
-    }
-    else if (all_quads && nVerts == (nFaces*4))
-    {
-        // Faster version for quad meshes:
-        for (size_t f=0; f < nFaces; ++f)
-        {
-            // CCW winding order!
-            const uint32_t p0 = vert_indices[vindex++]; // v0
-            const uint32_t p1 = vert_indices[vindex++]; // v1
-            const uint32_t p2 = vert_indices[vindex++]; // v2
-            const uint32_t p3 = vert_indices[vindex++]; // v3
-            N = (points[p3] - points[p1]).cross(points[p0] - points[p2]);
-            // Add normal to each point:
-            point_normals[p0] += N; point_normal_weights[p0] += 1.0f;
-            point_normals[p1] += N; point_normal_weights[p1] += 1.0f;
-            point_normals[p2] += N; point_normal_weights[p2] += 1.0f;
-            point_normals[p3] += N; point_normal_weights[p3] += 1.0f;
-        }
-    }
-    else
-    {
-        if (verts_per_face == NULL)
-            return false; // need the faces list!
-
-        for (size_t f=0; f < nFaces; ++f)
-        {
-            const int nFaceVerts = verts_per_face[f];
-            if (nFaceVerts < 3)
-            {
-                vindex += nFaceVerts; // can't build a normal without 3 or more verts
-            }
-            else if (nFaceVerts == 4)
-            {
-                // Quad - CCW winding order!
-                const uint32_t p0 = vert_indices[vindex++]; // v0
-                const uint32_t p1 = vert_indices[vindex++]; // v1
-                const uint32_t p2 = vert_indices[vindex++]; // v2
-                const uint32_t p3 = vert_indices[vindex++]; // v3
-                N = (points[p3] - points[p1]).cross(points[p0] - points[p2]);
-                // Add normal to each point:
-                point_normals[p0] += N; point_normal_weights[p0] += 1.0f;
-                point_normals[p1] += N; point_normal_weights[p1] += 1.0f;
-                point_normals[p2] += N; point_normal_weights[p2] += 1.0f;
-                point_normals[p3] += N; point_normal_weights[p3] += 1.0f;
-            }
-            else if (nFaceVerts == 3)
-            {
-                // Triangle - CCW winding order!
-                const uint32_t p0 = vert_indices[vindex++]; // v0
-                const uint32_t p1 = vert_indices[vindex++]; // v1
-                const uint32_t p2 = vert_indices[vindex++]; // v2
-                N = (points[p1] - points[p0]).cross(points[p2] - points[p0]);
-                // Add normal to each point:
-                point_normals[p0] += N; point_normal_weights[p0] += 1.0f;
-                point_normals[p1] += N; point_normal_weights[p1] += 1.0f;
-                point_normals[p2] += N; point_normal_weights[p2] += 1.0f;
-            }
-            else
-            {
-                // Polygon - CCW winding order!
-                const uint32_t p0 = vert_indices[vindex+0]; // v0
-                const uint32_t p1 = vert_indices[vindex+1]; // v1
-                const uint32_t p2 = vert_indices[vindex+2]; // v2
-                const uint32_t p3 = vert_indices[vindex+nFaceVerts-1]; // v3
-                N = (points[p3] - points[p1]).cross(points[p0] - points[p2]);
-                // Add normal to each point:
-                for (int v=0; v < nFaceVerts; ++v, ++vindex)
-                {
-                    const uint32_t pindex = vert_indices[vindex];
-                    point_normals[pindex] += N; point_normal_weights[pindex] += 1.0f;
-                }
-            }
-        }
-    }
-
-    // Normalize normals using the final count weight:
-    const float* cp = point_normal_weights.data();
-    for (size_t i=0; i < nPoints; ++i, ++cp)
-    {
-        if (*cp <= 0.0f)
-            continue;
-        Fsr::Vec3f& N = point_normals[i];
-        N /= *cp; // not sure if we need this, or will normalize handle it
-        N.normalize();
-    }
-
-    return true;
-}
-
-
-/*! Builds normals for the current VertexBuffers state.
-*/
-/*static*/ bool
-MeshPrimitive::calcVertexBufferNormals(VertexBuffers& vbuffers)
-{
-    Fsr::Vec3fList point_normals;
-    if (!calcPointNormals(vbuffers.PL.size(),
-                          vbuffers.PL.data(),
-                          vbuffers.Pidx.size(),
-                          vbuffers.Pidx.data(),
-                          vbuffers.numFaces(),
-                          vbuffers.vertsPerFace.data(),
-                          vbuffers.allTris,
-                          vbuffers.allQuads,
-                          point_normals))
-        return false;
-
-    const size_t nVerts = vbuffers.numVerts();
-    for (size_t v=0; v < nVerts; ++v)
-        vbuffers.N[v] = point_normals[vbuffers.Pidx[v]];
-
-    return true;
-}
-
-
-/*!
 */
 bool
 MeshPrimitive::calcPointNormals(const DD::Image::PointList* point_list,
                                 Fsr::Vec3fList&             point_normals) const
 {
     const Fsr::Vec3fList& local_points = getPointLocations(point_list);
-    return calcPointNormals(local_points.size(),
-                            local_points.data(),
-                            vertex_.size(),
-                            vertex_.data(),
-                            m_num_verts_per_face.size(),
-                            m_num_verts_per_face.data(),
-                            false/*all_tris*/,
-                            false/*all_quads*/,
-                            point_normals);
+    return Fsr::calcPointNormals(local_points.size(),
+                                 local_points.data(),
+                                 vertex_.size(),
+                                 vertex_.data(),
+                                 m_num_verts_per_face.size(),
+                                 m_num_verts_per_face.data(),
+                                 false/*all_tris*/,
+                                 false/*all_quads*/,
+                                 point_normals);
 }
 
 
@@ -768,22 +614,21 @@ MeshPrimitive::calcVertexNormals(const DD::Image::PointList* point_list,
     normals for the mesh and populate the N(ormals) vertex buffer.
 */
 /*virtual*/ void
-MeshPrimitive::fillVertexBuffers(DD::Image::PrimitiveContext* ptx,
-                                 DD::Image::Scene*            render_scene,
-                                 VertexBuffers&               vbuffers) const
+MeshPrimitive::fillVertexBuffers(const DDImageRenderSceneTessellateContext& rtess_ctx,
+                                 VertexBuffers&                             vbuffers) const
 {
     if (numVerts() == 0 || numFaces() == 0)
         return;
 
-    assert(ptx && ptx->geoinfo()); // should never be NULL!
-    const DD::Image::GeoInfo& info = *ptx->geoinfo();
+    assert(rtess_ctx.ptx && rtess_ctx.ptx->geoinfo()); // should never be NULL!
+    const DD::Image::GeoInfo& info = *rtess_ctx.ptx->geoinfo();
 
 
     // Base class fills the buffers, then we may subdivide or update normals:
-    PointBasedPrimitive::fillVertexBuffers(ptx, render_scene, vbuffers);
+    PointBasedPrimitive::fillVertexBuffers(rtess_ctx, vbuffers);
 
     // Copy the face list data:
-    vbuffers.vertsPerFace = m_num_verts_per_face;
+    vbuffers.resizePolyFaces(m_num_verts_per_face.size(), m_num_verts_per_face.data());
 
 
     // Grab subd args from the GeoInfo object:
@@ -794,29 +639,36 @@ MeshPrimitive::fillVertexBuffers(DD::Image::PrimitiveContext* ptx,
     // TODO: define these subd string constants somewhere common
     const int         subd_current_level =    Fsr::getObjectInt(info, "subd:current_level");
     int               subd_render_level  =    Fsr::getObjectInt(info, "subd:render_level" );
-    const std::string subd_scheme        = Fsr::getObjectString(info, "subd:scheme"       );
+    std::string       subd_tessellator   = Fsr::getObjectString(info, "subd:tessellator"  );
+    std::string       subd_scheme        = Fsr::getObjectString(info, "subd:scheme"       );
 
     //std::cout << "  MeshPrimitive::fillVertexBuffers('" << getPath() << "') frame=" << m_frame;
+    //std::cout << ", args[" << m_args << "]";
     //std::cout << ", nPoints=" << info.points();
     //std::cout << ", numVerts=" << numVerts();
     //std::cout << ", numFaces=" << numFaces();
     //std::cout << ", subd_scheme='" << subd_scheme << "'";
     //std::cout << ", subd_current_level=" << subd_current_level;
     //std::cout << ", subd_render_level=" << subd_render_level;
+    //std::cout << ", subd_tessellator='" << subd_tessellator << "'";
     //std::cout << std::endl;
 
     // Get the tesselator node to execute:
     if (subd_render_level > subd_current_level && m_tessellator == NULL)
     {
+        if (subd_tessellator.empty())
+            subd_tessellator = "OpenSubdiv"; // default
+
         // TODO: should we pick different nodes depending on subd_scheme?
-        const_cast<MeshPrimitive*>(this)->m_tessellator = Fsr::Node::create("OpenSubdiv"/*node_class*/,
+        const_cast<MeshPrimitive*>(this)->m_tessellator = Fsr::Node::create(subd_tessellator.c_str()/*node_class*/,
                                                                             Fsr::ArgSet(),
                                                                             NULL/*parent*/);
         // Try to find the default subdivision tessellator plugin:
         // TODO: make this a built-in Fuser node:
         if (!m_tessellator)
         {
-            const_cast<MeshPrimitive*>(this)->m_tessellator = Fsr::Node::create("DefaultSubd"/*node_class*/,
+            subd_tessellator = "SimpleSubdiv";
+            const_cast<MeshPrimitive*>(this)->m_tessellator = Fsr::Node::create(subd_tessellator.c_str()/*node_class*/,
                                                                                 Fsr::ArgSet(),
                                                                                 NULL/*parent*/);
         }
@@ -837,11 +689,13 @@ MeshPrimitive::fillVertexBuffers(DD::Image::PrimitiveContext* ptx,
         //Vector3 V = render_scene->matrix(CAMERA_MATRIX).z_axis();
         //Vector3 V = render_scene->matrix(CAMERA_iMATRIX).ntransform(Vector3(0,0,1));
 
-
+        // TODO: should we simply copy all args prefixed with 'subd:' to
+        // subd_args? Or just pass a copy of this Node's args?
         Fsr::NodeContext subd_args;
-        subd_args.setInt("subd:current_level", subd_current_level);
-        subd_args.setInt("subd:target_level",  subd_render_level );
+        subd_args.setInt(   "subd:current_level", subd_current_level);
+        subd_args.setInt(   "subd:target_level",  subd_render_level );
         subd_args.setString("subd:scheme",        subd_scheme       );
+        //subd_args.setBool("subd:snap_to_limit", getBool("subd:snap_to_limit", false));
 
         TessellateContext tessellate_ctx(this, &vbuffers);
         int res = m_tessellator->execute(subd_args,           /*target_context*/
@@ -855,12 +709,12 @@ MeshPrimitive::fillVertexBuffers(DD::Image::PrimitiveContext* ptx,
         else
         {
             // Update normals:
-            calcVertexBufferNormals(vbuffers);
+//            calcVertexBufferNormals(vbuffers);
 
             //std::cout << "  MeshPrimitive::tessellate('" << getPath() << "') frame=" << m_frame;
-            //std::cout << ", nPoints=" << vbuffers.PL.size();
-            //std::cout << ", nVerts=" << vbuffers.Pidx.size();
-            //std::cout << ", nFaces=" << vbuffers.vertsPerFace.size();
+            //std::cout << ", nPoints=" << vbuffers.numPoints();
+            //std::cout << ", nVerts=" << vbuffers.numVerts();
+            //std::cout << ", nFaces=" << vbuffers.numFaces();
             //std::cout << ", allTris=" << vbuffers.allTris;
             //std::cout << ", allQuads=" << vbuffers.allQuads;
             //std::cout << std::endl;
@@ -889,9 +743,8 @@ MeshPrimitive::fillVertexBuffers(DD::Image::PrimitiveContext* ptx,
     TODO: finish this code thought.
 */
 /*virtual*/ void
-MeshPrimitive::_drawWireframe(DD::Image::ViewerContext* vtx,
-                              const DD::Image::GeoInfo& info,
-                              VertexBuffers&            vbuffers)
+MeshPrimitive::_drawWireframe(const PrimitiveViewerContext& vtx,
+                              VertexBuffers&                vbuffers)
 {
 std::cout << "MeshPrimitive::_drawWireframe('" << this << "')" << std::endl;
 }
@@ -903,9 +756,8 @@ std::cout << "MeshPrimitive::_drawWireframe('" << this << "')" << std::endl;
     TODO: finish this code thought.
 */
 /*virtual*/ void
-MeshPrimitive::_drawSolid(DD::Image::ViewerContext* vtx,
-                          const DD::Image::GeoInfo& info,
-                          VertexBuffers&            vbuffers)
+MeshPrimitive::_drawSolid(const PrimitiveViewerContext& vtx,
+                          VertexBuffers&                vbuffers)
 {
 std::cout << "MeshPrimitive::_drawSolid('" << this << "')" << std::endl;
 }

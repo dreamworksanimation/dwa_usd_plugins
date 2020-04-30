@@ -83,12 +83,11 @@ local transform controls seperate and more easily manipulated in a local context
 class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
 {
   protected:
-    Fsr::SceneXform* m_input_xform;     //!< Non-null if parent input is a SceneXform type
-
-    Fsr::Lookat      m_lookat;          //!< Replicates the DD::ImageLookAt functionality
+    Fsr::LookatVals  m_lookat;          //!< Replicates the DD::ImageLookAt functionality
 
     Fsr::Mat4d       m_input_matrix;    //!< Input transform from parent input source - identity if no input
     Fsr::Mat4d       m_parent_matrix;   //!< Parent transform from local parent knobs
+    Fsr::Mat4d       m_xform_matrix;    //!< AxisKnob fills this in
     Fsr::Mat4d       m_local_matrix;    //!< Also contains lookat transform!
     Fsr::Mat4d       m_world_matrix;    //!< parent * local
 
@@ -214,6 +213,7 @@ class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
     // Return the matrices constructed at the last validated OutputContext()
     const Fsr::Mat4d& getInputParentTransform()      const { return m_input_matrix;  }
     const Fsr::Mat4d& getParentConstraintTransform() const { return m_parent_matrix; }
+    const Fsr::Mat4d& getXformTransform()            const { return m_xform_matrix;  }
     const Fsr::Mat4d& getLocalTransform()            const { return m_local_matrix;  }
     const Fsr::Mat4d& getWorldTransform()            const { return m_world_matrix;  }
 
@@ -224,12 +224,13 @@ class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
     //! Builds the parent contraint matrix from the parent constraint knobs.
     virtual Fsr::Mat4d getParentConstraintTransformAt(const DD::Image::OutputContext& context) const;
 
-    //! Builds the local transform matrix from the local transform knobs. Does not include lookat!
+    //! Builds the local 'xform' matrix from the local transform knobs. Does not include lookat!
     virtual Fsr::Mat4d getLocalTransformAt(const DD::Image::OutputContext& context) const;
 
-    //! Modify input matrix with lookat function. Requires world transform up to local matrix to find origin.
-    virtual bool applyLookatTransformAt(Fsr::Mat4d&                     concat_matrix,
-                                        const DD::Image::OutputContext& context) const;
+    //! Build the local xform with lookat applied. Requires world transform up to local matrix to find origin.
+    virtual Fsr::Mat4d getLocalTransformWithLookatAt(const Fsr::Mat4d&               parent_matrix,
+                                                     const DD::Image::OutputContext& context,
+                                                     Fsr::Mat4d*                     xform_matrix=NULL) const;
 
     //! Builds the entire transform matrix. Includes parent, local and lookat.
     virtual Fsr::Mat4d getWorldTransformAt(const DD::Image::OutputContext& context) const;

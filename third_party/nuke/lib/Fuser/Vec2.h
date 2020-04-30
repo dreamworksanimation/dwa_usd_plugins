@@ -32,6 +32,7 @@
 #include "api.h"
 
 #include <DDImage/Vector2.h> // for DD::Image compatibility convenience
+#include <DDImage/Hash.h>    // for DD::Image compatibility convenience
 
 #include <cmath> // For sqrt, etc
 #include <iostream>
@@ -61,7 +62,7 @@ class FSR_EXPORT Vec2
 
     //! Copy constructor.
     template<typename S>
-    Vec2(const Vec2<S>& v) : x(T(v.x)), y(T(v.y)) {}
+    explicit Vec2(const Vec2<S>& v) : x(T(v.x)), y(T(v.y)) {}
 
     //! Constructor that sets all components.
     Vec2(T _x, T _y) : x(_x), y(_y) {}
@@ -119,6 +120,9 @@ class FSR_EXPORT Vec2
     void               fromDDImage(const DD::Image::Vector2& b) { x = T(b.x); y = T(b.y); }
     void               toDDImage(DD::Image::Vector2& out) const;
     DD::Image::Vector2 asDDImage() const;
+
+    //! Add this to a DD::Image::Hash object, for DD::Image compatibility convenience.
+    void append(DD::Image::Hash& hash) const;
 
 
     /*---------------------------*/
@@ -185,16 +189,16 @@ class FSR_EXPORT Vec2
     T    lengthSquared() const { return (x*x + y*y); }
 
     //! Same as (this-v).length()
-    T    distanceBetween(const Vec2 &v) const {return std::sqrt((x-v.x)*(x-v.x) + (y-v.y)*(y-v.y)); }
+    T    distanceBetween(const Vec2& v) const {return std::sqrt((x-v.x)*(x-v.x) + (y-v.y)*(y-v.y)); }
 
     //! Same as (this-v).lengthSquared()
-    T    distanceSquared(const Vec2 &v) const { return (x-v.x)*(x-v.x) + (y-v.y)*(y-v.y); }
+    T    distanceSquared(const Vec2& v) const { return (x-v.x)*(x-v.x) + (y-v.y)*(y-v.y); }
 
     //! Dot product.
-    T    dot(const Vec2 &v) const { return (x*v.x + y*v.y); }
+    T    dot(const Vec2& v) const { return (x*v.x + y*v.y); }
 
     //! Returns the Z component of the cross product, Ux*Vy - Uy*Vx.
-    T    cross(const Vec2 &v) const { return (x*v.y - y*v.x); }
+    T    cross(const Vec2& v) const { return (x*v.y - y*v.x); }
 
     //! Change the vector to be unit length. Returns the original length.
     T    normalize() { T d = length(); if (d) *this *= ((T)1/d); return d; }
@@ -212,6 +216,14 @@ class FSR_EXPORT Vec2
 
     //! Returns the absolute value of the largest element.
     T    largestAxis() const { return std::max(::fabs(x), ::fabs(y)); }
+
+    //! Linear-interpolate between this Vec2 and another at t, where t=0..1.
+    template<typename S>
+    Vec2<T> interpolateTo(const Vec2<T>& b,
+                          S              t) const;
+    template<typename S>
+    Vec2<T>        lerpTo(const Vec2<T>& b,
+                          S              t) const;
 
 
   private:
@@ -232,15 +244,40 @@ typedef Vec2<int>    Vec2i;
 /*        Static operations         */
 /*----------------------------------*/
 
-//! Interpolate between two Vec2s.
-template<typename T>
-Vec2<T> lerp(const Vec2<T>& v0,
-             const Vec2<T>& v1,
-             T              t);
-
 //! Print out components to a stream.
 template<typename T>
 std::ostream& operator << (std::ostream& o, const Vec2<T>& v);
+
+
+//! Linear-interpolate between two Vec2s at t, where t=0..1.
+template<typename T, typename S>
+Vec2<T> lerp(const Vec2<T>& v0,
+             const Vec2<T>& v1,
+             S              t);
+//! Linear-interpolate between two Vec2s at t, where t=0..1, and inv is 1-t.
+template<typename T, typename S>
+inline Vec2<T> lerp(const Vec2<T>& v0,
+                    const Vec2<T>& v1,
+                    S              t,
+                    S              invt);
+
+//! Interpolate between three Vec2s at barycentric coord st.
+template<typename T, typename S>
+Vec2<T> interpolateAtBaryCoord(const Fsr::Vec2<T>& v0,
+                               const Fsr::Vec2<T>& v1,
+                               const Fsr::Vec2<T>& v2,
+                               const Fsr::Vec2<S>& st);
+//! Interpolate between three Vec2s at barycentric coord st, with derivatives.
+template<typename T, typename S>
+void    interpolateAtBaryCoord(const Fsr::Vec2<T>& v0,
+                               const Fsr::Vec2<T>& v1,
+                               const Fsr::Vec2<T>& v2,
+                               const Fsr::Vec2<S>& st,
+                               const Fsr::Vec2<S>& stdx,
+                               const Fsr::Vec2<S>& stdy,
+                               Fsr::Vec2<T>&       out,
+                               Fsr::Vec2<T>&       duout,
+                               Fsr::Vec2<T>&       dvout);
 
 
 /*---------------------------------------------------------------------*/
@@ -260,7 +297,7 @@ inline std::ostream& operator << (std::ostream& o, const Vec2<T>& v)
 
 //-----------------------------------------------------------
 
-//! Copy to/from a DD::Image::Vector2.
+// Copy to/from a DD::Image::Vector2.
 template<typename T>
 inline void
 Vec2<T>::toDDImage(DD::Image::Vector2& out) const { out.x = float(x); out.y = float(y); }
@@ -276,6 +313,13 @@ inline Vec2<T>::operator DD::Image::Vector2() const
         return *reinterpret_cast<DD::Image::Vector2*>(const_cast<Vec2<T>* >(this));
     else
         return this->asDDImage();
+}
+
+template<typename T>
+inline void
+Vec2<T>::append(DD::Image::Hash& hash) const
+{
+    hash.append(this->array(), 2*sizeof(T));
 }
 
 //-----------------------------------------------------------
@@ -308,14 +352,86 @@ inline Vec2<T>::operator Vec2<int>() const
 //-----------------------------------------------------------
 
 template<typename T>
+template<typename S>
+inline Vec2<T>
+Vec2<T>::interpolateTo(const Vec2<T>& b,
+                       S              t) const
+{
+    if (t < std::numeric_limits<S>::epsilon())
+        return *this; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return b; // at or after last
+    const T tT    = T(t);
+    const T invtT = (T)1 - tT;
+    return Vec2<T>(this->x*invtT + b.x*tT, this->y*invtT + b.y*tT);
+}
+template<typename T>
+template<typename S>
+inline Vec2<T>
+Vec2<T>::lerpTo(const Vec2<T>& b, S t) const { return this->interpolateTo(b, t); }
+
+template<typename T, typename S>
 inline Vec2<T>
 lerp(const Vec2<T>& v0,
      const Vec2<T>& v1,
-     T              t)
+     S              t)
 {
-    const T it = (T)1 - t;
-    return Vec2<T>(v0.x*it + v1.x*t, v0.y*it + v1.y*t);
+    if (t < std::numeric_limits<S>::epsilon())
+        return v0; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return v1; // at or after last
+    const T tT    = T(t);
+    const T invtT = (T)1 - tT;
+    return Vec2<T>(v0.x*invtT + v1.x*tT, v0.y*invtT + v1.y*tT);
 }
+template<typename T, typename S>
+inline Vec2<T>
+lerp(const Vec2<T>& v0,
+     const Vec2<T>& v1,
+     S              t,
+     S              invt)
+{
+    if (t < std::numeric_limits<S>::epsilon())
+        return v0; // before or at first
+    else if (t > ((S)1 - std::numeric_limits<S>::epsilon()))
+        return v1; // at or after last
+    const T tT    = T(t);
+    const T invtT = T(invt);
+    return Vec2<T>(v0.x*invtT + v1.x*tT, v0.y*invtT + v1.y*tT);
+}
+
+// Interpolate between three Vec2s at barycentric coord st.
+template<typename T, typename S>
+inline Vec2<T>
+interpolateAtBaryCoord(const Fsr::Vec2<T>& v0,
+                       const Fsr::Vec2<T>& v1,
+                       const Fsr::Vec2<T>& v2,
+                       const Fsr::Vec2<S>& st)
+{
+    return Vec2<T>(v0 + ((v1 - v0)*T(st.x)) + ((v2 - v0)*T(st.y)));
+}
+
+// Interpolate between three Vec2s at barycentric coord st, with derivatives.
+template<typename T, typename S>
+inline void
+interpolateAtBaryCoord(const Fsr::Vec2<T>& v0,
+                       const Fsr::Vec2<T>& v1,
+                       const Fsr::Vec2<T>& v2,
+                       const Fsr::Vec2<S>& st,
+                       const Fsr::Vec2<S>& stdx,
+                       const Fsr::Vec2<S>& stdy,
+                       Fsr::Vec2<T>&       out,
+                       Fsr::Vec2<T>&       duout,
+                       Fsr::Vec2<T>&       dvout)
+{
+    const Fsr::Vec2<T> e01 = (v1 - v0);
+    const Fsr::Vec2<T> e02 = (v2 - v0);
+    const Fsr::Vec2<T> dt = (e01*T(st.x)) + (e02*T(st.y));
+    out   = v0 + dt;
+    duout = (e01*T(stdx.x)) + (e02*T(stdx.y)) - dt;
+    dvout = (e01*T(stdy.x)) + (e02*T(stdy.y)) - dt;
+}
+
 
 } //namespace Fsr
 

@@ -32,17 +32,17 @@
 #include "XformableNode.h"
 #include "Box3.h"
 
-#include <DDImage/Primitive.h>
+#include <DDImage/PrimitiveContext.h>
 #include <DDImage/GeoInfo.h> // for utility convenience methods
 
 // Extend the hardcoded Foundry primitive enumerations.
 // These are in one place to make it easier to add new ones.
-#define FUSER_NODE_PRIMITIVE_TYPE       (DD::Image::ePrimitiveTypeCount+123) // Fsr::NodePrim
-#define FUSER_SCENEGRAPH_PRIMITIVE_TYPE (DD::Image::ePrimitiveTypeCount+124) // Fsr::SceneGraphPrimitive
-#define FUSER_MESH_PRIMITIVE_TYPE       (DD::Image::ePrimitiveTypeCount+125) // Fsr::MeshPrimitive
-#define FUSER_POINTCLOUD_PRIMITIVE_TYPE (DD::Image::ePrimitiveTypeCount+126) // Fsr::PointCloudPrim
-#define FUSER_CURVESET_PRIMITIVE_TYPE   (DD::Image::ePrimitiveTypeCount+127) // Fsr::CurveSetPrim
-#define FUSER_INSTANCE_PRIMITIVE_TYPE   (DD::Image::ePrimitiveTypeCount+128) // Fsr::InstancePrim
+#define FUSER_NODE_PRIMITIVE_TYPE       (DD::Image::PrimitiveType)(DD::Image::ePrimitiveTypeCount+123) // Fsr::NodePrim
+#define FUSER_SCENEGRAPH_PRIMITIVE_TYPE (DD::Image::PrimitiveType)(DD::Image::ePrimitiveTypeCount+124) // Fsr::SceneGraphPrimitive
+#define FUSER_MESH_PRIMITIVE_TYPE       (DD::Image::PrimitiveType)(DD::Image::ePrimitiveTypeCount+125) // Fsr::MeshPrimitive
+#define FUSER_POINTCLOUD_PRIMITIVE_TYPE (DD::Image::PrimitiveType)(DD::Image::ePrimitiveTypeCount+126) // Fsr::PointCloudPrim
+#define FUSER_CURVESET_PRIMITIVE_TYPE   (DD::Image::PrimitiveType)(DD::Image::ePrimitiveTypeCount+127) // Fsr::CurveSetPrim
+#define FUSER_INSTANCE_PRIMITIVE_TYPE   (DD::Image::PrimitiveType)(DD::Image::ePrimitiveTypeCount+128) // Fsr::InstancePrim
 
 
 namespace Fsr {
@@ -81,25 +81,36 @@ class FSR_EXPORT FuserPrimitive : public Fsr::XformableNode,
   public:
     /*! Node execution context structure passed as target data to Fsr::Node::execute()
         methods, containing info normally passed to DD::Image::Primitive::tessellate()
-        method.
+        method which outputs DD::Image::rPrimitives to a render DD::Image::Scene.
+
+        For DD::Image::RenderScene/ScanlineRender use only, not for generic tessellation
+        use!
     */
-    struct FSR_EXPORT RenderSceneTessellateContext
+    struct FSR_EXPORT DDImageRenderSceneTessellateContext
     {
-        static const char* name; // "RenderSceneTessellate"
+        static const char* name; // "DDImageRenderSceneTessellate"
 
         const FuserPrimitive*        primitive;     //!< Source Fsr::FuserPrimitive
-        DD::Image::Scene*            scene;         //!< Output rendering scene
         DD::Image::PrimitiveContext* ptx;           //!< Parent GeoInfo of Primitive
+        DD::Image::Scene*            render_scene;  //!< Output rendering scene
 
-        RenderSceneTessellateContext(const FuserPrimitive*        _primitive,
-                                     DD::Image::Scene*            _scene,
-                                     DD::Image::PrimitiveContext* _ptx) :
+        DDImageRenderSceneTessellateContext(const FuserPrimitive*        _primitive,
+                                            DD::Image::PrimitiveContext* _ptx,
+                                            DD::Image::Scene*            _render_scene) :
             primitive(_primitive),
-            scene(_scene),
-            ptx(_ptx)
+            ptx(_ptx),
+            render_scene(_render_scene)
         {
             //
         }
+
+        //!
+        bool isValid() const { return !(primitive        == NULL ||
+                                        ptx              == NULL ||
+                                        ptx->geoinfo()   == NULL ||
+                                        ptx->primitive() == NULL ||
+                                        render_scene     == NULL); }
+
     };
 
 

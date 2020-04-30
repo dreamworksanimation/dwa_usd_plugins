@@ -26,10 +26,10 @@
 ///
 /// @author Jonathan Egstad
 ///
-/// @brief Nuke GeoReader plugin to load USD files (.usd) via fsrUsdIO plugin
+/// @brief Nuke GeoReader plugin to load USD files (.usd*) via fsrUsdIO plugin
 
 
-#include <Fuser/GeoSceneGraphReader.h>
+#include "usdReader.h"
 
 
 using namespace DD::Image;
@@ -53,71 +53,25 @@ static const char* usd_file_extensions =
 
 
 //-------------------------------------------------------------------------------
-//-------------------------------------------------------------------------------
 
-
-/*! Subclass the Fuser archive context class to store USD-specific info.
-
-    This is passed to the fsrUsdIO FuserNode plugin via its execute() portal.
-*/
-class UsdArchiveContext : public GeoSceneFileArchiveContext
-{
-  public:
-    UsdArchiveContext() : GeoSceneFileArchiveContext() { }
-};
-
-
-//-------------------------------------------------------------------------------
-//-------------------------------------------------------------------------------
+static const char* default_usd_attribute_mappings =
+    "st=uv, uv=uv\n"
+    "normals=N\n"
+    "displayColor=Cf\n"
+    "displayOpacities=Of\n"
+    "velocities=VEL\n"
+;
 
 
 /*!
 */
-class usdReaderFormat : public GeoSceneGraphReaderFormat
+usdReaderFormat::usdReaderFormat(DD::Image::ReadGeo* geo) :
+    GeoSceneGraphReaderFormat(geo)
 {
-  public:
-    static GeoReaderFormat* build(ReadGeo* geo) { return new usdReaderFormat(geo); }
+    k_surface_mask = defaultSurfaceMask(); // virtual calls don't work in parent-class constructors!
 
-    usdReaderFormat(ReadGeo* geo) :
-        GeoSceneGraphReaderFormat(geo)
-    {
-        //
-    }
-
-    //! USD files can take huge amounts of time to scan, let's avoid this by default.
-    /*virtual*/ const char* defaultSurfaceMask() const { return ""; }
-
-
-    //================================================================
-    // From FileHandler (FileOp.h):
-    //================================================================
-
-    /*virtual*/
-    const char* help() { return "usdReader"; }
-
-    /*virtual*/
-    void knobs(Knob_Callback f) 
-    {
-        GeoSceneGraphReaderFormat::knobs(f);
-    }
-
-    /*virtual*/
-    void extraKnobs(Knob_Callback f)
-    {
-        GeoSceneGraphReaderFormat::extraKnobs(f);
-    }
-
-    //================================================================
-    // From ReaderFormat (Reader.h):
-    //================================================================
-
-    /*virtual*/
-    void append(Hash& hash)
-    {
-        GeoSceneGraphReaderFormat::append(hash);
-    }
-
-};
+    k_attribute_mappings = default_usd_attribute_mappings;
+}
 
 
 //-------------------------------------------------------------------------------
@@ -125,73 +79,55 @@ class usdReaderFormat : public GeoSceneGraphReaderFormat
 
 /*!
 */
-class usdReader : public GeoSceneGraphReader
+usdReader::usdReader(ReadGeo* geo, int fd) :
+    GeoSceneGraphReader(geo, fd),
+    m_stage_cache_ctx(NULL)
 {
-    UsdArchiveContext*  m_stage_cache_ctx;  //!< Contains the stage cache id value
+    //std::cout << "usdReader::ctor(" << this << "): reading USD file '" << fileNameForReader() << "'" << std::endl;
+
+    // TODO: This is not needed anymore. fuserIOClass() method is used instead along with the .tcl aliases.
+    //Fsr::NodeIOInterface::addExtensionMappings("usd,usda,usdc:UsdIO");
+}
 
 
-  public:
-    static const GeoDescription description;
-    static GeoReader* build(ReadGeo*  op,
-                            int                  fd,
-                            const unsigned char* block,
-                            int                  length) { return new usdReader(op, fd); }
+//! Store the archive context in the GeoSceneGraphReader subclass. Return false on type mismatch.
+/*virtual*/ bool
+usdReader::updateArchiveContext(GeoSceneFileArchiveContext* context,
+                                uint64_t                    hash)
+{
+    //std::cout << "      usdReader::updateArchiveContext(" << this << ")";
+    //std::cout << " m_stage_cache_ctx=" << m_stage_cache_ctx << ", archive_ctx=" << context;
+    //std::cout << std::endl;
 
-    /*!
-    */
-    usdReader(ReadGeo* geo, int fd) :
-       GeoSceneGraphReader(geo, fd),
-       m_stage_cache_ctx(NULL)
-    {
-        //std::cout << "usdReader::ctor(" << this << "): reading USD file '" << fileNameForReader() << "'" << std::endl;
-
-        // TODO: This is not needed anymore. fuserIOClass() method is used instead along with the .tcl aliases.
-        //Fsr::NodeIOInterface::addExtensionMappings("usd,usda,usdc:UsdIO");
-    }
-
-
-    /*! Return the class(plugin) name of fuser IO node to load.
-        This, in conjunction with the 'usdaReader.tcl' and 'usdcReader.tcl' alias files
-        direct the Fuser plugin finder to the correct plugin filename 'fsrUsdIO' to
-        load (the leading 'fsr' is added by the Fsr::Node plugin code.)
-    */
-    /*virtual*/ const char* fuserIOClass() const { return "UsdIO"; }
-
-
-    //! Create a new GeoSceneFileArchiveContext to be associated with an archive context hash.
-    /*virtual*/ GeoSceneFileArchiveContext* createArchiveContext(uint64_t hash) { return new UsdArchiveContext(); }
-
-    //! Store the archive context in the GeoSceneGraphReader subclass. Return false on type mismatch.
-    /*virtual*/ bool updateArchiveContext(GeoSceneFileArchiveContext* context,
-                                          uint64_t                    hash)
-    {
-        //std::cout << "      usdReader::updateArchiveContext(" << this << ")";
-        //std::cout << " m_stage_cache_ctx=" << m_stage_cache_ctx << ", archive_ctx=" << context;
-        //std::cout << std::endl;
-
-        if (context == m_stage_cache_ctx)
-            return true; // already up to date
-        UsdArchiveContext* ctx = dynamic_cast<UsdArchiveContext*>(context);
-        if (!ctx)
-            return false; // shouldn't happen...don't crash
-        m_stage_cache_ctx = ctx;
-        return true;
-    }
-
-    //! Return a pointer to the implementation's GeoSceneFileArchiveContext object.
-    /*virtual*/ GeoSceneFileArchiveContext* sceneFileArchiveContext() const { return m_stage_cache_ctx; }
-
-}; // usdReader
+    if (context == m_stage_cache_ctx)
+        return true; // already up to date
+    UsdArchiveContext* ctx = dynamic_cast<UsdArchiveContext*>(context);
+    if (!ctx)
+        return false; // shouldn't happen...don't crash
+    m_stage_cache_ctx = ctx;
+    return true;
+}
 
 
 //-------------------------------------------------------------------------
 
 
+/*static*/ GeoReader*
+usdReader::buildUsdReader(ReadGeo*  op,
+                          int                  fd,
+                          const unsigned char* block,
+                          int                  length)
+{
+    return new usdReader(op, fd);
+}
+
+
+
 //! Return true if magic numbers match up.
 static bool
-test(int                  fd,
-     const unsigned char* block,
-     int                  length)
+testUsdFiles(int                  fd,
+             const unsigned char* block,
+             int                  length)
 {
     // Several different header formulations:
     // usda:       23 75 73 64 61 20 31 2e  |#usda 1.|
@@ -202,12 +138,12 @@ test(int                  fd,
             (block[0] == 0x50 && block[1] == 0x4b && block[2] == 0x03 && block[3] == 0x04));
 }
 
-const GeoDescription usdReader::description(usd_file_extensions,
-                                            build /*ctor*/,
-                                            usdReaderFormat::build /*format ctor*/,
-                                            test /*test method*/,
-                                            NULL /*license*/,
-                                            true /*needFd*/);
+const GeoDescription usdReader::usdDescription(usd_file_extensions,
+                                               buildUsdReader /*ctor*/,
+                                               usdReaderFormat::usdBuild /*format ctor*/,
+                                               testUsdFiles /*test method*/,
+                                               NULL /*license*/,
+                                               true /*needFd*/);
 
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------

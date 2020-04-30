@@ -178,7 +178,6 @@ SceneLoader::SceneLoader(bool read_enabled) :
     SceneOpExtender(),
     k_scene_loaded_legacy(false),
     k_editable(true),
-    kSceneView(NULL),
     m_loader_error(false)
 {
     k_scene_ctls.read_enabled        = read_enabled;
@@ -189,7 +188,7 @@ SceneLoader::SceneLoader(bool read_enabled) :
     //
     k_scene_ctls.set_frame           = 0.0;
     k_scene_ctls.frames_per_second   = 24.0;
-        //
+    //
     k_scene_ctls.decompose_xform_order = Fsr::SRT_ORDER;
     k_scene_ctls.decompose_rot_order   = Fsr::ZXY_ORDER;
     k_scene_ctls.T_enable            = true;
@@ -201,6 +200,8 @@ SceneLoader::SceneLoader(bool read_enabled) :
     k_scene_ctls.archive_debug       = false;
     //
     //m_scene_read_error               = SceneLoader::NO_ERROR;
+
+    kSceneView = NULL;
 }
 
 
@@ -314,6 +315,7 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
             DD::Image::Spacer(f, 10);
             DD::Image::Script_knob(f, "knob scene_file_version [expr [value scene_file_version]+1]", "Reload");
                 DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
+                DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE | DD::Image::Knob::NO_UNDO | DD::Image::Knob::NO_ANIMATION);
                 DD::Image::Tooltip(f, "Re-read the node data from the scene file only if the 'read enable' "
                                         "switch is enabled.");
             //DD::Image::Button(f, "force_load_button", "Force Load");
@@ -423,6 +425,25 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
             //DD::Image::Newline(f);
         }
 
+#if 0
+        Newline(f, "use hero camera");
+        Bool_knob(f, &k_copy_specular, "copy_hero_camera", "");
+            SetFlags(f, Knob::EARLY_STORE);
+            Tooltip(f, "Always use the camera matrix from the hero view camera.");
+        OneView_knob(f, &k_hero_view, "hero_view", "");
+            SetFlags(f, Knob::EARLY_STORE);
+            Tooltip(f, "Normally is the left (LFT) view.");
+        //
+        // Need early store enabled to make frame offset knob values availalbe for split_input():
+        Double_knob(f, &k_cam_frame_offset, IRange(-1.0, 1.0), "camera_frame_offset", "camera frame offset");
+            SetFlags(f, Knob::STARTLINE | Knob::EARLY_STORE);
+            ClearFlags(f, Knob::LOG_SLIDER);
+            Tooltip(f, "Apply this time offset to the camera input.");
+        Enumeration_knob(f, &k_cam_frame_mode, frame_offset_mode, "camera_offset_mode", "");
+            SetFlags(f, Knob::STARTLINE | Knob::EARLY_STORE);
+            ClearFlags(f, Knob::STARTLINE);
+#endif
+
     }
     DD::Image::EndGroup(f);
     //----------------------------------------
@@ -515,6 +536,7 @@ SceneLoader::knobChanged(DD::Image::Knob* k,
             //
             Fsr::Node::executeImmediate(plugin_type.c_str(),            /*node_class*/
                                         node_ctx.args(),                /*node_attribs*/
+                                        NULL,                           /*node-parent*/
                                         target_ctx,                     /*target_context*/
                                         Fsr::SceneArchiveContext::name  /*target_name*/);
 
@@ -1074,6 +1096,7 @@ SceneLoader::getNodeDescriptions(const char*              file,
 
     Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(plugin_type.c_str(),          /*node_class*/
                                                         node_ctx.args(),              /*node_args*/
+                                                        NULL,                         /*node-parent*/
                                                         target_ctx,                   /*target_context*/
                                                         scene_node_descriptions.name, /*target_name*/
                                                         &scene_node_descriptions,     /*target*/
@@ -1177,6 +1200,7 @@ SceneLoader::_findDefaultNode(const std::string& scene_file_path,
 
     Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuser_plugin_type.c_str(),        /*node_class*/
                                                         node_ctx.args(),                  /*node_args*/
+                                                        NULL,                             /*node-parent*/
                                                         target_ctx,                       /*target_context*/
                                                         Fsr::SceneNodeDescriptions::name, /*target_name*/
                                                         &search_ctx                       /*target*/);
@@ -1281,9 +1305,11 @@ SceneLoader::_readSceneNode(const std::string& scene_file_path,
     }
 
     Fsr::SceneOpImportContext scene_op_ctx(sceneOp(),
-                                           const_cast<DD::Image::OutputContext*>(&sceneOp()->outputContext()));
+                                           sceneOp()->outputContext());
+
     Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuser_plugin_type.c_str(),       /*node_class*/
                                                         node_ctx.args(),                 /*node_args*/
+                                                        NULL,                            /*node-parent*/
                                                         target_ctx,                      /*target_context*/
                                                         Fsr::SceneOpImportContext::name, /*target_name*/
                                                         &scene_op_ctx                    /*target*/);

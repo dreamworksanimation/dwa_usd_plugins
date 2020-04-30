@@ -49,7 +49,7 @@ typedef std::vector<AxisKnobVals> AxisKnobValsList;
 /*! Encapsulates all the parameters in an Axis_Knob in double-precision.
 
 */
-class AxisKnobVals
+class FSR_EXPORT AxisKnobVals
 {
   public:
     double              time;               //!< Sample time
@@ -80,10 +80,10 @@ class AxisKnobVals
     //! Extracts values from Knob axis_knob on op.
     AxisKnobVals(const DD::Image::Op*            op,
                  const DD::Image::Knob*          axis_knob,
-                 const DD::Image::OutputContext& context) { get(op, axis_knob, context); }
+                 const DD::Image::OutputContext& context) { getValsAt(op, axis_knob, context); }
     //! Extracts values from an Axis_Knob named 'transform' on Op.
     AxisKnobVals(const DD::Image::Op*            op,
-                 const DD::Image::OutputContext& context) { get(op, context); }
+                 const DD::Image::OutputContext& context) { getValsAt(op, context); }
 
     //----------------------------------------------------------------------
 
@@ -118,14 +118,14 @@ class AxisKnobVals
 
     //----------------------------------------------------------------------
 
-    //! Extract transform values from an Axis_Knob at an OutputContext. Returns false if not possible.
-    bool get(const DD::Image::Op*            op,
-             const DD::Image::Knob*          axis_knob,
-             const DD::Image::OutputContext& context);
+    //! Extract transform knob values from an Axis_Knob at an OutputContext. Returns false if not possible.
+    bool getValsAt(const DD::Image::Op*            op,
+                   const DD::Image::Knob*          axis_knob,
+                   const DD::Image::OutputContext& context);
 
-    //! Extract transform values from an AxisOp at an OutputContext. Returns false if not possible.
-    bool get(const DD::Image::Op*            op,
-             const DD::Image::OutputContext& context);
+    //! Extract transform knob values from an AxisOp at an OutputContext. Returns false if not possible.
+    bool getValsAt(const DD::Image::Op*            op,
+                   const DD::Image::OutputContext& context);
 
     //!
     bool extractFromMatrix(const Fsr::Mat4d&  m,
@@ -226,6 +226,11 @@ class FSR_EXPORT AxisKnobWrapper : public DD::Image::Knob
     //! Get a Fsr::Mat4d matrix built at the specified output context. Updates the hash if provided.
     Fsr::Mat4d getMatrixAt(const DD::Image::OutputContext& context,
                            DD::Image::Hash*                hash=NULL);
+
+    //! Get AxisVals filled in at the specified output context. Updates the hash if provided.
+    void getValsAt(const DD::Image::OutputContext& context,
+                   AxisKnobVals&                   vals,
+                   DD::Image::Hash*                hash=NULL);
 
     //---------------------------------------------------------------------
     //---------------------------------------------------------------------

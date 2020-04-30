@@ -41,8 +41,10 @@ namespace Fsr {
 
 /*!
     TODO: this is currently a catchall and is only being used as a 
-    abstract container for the ArgSet.
+          abstract container for the ArgSet.
     Either delete it or make it more useful.
+    It's also forcing an ArgSet copy since we can't pass ArgSet to
+    Node ctors directly...
 
 */
 class FSR_EXPORT NodeContext
@@ -183,6 +185,57 @@ class FSR_EXPORT NodeContext
 
 
 }; // NodeContext
+
+
+
+/*---------------------------------------------------------------------*/
+/*---------------------------------------------------------------------*/
+/*                   Inline Function Implementations                   */
+/*---------------------------------------------------------------------*/
+/*---------------------------------------------------------------------*/
+
+inline const std::string& NodeContext::getString(const std::string& key, const std::string& dflt_val) const { return m_args.getString(key, dflt_val); }
+inline const std::string& NodeContext::getString(const char*        key, const std::string& dflt_val) const { return m_args.getString(key, dflt_val); }
+
+inline int          NodeContext::getInt(const std::string& key, int        dflt_val) const { return    m_args.getInt(key, dflt_val); }
+inline int          NodeContext::getInt(const char*        key, int        dflt_val) const { return    m_args.getInt(key, dflt_val); }
+inline double    NodeContext::getDouble(const std::string& key, double     dflt_val) const { return m_args.getDouble(key, dflt_val); }
+inline double    NodeContext::getDouble(const char*        key, double     dflt_val) const { return m_args.getDouble(key, dflt_val); }
+inline bool        NodeContext::getBool(const std::string& key, bool       dflt_val) const { return   m_args.getBool(key, dflt_val); }
+inline bool        NodeContext::getBool(const char*        key, bool       dflt_val) const { return   m_args.getBool(key, dflt_val); }
+inline HashValue   NodeContext::getHash(const std::string& key, HashValue  dflt_val) const { return   m_args.getHash(key, dflt_val); }
+inline HashValue   NodeContext::getHash(const char*        key, HashValue  dflt_val) const { return   m_args.getHash(key, dflt_val); }
+
+inline Fsr::Vec2d NodeContext::getVec2d(const std::string& key, Fsr::Vec2d dflt_val) const { return  m_args.getVec2d(key, dflt_val); }
+inline Fsr::Vec2d NodeContext::getVec2d(const char*        key, Fsr::Vec2d dflt_val) const { return  m_args.getVec2d(key, dflt_val); }
+
+inline Fsr::Vec3d NodeContext::getVec3d(const std::string& key, Fsr::Vec3d dflt_val) const { return  m_args.getVec3d(key, dflt_val); }
+inline Fsr::Vec3d NodeContext::getVec3d(const char*        key, Fsr::Vec3d dflt_val) const { return  m_args.getVec3d(key, dflt_val); }
+
+inline Fsr::Vec4d NodeContext::getVec4d(const std::string& key, Fsr::Vec4d dflt_val) const { return  m_args.getVec4d(key, dflt_val); }
+inline Fsr::Vec4d NodeContext::getVec4d(const char*        key, Fsr::Vec4d dflt_val) const { return  m_args.getVec4d(key, dflt_val); }
+
+inline Fsr::Mat4d NodeContext::getMat4d(const std::string& key, Fsr::Mat4d dflt_val) const { return  m_args.getMat4d(key, dflt_val); }
+inline Fsr::Mat4d NodeContext::getMat4d(const char*        key, Fsr::Mat4d dflt_val) const { return  m_args.getMat4d(key, dflt_val); }
+
+//-------------------------------------------------------------------------
+
+inline void NodeContext::setString(const std::string& key, const std::string& value) { m_args.setString(key, value); }
+inline void NodeContext::setString(const std::string& key, const char*        value) { m_args.setString(key, value); }
+inline void NodeContext::setString(const char*        key, const std::string& value) { m_args.setString(key, value); }
+inline void NodeContext::setString(const char*        key, const char*        value) { m_args.setString(key, value); }
+
+inline void    NodeContext::setInt(const std::string& key, int                value) {    m_args.setInt(key, value); }
+inline void NodeContext::setDouble(const std::string& key, double             value) { m_args.setDouble(key, value); }
+inline void   NodeContext::setBool(const std::string& key, bool               value) {   m_args.setBool(key, value); }
+inline void   NodeContext::setHash(const std::string& key, HashValue          value) {   m_args.setHash(key, value); }
+
+inline void  NodeContext::setVec2d(const std::string& key, const Fsr::Vec2d&  value) {  m_args.setVec2d(key, value); }
+inline void  NodeContext::setVec3d(const std::string& key, const Fsr::Vec3d&  value) {  m_args.setVec3d(key, value); }
+inline void  NodeContext::setVec4d(const std::string& key, const Fsr::Vec4d&  value) {  m_args.setVec4d(key, value); }
+
+inline void  NodeContext::setMat4d(const std::string& key, const Fsr::Mat4d&  value) {  m_args.setMat4d(key, value); }
+
 
 
 } // namespace Fsr

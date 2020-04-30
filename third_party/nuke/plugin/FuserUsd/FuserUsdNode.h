@@ -42,8 +42,6 @@
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
 
-#  include <pxr/base/gf/matrix4d.h>
-
 #  include <pxr/usd/usd/attribute.h>
 #  include <pxr/usd/usd/stage.h>
 #  include <pxr/usd/usd/prim.h>
@@ -96,11 +94,8 @@ class AttribDoubles : public Fsr::ArrayKnobDoubles
 
 
 /*! USD node wrapper.
-
-    Subclass off of Fsr::Xformable since most the USD nodes we're dealing
-    with have xforms (conveniently ignoring shaders...)
 */
-class FuserUsdNode : public Fsr::XformableNode
+class FuserUsdNode
 {
   protected:
     Pxr::UsdStageRefPtr m_stage;        //!< Stage reference-counted cache pointer
@@ -116,33 +111,44 @@ class FuserUsdNode : public Fsr::XformableNode
 
 
   public:
-    //! Returns the class name, must implement.
-    /*virtual*/ const char* fuserNodeClass() const { return "UsdNode"; }
+    //!
+    FuserUsdNode(const Pxr::UsdStageRefPtr& stage);
 
     //!
-    FuserUsdNode(const Pxr::UsdStageRefPtr& stage,
-                 const Fsr::ArgSet&         args,
-                 Fsr::Node*                 parent);
+    virtual ~FuserUsdNode();
 
-    //!
-    ~FuserUsdNode();
-
-    /*! Called before evaluation starts to allow node to prep any data prior to rendering.
-        Updates time value and possibly local transform.
-    */
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
-                                    bool                    for_real);
-
-    //! Prints an unrecognized-target warning in debug mode and returns 0 (success).
-    /*virtual*/ int _execute(const Fsr::NodeContext& target_context,
-                             const char*             target_name,
-                             void*                   target,
-                             void*                   src0,
-                             void*                   src1);
 
     //! Import node attributes into a Nuke Op.
     virtual void importSceneOp(DD::Image::Op*     op,
                                const Fsr::ArgSet& args) {}
+
+    //-------------------------------------------------------------------------------
+
+
+    /*! Make sure the prim is Loaded, and is Valid, Defined, and Active.
+        Returns false if prim is not Valid, not Active, not Defined, or
+        it failed to Load.
+    */
+    static bool isLoadedAndUseablePrim(const Pxr::UsdPrim& prim);
+
+    /*! Make sure the prim is Loaded, and is Valid, Defined, and Active.
+        Returns NULL if no error otherwise an allocated ErrorNode with more error info.
+    */
+    static Fsr::ErrorNode* isLoadedAndUseablePrim(const char*         fsr_builder_class,
+                                                  const Pxr::UsdPrim& prim,
+                                                  const char*         prim_load_path,
+                                                  bool                debug_loading=false);
+
+
+    //! Is the prim able to be rendered (rasterized)?
+    static bool isRenderablePrim(const Pxr::UsdPrim& prim);
+
+    //! Does the prim support bounds (a bounding-box)?
+    static bool isBoundablePrim(const Pxr::UsdPrim& prim);
+
+    //! Is the prim a usdShade prim?
+    static bool isShadingPrim(const Pxr::UsdPrim& prim);
+
 
     //-------------------------------------------------------------------------------
 

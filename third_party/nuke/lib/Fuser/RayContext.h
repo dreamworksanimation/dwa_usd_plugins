@@ -82,22 +82,22 @@ class FSR_EXPORT RayContext
 
   public:
     // Ray types:
-    enum RayTypeMask
+    enum TypeMask
     {
         CAMERA       = 0x00000001,      //!< Ray coming from camera (to camera actually...)
         SHADOW       = 0x00000002,      //!< Ray from surface to light
         REFLECTION   = 0x00000004,      //!< Ray reflected off a surface
-        TRANSMISSION = 0x00000008,      //!< Ray refraced or transmitted through a surface
+        TRANSMISSION = 0x00000008,      //!< Ray refracted or transmitted through a surface
         //
-        DIFFUSE      = 0x00000010,      //!<
-        GLOSSY       = 0x00000020       //!< 
+        DIFFUSE      = 0x00000010,      //!< A hint about the last-hit surface this ray will contribute to
+        GLOSSY       = 0x00000020       //!< A hint about the last-hit surface this ray will contribute to
     };
 
 
   protected:
     // Ray direction is protected to keep inv_direction and slope indicators up to date.
     Fsr::Vec3d  m_dir;                  //!< Ray's direction (a normal) double-precision to reduce conversions
-    Fsr::Vec3d  m_inv_dir;              //!< Direction reciprocal, for intersection test speedups
+    Fsr::Vec3d  m_inv_dir;              //!< Direction reciprocal, for AABB intersection test speedups
     bool        m_slope_positive[3];    //!< xyz positive slope indicator - true if slope is positive for an axis
 
     //! Recalcs the speedup vars - do this after any change to ray direction.
@@ -109,16 +109,10 @@ class FSR_EXPORT RayContext
     RayContext() {}
 
     //! TODO: do we need the templating anymore?
-    template <typename T>
-    RayContext(const Fsr::Vec3<T>& _origin,
-               const Fsr::Vec3<T>& _dir,
-               double              _mindist=std::numeric_limits<double>::epsilon(),
-               double              _maxdist=std::numeric_limits<double>::infinity());
-    //! TODO: do we need the templating anymore?
-    template <typename T>
-    RayContext(const Fsr::Vec3<T>& _origin,
-               const Fsr::Vec3<T>& _dir,
-               double              _time,
+    template <typename S>
+    RayContext(const Fsr::Vec3<S>& _origin,
+               const Fsr::Vec3<S>& _dir,
+               Fsr::TimeValue      _time,
                double              _mindist=std::numeric_limits<double>::epsilon(),
                double              _maxdist=std::numeric_limits<double>::infinity());
 
@@ -132,9 +126,10 @@ class FSR_EXPORT RayContext
 
   public:
     //! Ray's direction vector
-    const Fsr::Vec3d& dir()     const { return m_dir; }
-    const Fsr::Vec3d& inv_dir() const { return m_inv_dir; }
+    const Fsr::Vec3d& dir()    const { return m_dir; }
+    const Fsr::Vec3d& invDir() const { return m_inv_dir; }
 
+    bool isSlopePositive(uint32_t axis) const { return m_slope_positive[axis]; }
     bool isXSlopePositive() const { return m_slope_positive[0]; }
     bool isYSlopePositive() const { return m_slope_positive[1]; }
     bool isZSlopePositive() const { return m_slope_positive[2]; }
@@ -143,6 +138,7 @@ class FSR_EXPORT RayContext
     template <typename T>
     void set(const Fsr::Vec3<T>& _origin,
              const Fsr::Vec3<T>& _dir,
+             Fsr::TimeValue      _time,
              double              _mindist=std::numeric_limits<double>::epsilon(),
              double              _maxdist=std::numeric_limits<double>::infinity());
 
@@ -154,7 +150,12 @@ class FSR_EXPORT RayContext
     Fsr::Vec3d getPositionAt(double t) const { return origin + (m_dir*t); }
 
     //! Transform the ray origin and direction by a matrix.
-    void transform(const Fsr::Mat4d& m);
+    void transform(const Fsr::Mat4d& xform);
+
+    //! Transform the ray origin and direction by two matrices, interpolated at t.
+    void transform(const Fsr::Mat4d& xform0,
+                   const Fsr::Mat4d& xform1,
+                   float             t);
 
 };
 
@@ -164,11 +165,29 @@ class FSR_EXPORT RayContext
 
 
 
-/*! \class Fsr::RayContextDif
+/*! \class Fsr::RayDifferentials
 
-    Adds ray-differential direction vectors.
+    Ray-differential direction vectors defining a cone around the
+    RayContext's direction vector.
+
+    The difference in angle between RayContext.dir() and xdir() is
+    the cone's 'width', and the angle between RayContext.dir()
+    and ydir() is the cone's 'height'.
+
+    Example diagram (differentials are never this huge):
+
+       top view         side view
+       --------         ---------
+
+    dir()  xdir()         ydir()
+       |   /                 \
+       |  /                   \
+       | /                     \
+       |/                       \
+       .origin         dir()_____. origin
+
 */
-class FSR_EXPORT RayContextDif : public RayContext
+class FSR_EXPORT RayDifferentials
 {
   protected:
     // Directions are protected to keep inv_direction and slope indicators up to date:
@@ -178,31 +197,37 @@ class FSR_EXPORT RayContextDif : public RayContext
 
   public:
     //! Base constructor doesn't initialize the contents.
-    RayContextDif() {}
+    RayDifferentials() {}
 
-    //! Ctor sets both differential direction normals to primary direction.
-    template <typename T>
-    RayContextDif(const Fsr::Vec3<T>& _origin,
-                  const Fsr::Vec3<T>& _dir,
-                  double              _mindist=std::numeric_limits<double>::epsilon(),
-                  double              _maxdist=std::numeric_limits<double>::infinity());
-    template <typename T>
-    RayContextDif(const Fsr::Vec3<T>& _origin,
-                  const Fsr::Vec3<T>& _dir,
-                  double              _time,
-                  double              _mindist=std::numeric_limits<double>::epsilon(),
-                  double              _maxdist=std::numeric_limits<double>::infinity());
+    //! Ctor sets differential direction normals to RayContext's direction and two rotation angles (in radians).
+    RayDifferentials(const RayContext& primary,
+                     double            radian_rX,
+                     double            radian_rY) { initializeFromAngle(primary, radian_rX, radian_rY); }
 
+    //! Ctor sets both differential direction normals.
+    template <typename S>
+    RayDifferentials(const Fsr::Vec3<S>& xdir,
+                     const Fsr::Vec3<S>& ydir);
+
+
+    //! X/Y differential angles
+    double xdif(const RayContext& Rtx) const { return Rtx.dir().dot(m_xdir); }
+    double ydif(const RayContext& Rtx) const { return Rtx.dir().dot(m_ydir); }
 
     //! X/Y differential direction vectors
-    const Fsr::Vec3d& xdir() const { return m_xdir; }
-    const Fsr::Vec3d& ydir() const { return m_ydir; }
+    const Fsr::Vec3d& xDir() const { return m_xdir; }
+    const Fsr::Vec3d& yDir() const { return m_ydir; }
 
+    //! Assign the differential direction vectors.
+    void setXDir(const Fsr::Vec3d& xdir) { m_xdir = xdir; }
+    void setYDir(const Fsr::Vec3d& ydir) { m_ydir = ydir; }
+    void setXYDir(const Fsr::Vec3d& xdir,
+                  const Fsr::Vec3d& ydir) { m_xdir = xdir; m_ydir = ydir; }
 
-    //! Initialize the differentials from two angles (in radians).
+    //! Initialize the differentials from two rotation angles (in radians).
     void initializeFromAngle(const Fsr::RayContext& primary,
-                             double angleX,
-                             double angleY);
+                             double                 radian_rX,
+                             double                 radian_rY);
 };
 
 
@@ -246,19 +271,38 @@ FSR_EXPORT
 bool intersectAABB(const Fsr::Box3<T>&    bbox,
                    const Fsr::RayContext& Rtx);
 
+/*! Accelerated ray-AABB (Axis-Aligned-Bounding-Box) intersect test.
+    'bbox_origin' is used to cheaply offset ray origin into bbox-local
+    space without pre-converting bbox or pre-modifying the RayContext.
+*/
+template<typename T>
+FSR_EXPORT
+bool intersectAABB(const Fsr::Box3<T>&    bbox,
+                   const Fsr::Vec3d&      bbox_origin,
+                   const Fsr::RayContext& Rtx,
+                   double&                tmin,
+                   double&                tmax);
+template<typename T>
+FSR_EXPORT
+bool intersectAABB(const Fsr::Box3<T>&    bbox,
+                   const Fsr::Vec3d&      bbox_origin,
+                   const Fsr::RayContext& Rtx);
+
 
 //-------------------------------------------------------------------------
 
 
 /*! Ray-sphere intersect test.
 */
+template <typename T>
 FSR_EXPORT
-bool intersectSphere(const Fsr::Vec3d&      P,
-                     float                  radius,
+bool intersectSphere(const Fsr::Vec3<T>&    P,
+                     T                      radius,
                      const Fsr::RayContext& Rtx);
+template <typename T>
 FSR_EXPORT
-RayIntersectionType intersectSphere(const Fsr::Vec3d&      P,
-                                    float                  radius,
+RayIntersectionType intersectSphere(const Fsr::Vec3<T>&    P,
+                                    T                      radius,
                                     const Fsr::RayContext& Rtx,
                                     double&                tmin,
                                     double&                tmax);
@@ -283,7 +327,7 @@ bool intersectPlane(const Fsr::Vec4d&      planeXYZD,
 
 /*! Ray-triangle intersect test against either front or back sides.
     'vert_origin' is required to cheaply offset ray origin into vert-local
-    space without pre-converting each vert or modifying the RayContext.
+    space without pre-converting each vert or pre-modifying the RayContext.
 */
 FSR_EXPORT
 bool intersectTriangle(const Fsr::Vec3d&      vert_origin,
@@ -294,19 +338,20 @@ bool intersectTriangle(const Fsr::Vec3d&      vert_origin,
                        Fsr::Vec2f&            uv,
                        double&                t);
 FSR_EXPORT
-bool intersectTriangle(const Fsr::Vec3d&         vert_origin,
-                       const Fsr::Vec3f&         v0,
-                       const Fsr::Vec3f&         v1,
-                       const Fsr::Vec3f&         v2,
-                       const Fsr::RayContextDif& Rdtx,
-                       Fsr::Vec2f&               uv,
-                       Fsr::Vec2f&               uvdx,
-                       Fsr::Vec2f&               uvdy,
-                       double&                   t);
+bool intersectTriangle(const Fsr::Vec3d&            vert_origin,
+                       const Fsr::Vec3f&            v0,
+                       const Fsr::Vec3f&            v1,
+                       const Fsr::Vec3f&            v2,
+                       const Fsr::RayContext&       Rtx,
+                       const Fsr::RayDifferentials& Rdif,
+                       Fsr::Vec2f&                  uv,
+                       Fsr::Vec2f&                  uvdx,
+                       Fsr::Vec2f&                  uvdy,
+                       double&                      t);
 
 /*! Ray-triangle intersect test against one of the front/back sides.
     'vert_origin' is required to cheaply offset ray origin into vert-local
-    space without pre-converting each vert or modifying the RayContext.
+    space without pre-converting each vert or pre-modifying the RayContext.
 */
 FSR_EXPORT
 bool intersectTriangleSided(bool                   front_side,
@@ -318,16 +363,17 @@ bool intersectTriangleSided(bool                   front_side,
                             Fsr::Vec2f&            uv,
                             double&                t);
 FSR_EXPORT
-bool intersectTriangleSided(bool                      front_side,
-                            const Fsr::Vec3d&         vert_origin,
-                            const Fsr::Vec3f&         v0,
-                            const Fsr::Vec3f&         v1,
-                            const Fsr::Vec3f&         v2,
-                            const Fsr::RayContextDif& Rdtx,
-                            Fsr::Vec2f&               uv,
-                            Fsr::Vec2f&               uvdx,
-                            Fsr::Vec2f&               uvdy,
-                            double&                   t);
+bool intersectTriangleSided(bool                         front_side,
+                            const Fsr::Vec3d&            vert_origin,
+                            const Fsr::Vec3f&            v0,
+                            const Fsr::Vec3f&            v1,
+                            const Fsr::Vec3f&            v2,
+                            const Fsr::RayContext&       Rtx,
+                            const Fsr::RayDifferentials& Rdif,
+                            Fsr::Vec2f&                  uv,
+                            Fsr::Vec2f&                  uvdx,
+                            Fsr::Vec2f&                  uvdy,
+                            double&                      t);
 
 
 /*---------------------------------------------------------------------*/
@@ -342,24 +388,10 @@ template<typename T>
 inline
 RayContext::RayContext(const Fsr::Vec3<T>& _origin,
                        const Fsr::Vec3<T>& _dir,
-                       double              _time,
+                       Fsr::TimeValue      _time,
                        double              _mindist,
                        double              _maxdist) :
     time(_time),
-    mindist(_mindist),
-    maxdist(_maxdist),
-    type_mask(CAMERA)
-{
-    setOrigin(_origin);
-    setDirection(_dir);
-}
-template<typename T>
-inline
-RayContext::RayContext(const Fsr::Vec3<T>& _origin,
-                       const Fsr::Vec3<T>& _dir,
-                       double              _mindist,
-                       double              _maxdist) :
-    time(Fsr::defaultTimeValue()),
     mindist(_mindist),
     maxdist(_maxdist),
     type_mask(CAMERA)
@@ -402,25 +434,46 @@ template<typename T>
 inline void
 RayContext::set(const Fsr::Vec3<T>& _origin,
                 const Fsr::Vec3<T>& _dir,
+                Fsr::TimeValue      _time,
                 double              _mindist,
                 double              _maxdist)
 {
     setOrigin(_origin);
     setDirection(_dir);
+    time    = _time;
     mindist = _mindist;
     maxdist = _maxdist;
 }
 
 inline void
-RayContext::transform(const Fsr::Mat4d& m)
+RayContext::transform(const Fsr::Mat4d& xform)
 {
 #if 1
     // TODO: verify the dir transform math here
-    origin = m.transform(origin);
-    m_dir  = m.vecTransform(m_dir);
+    origin = xform.transform(origin);
+    m_dir  = xform.vecTransform(m_dir);
 #else
-    m_dir  = m.transform(origin + m_dir);
-    origin = m.transform(origin);
+    m_dir  = xform.transform(origin + m_dir);
+    origin = xform.transform(origin);
+    m_dir -= origin;
+    m_dir.normalize();
+#endif
+    _updateSlopes();
+}
+
+// Transform by two matrices, interpolated at t.
+inline void
+RayContext::transform(const Fsr::Mat4d& xform0,
+                      const Fsr::Mat4d& xform1,
+                      float             t)
+{
+#if 1
+    // TODO: verify the dir transform math here
+    origin = xform0.transform(origin).interpolateTo(xform1.transform(origin), t);
+    m_dir  = xform0.vecTransform(m_dir).interpolateTo(xform1.vecTransform(m_dir), t);
+#else
+    m_dir  = xform0.transform(origin + m_dir).interpolateTo(xform1.transform(origin + m_dir), t);
+    origin = xform0.transform(origin).interpolateTo(xform1.transform(origin), t);
     m_dir -= origin;
     m_dir.normalize();
 #endif
@@ -429,56 +482,40 @@ RayContext::transform(const Fsr::Mat4d& m)
 
 //-----------------------------------------------------------
 
-template <typename T>
-RayContextDif::RayContextDif(const Fsr::Vec3<T>& _origin,
-                             const Fsr::Vec3<T>& _dir,
-                             double              _time,
-                             double              _mindist,
-                             double              _maxdist) :
-    RayContext(_origin, _dir, _time, _mindist, _maxdist),
-    m_xdir(_dir),
-    m_ydir(_dir)
-{
-    //
-}
-
-template <typename T>
-RayContextDif::RayContextDif(const Fsr::Vec3<T>& _origin,
-                             const Fsr::Vec3<T>& _dir,
-                             double              _mindist,
-                             double              _maxdist) :
-    RayContext(_origin, _dir, Fsr::defaultTimeValue(), _mindist, _maxdist),
-    m_xdir(_dir),
-    m_ydir(_dir)
+template <typename S>
+RayDifferentials::RayDifferentials(const Fsr::Vec3<S>& xdir,
+                                   const Fsr::Vec3<S>& ydir) :
+    m_xdir(xdir),
+    m_ydir(ydir)
 {
     //
 }
 
 inline void
-RayContextDif::initializeFromAngle(const Fsr::RayContext& primary,
-                                   double                 angleX,
-                                   double                 angleY)
+RayDifferentials::initializeFromAngle(const Fsr::RayContext& primary,
+                                      double                 radian_rX,
+                                      double                 radian_rY)
 {
-    angleX = ::fabs(angleX);
-    if (angleX > std::numeric_limits<double>::epsilon())
+    radian_rX = ::fabs(radian_rX);
+    if (radian_rX > std::numeric_limits<double>::epsilon())
     {
-        if (angleX > M_PI)
-            angleX = M_PI;
-        const double dx = std::sin(angleX);
-        const double dz = std::cos(angleX);
+        if (radian_rX > M_PI)
+            radian_rX = M_PI;
+        const double dx = std::sin(radian_rX);
+        const double dz = std::cos(radian_rX);
         m_xdir.set(dx, 0.0, dz);
         m_xdir.orientAroundNormal(primary.dir());
     }
     else
         m_xdir = primary.dir();
 
-    angleY = ::fabs(angleY);
-    if (angleY > std::numeric_limits<double>::epsilon())
+    radian_rY = ::fabs(radian_rY);
+    if (radian_rY > std::numeric_limits<double>::epsilon())
     {
-        if (angleY > M_PI)
-            angleY = M_PI;
-        const double dy = std::sin(angleY);
-        const double dz = std::cos(angleY);
+        if (radian_rY > M_PI)
+            radian_rY = M_PI;
+        const double dy = std::sin(radian_rY);
+        const double dz = std::cos(radian_rY);
         m_ydir.set(0.0, dy, dz);
         m_ydir.orientAroundNormal(primary.dir());
     }
@@ -489,7 +526,6 @@ RayContextDif::initializeFromAngle(const Fsr::RayContext& primary,
 //-----------------------------------------------------------
 
 /*! Basic ray-AABB (Axis-Aligned-Bounding-Box) intersect test.
-    Uses a slower intersection alogrithm that must calculate a slope per plane.
 */
 template<typename T>
 inline bool
@@ -543,50 +579,58 @@ intersectAABB(const Fsr::Box3<T>& bbox,
 
 /*! Accelerated ray-AABB (Axis-Aligned-Bounding-Box) intersect test.
     Requires the precalculated xyz slopes in RayContext to be up to date.
+    'bbox_origin' is used to cheaply offset ray origin into bbox-local
+    space without pre-converting bbox or pre-modifying the RayContext.
 */
 template<typename T>
 inline bool
 intersectAABB(const Fsr::Box3<T>&    bbox,
+              const Fsr::Vec3d&      bbox_origin,
               const Fsr::RayContext& Rtx,
               double&                tmin,
               double&                tmax)
 {
     // Speedy code - accelerate plane tests using precalculated ray slope values
+    const Vec3<T> rorigin(T(Rtx.origin.x - double(bbox_origin.x)),
+                          T(Rtx.origin.y - double(bbox_origin.y)),
+                          T(Rtx.origin.z - double(bbox_origin.z)));
+    tmin = -std::numeric_limits<double>::infinity();
+    tmax =  std::numeric_limits<double>::infinity();
     double tmin0, tmax0, tmin1, tmax1;
     // X ---------------------------------------------------------------
     if (Rtx.isXSlopePositive())
     {
-       tmin0 = (double(bbox.max.x) - Rtx.origin.x)*Rtx.inv_dir().x;
-       tmax0 = (double(bbox.min.x) - Rtx.origin.x)*Rtx.inv_dir().x;
+       tmin0 = double(bbox.max.x - rorigin.x)*Rtx.invDir().x;
+       tmax0 = double(bbox.min.x - rorigin.x)*Rtx.invDir().x;
     }
     else
     {
-       tmin0 = (double(bbox.min.x) - Rtx.origin.x)*Rtx.inv_dir().x;
-       tmax0 = (double(bbox.max.x) - Rtx.origin.x)*Rtx.inv_dir().x;
+       tmin0 = double(bbox.min.x - rorigin.x)*Rtx.invDir().x;
+       tmax0 = double(bbox.max.x - rorigin.x)*Rtx.invDir().x;
     }
     // Y ---------------------------------------------------------------
     if (Rtx.isYSlopePositive())
     {
-       tmin1 = (double(bbox.max.y) - Rtx.origin.y)*Rtx.inv_dir().y; if (tmin1 > tmax0) return false;
-       tmax1 = (double(bbox.min.y) - Rtx.origin.y)*Rtx.inv_dir().y; if (tmax1 < tmin0) return false;
+       tmin1 = double(bbox.max.y - rorigin.y)*Rtx.invDir().y; if (tmin1 > tmax0) return false;
+       tmax1 = double(bbox.min.y - rorigin.y)*Rtx.invDir().y; if (tmax1 < tmin0) return false;
     }
     else
     {
-       tmin1 = (double(bbox.min.y) - Rtx.origin.y)*Rtx.inv_dir().y; if (tmin1 > tmax0) return false;
-       tmax1 = (double(bbox.max.y) - Rtx.origin.y)*Rtx.inv_dir().y; if (tmax1 < tmin0) return false;
+       tmin1 = double(bbox.min.y - rorigin.y)*Rtx.invDir().y; if (tmin1 > tmax0) return false;
+       tmax1 = double(bbox.max.y - rorigin.y)*Rtx.invDir().y; if (tmax1 < tmin0) return false;
     }
     if (tmin1 > tmin0) tmin0 = tmin1;
     if (tmax1 < tmax0) tmax0 = tmax1;
     // Z ---------------------------------------------------------------
     if (Rtx.isZSlopePositive())
     {
-       tmin1 = (double(bbox.max.z) - Rtx.origin.z)*Rtx.inv_dir().z; if (tmin1 > tmax0) return false;
-       tmax1 = (double(bbox.min.z) - Rtx.origin.z)*Rtx.inv_dir().z; if (tmax1 < tmin0) return false;
+       tmin1 = double(bbox.max.z - rorigin.z)*Rtx.invDir().z; if (tmin1 > tmax0) return false;
+       tmax1 = double(bbox.min.z - rorigin.z)*Rtx.invDir().z; if (tmax1 < tmin0) return false;
     }
     else
     {
-       tmin1 = (double(bbox.min.z) - Rtx.origin.z)*Rtx.inv_dir().z; if (tmin1 > tmax0) return false;
-       tmax1 = (double(bbox.max.z) - Rtx.origin.z)*Rtx.inv_dir().z; if (tmax1 < tmin0) return false;
+       tmin1 = double(bbox.min.z - rorigin.z)*Rtx.invDir().z; if (tmin1 > tmax0) return false;
+       tmax1 = double(bbox.max.z - rorigin.z)*Rtx.invDir().z; if (tmax1 < tmin0) return false;
     }
     tmin = (tmin1 > tmin0) ? tmin1 : tmin0;
     tmax = (tmax1 < tmax0) ? tmax1 : tmax0;
@@ -596,35 +640,61 @@ intersectAABB(const Fsr::Box3<T>&    bbox,
 template<typename T>
 inline bool
 intersectAABB(const Fsr::Box3<T>&    bbox,
+              const Fsr::Vec3d&      bbox_origin,
               const Fsr::RayContext& Rtx)
 {
     double tmin, tmax;
-    return intersectAABB(bbox, Rtx, tmin, tmax);
+    return intersectAABB(bbox, bbox_origin, Rtx, tmin, tmax);
 }
+template<typename T>
+inline bool
+intersectAABB(const Fsr::Box3<T>&    bbox,
+              const Fsr::RayContext& Rtx,
+              double&                tmin,
+              double&                tmax)
+{
+    return intersectAABB(bbox, Fsr::Vec3d(0,0,0), Rtx, tmin, tmax);
+}
+template<typename T>
+inline bool
+intersectAABB(const Fsr::Box3<T>&    bbox,
+              const Fsr::RayContext& Rtx)
+{
+    double tmin, tmax;
+    return intersectAABB(bbox, Fsr::Vec3d(0,0,0), Rtx, tmin, tmax);
+}
+
 
 //-----------------------------------------------------------
 
+template <typename T>
 inline bool
-intersectSphere(const Fsr::Vec3d&      P,
-                float                  radius,
+intersectSphere(const Fsr::Vec3<T>&    P,
+                T                      radius,
                 const Fsr::RayContext& Rtx)
 {
-    const Fsr::Vec3d v(Rtx.origin - P);
-    const double B = v.dot(Rtx.dir());
-    return ((B*B - (v.lengthSquared() - double(radius*radius))) > std::numeric_limits<double>::epsilon());
+    const Fsr::Vec3d v(Rtx.origin.x - double(P.x),
+                       Rtx.origin.y - double(P.y),
+                       Rtx.origin.z - double(P.z));
+    const double b = Rtx.dir().dot(v);
+    const double c = (v.lengthSquared() - double(radius*radius));
+    return ((b*b - c) >= std::numeric_limits<double>::epsilon());
 }
 
+template <typename T>
 inline RayIntersectionType
-intersectSphere(const Fsr::Vec3d&      P,
-                float                  radius,
+intersectSphere(const Fsr::Vec3<T>&    P,
+                T                      radius,
                 const Fsr::RayContext& Rtx,
                 double&                tmin,
                 double&                tmax)
 {
-    const Fsr::Vec3d p_minus_r(Rtx.origin - P);
+    const Fsr::Vec3d v(Rtx.origin.x - double(P.x),
+                       Rtx.origin.y - double(P.y),
+                       Rtx.origin.z - double(P.z));
     const double a = Rtx.dir().lengthSquared();
-    const double b = 2.0 * Rtx.dir().dot(p_minus_r);
-    const double c = p_minus_r.lengthSquared() - radius*radius;
+    const double b = 2.0 * Rtx.dir().dot(v);
+    const double c = (v.lengthSquared() - double(radius*radius));
 
     const double discrm = b*b - 4.0*a*c;
     if (discrm >= std::numeric_limits<double>::epsilon())
@@ -691,52 +761,33 @@ inline bool
 intersectDisc(const Fsr::Vec3d&      P,
               const Fsr::Vec3d&      N,
               double                 radius,
-              const Fsr::RayContext& Rtx)
+              const Fsr::RayContext& Rtx,
+              double&                t)
 {
-#if 1
-    return false;
-#else
-    // TODO: finish implementation!
-#endif
+    // First do a plane intersection:
+    const double rd_dot_n = Rtx.dir().dot(N);
+
+    // Is ray contained inside the disk plane or is parallel to plane?
+    if (::fabs(rd_dot_n) < std::numeric_limits<double>::epsilon())
+        return false; // ray is parallel to plane
+
+    // Distance from intersection to P:
+    const double D = -P.dot(N); // distance to origin (plane's D value)
+    t = -(Rtx.origin.dot(N) + D) / rd_dot_n;
+
+    const Fsr::Vec3d iP = Rtx.getPositionAt(t / rd_dot_n);
+
+    return (iP.distanceSquared(P) > radius*radius);
 }
 
 inline bool
 intersectDisc(const Fsr::Vec3d&      P,
               const Fsr::Vec3d&      N,
               double                 radius,
-              const Fsr::RayContext& Rtx,
-              double&                t)
+              const Fsr::RayContext& Rtx)
 {
-#if 1
-    return false;
-#else
-    // TODO: finish implementation!
-
-    const double rd_dot_n = Rtx.dir().dot(N);
-
-    // Is ray contained inside the disk plane or is parallel to plane?
-    if (::fabsf(rd_dot_n) < std::numeric_limits<double>::epsilon())
-     {
-        t = Rtx.origin.dot(N) + plane.w;
-        if (::fabs(t) < std::numeric_limits<double>::epsilon())
-        {
-            t = 0.0;
-            return true; // ray origin is on plane
-        }
-        t = std::numeric_limits<double>::infinity();
-        return false; // ray is parallel to plane
-    }
-    t = Rtx.origin.dot(N) + plane.w;
-    return true;
-#if 0
-    // Distance from intersection to P:
-    const double D = -P.dot(N); // distance to origin (plane's D value)
-    const double t = -(R.origin.dot(N) + D) / rd_dot_n;
-    const DD::Image::Vector3 iP = R.get_point_at(t / rd_dot_n);
-
-    return (iP.distanceSquared(P) > radius*radius);
-#endif
-#endif
+    double t;
+    return intersectDisc(P, N, radius, Rtx, t);
 }
 
 //-----------------------------------------------------------
@@ -812,21 +863,22 @@ intersectTriangleSided(bool                   front_side,
     return true;
 }
 inline bool
-intersectTriangleSided(bool                      front_side,
-                       const Fsr::Vec3d&         vert_origin,
-                       const Fsr::Vec3f&         v0,
-                       const Fsr::Vec3f&         v1,
-                       const Fsr::Vec3f&         v2,
-                       const Fsr::RayContextDif& Rdtx,
-                       Fsr::Vec2f&               uv,
-                       Fsr::Vec2f&               uvdx,
-                       Fsr::Vec2f&               uvdy,
-                       double&                   t)
+intersectTriangleSided(bool                         front_side,
+                       const Fsr::Vec3d&            vert_origin,
+                       const Fsr::Vec3f&            v0,
+                       const Fsr::Vec3f&            v1,
+                       const Fsr::Vec3f&            v2,
+                       const Fsr::RayContext&       Rtx,
+                       const Fsr::RayDifferentials& Rdif,
+                       Fsr::Vec2f&                  uv,
+                       Fsr::Vec2f&                  uvdx,
+                       Fsr::Vec2f&                  uvdy,
+                       double&                      t)
 {
     const Fsr::Vec3d e1(v1 - v0); // edge 1
     const Fsr::Vec3d e2(v2 - v0); // edge 2
 
-    Fsr::Vec3d pvec(Rdtx.dir().cross(e2));
+    Fsr::Vec3d pvec(Rtx.dir().cross(e2));
     double det = e1.dot(pvec);
 
     // Front/back test:
@@ -841,37 +893,37 @@ intersectTriangleSided(bool                      front_side,
             return false; // hit front, bail
     }
 
-    const Fsr::Vec3d tvec((Rdtx.origin - vert_origin) - v0);
+    const Fsr::Vec3d tvec((Rtx.origin - vert_origin) - v0);
     const double u = tvec.dot(pvec); // barycentric u coord
     if (u < 0.0 || (u - std::numeric_limits<double>::epsilon()) > det)
         return false; // outside perimeter, bail
 
     Fsr::Vec3d qvec(tvec.cross(e1));
-    const double v = Rdtx.dir().dot(qvec); // barycentric v coord
+    const double v = Rtx.dir().dot(qvec); // barycentric v coord
     if (v < 0.0 || (u + v - std::numeric_limits<double>::epsilon()) > det)
         return false; // outside perimeter, bail
 
     det = 1.0 / det;
     t = e2.dot(qvec)*det; // intersection distance from ray origin
-    if (t < Rdtx.mindist || t > Rdtx.maxdist)
+    if (t < Rtx.mindist || t > Rtx.maxdist)
         return false; // outside ray's range, bail
 
     uv.x = float(u*det);
     uv.y = float(v*det);
 
     // du differential:
-    pvec = Rdtx.xdir().cross(e2);
+    pvec = Rdif.xDir().cross(e2);
     qvec = tvec.cross(e1);
     det  = 1.0 / e1.dot(pvec);
     uvdx.x = float(tvec.dot(pvec)*det);
-    uvdx.y = float(Rdtx.xdir().dot(qvec)*det);
+    uvdx.y = float(Rdif.xDir().dot(qvec)*det);
 
     // dv differential:
-    pvec = Rdtx.ydir().cross(e2);
+    pvec = Rdif.yDir().cross(e2);
     qvec = tvec.cross(e1);
     det  = 1.0 / e1.dot(pvec);
     uvdy.x = float(tvec.dot(pvec)*det);
-    uvdy.y = float(Rdtx.ydir().dot(qvec)*det);
+    uvdy.y = float(Rdif.yDir().dot(qvec)*det);
 
     return true;
 }
@@ -888,7 +940,7 @@ intersectTriangle(const Fsr::Vec3d&      vert_origin,
     const Fsr::Vec3d e1(v1 - v0); // edge 1
     const Fsr::Vec3d e2(v2 - v0); // edge 2
 
-    const Fsr::Vec3d pvec = Rtx.dir().cross(e2);
+    const Fsr::Vec3d pvec(Rtx.dir().cross(e2));
     double det = e1.dot(pvec);
 
     // Check for ray parallel to plane:
@@ -916,57 +968,58 @@ intersectTriangle(const Fsr::Vec3d&      vert_origin,
     return true;
 }
 inline bool
-intersectTriangle(const Fsr::Vec3d&         vert_origin,
-                  const Fsr::Vec3f&         v0,
-                  const Fsr::Vec3f&         v1,
-                  const Fsr::Vec3f&         v2,
-                  const Fsr::RayContextDif& Rdtx,
-                  Fsr::Vec2f&               uv,
-                  Fsr::Vec2f&               uvdx,
-                  Fsr::Vec2f&               uvdy,
-                  double&                   t)
+intersectTriangle(const Fsr::Vec3d&            vert_origin,
+                  const Fsr::Vec3f&            v0,
+                  const Fsr::Vec3f&            v1,
+                  const Fsr::Vec3f&            v2,
+                  const Fsr::RayContext&       Rtx,
+                  const Fsr::RayDifferentials& Rdif,
+                  Fsr::Vec2f&                  uv,
+                  Fsr::Vec2f&                  uvdx,
+                  Fsr::Vec2f&                  uvdy,
+                  double&                      t)
 {
     const Fsr::Vec3d e1(v1 - v0); // edge 1
     const Fsr::Vec3d e2(v2 - v0); // edge 2
 
-    Fsr::Vec3d pvec(Rdtx.dir().cross(e2));
+    Fsr::Vec3d pvec(Rtx.dir().cross(e2));
     double det = e1.dot(pvec);
 
     // Check for ray parallel to plane:
     if (fabs(det) < std::numeric_limits<double>::epsilon())
         return false; // edge-on, bail
 
-    const Fsr::Vec3d tvec((Rdtx.origin - vert_origin) - v0);
+    const Fsr::Vec3d tvec((Rtx.origin - vert_origin) - v0);
     const double u = tvec.dot(pvec); // barycentric u coord
     if (u < 0.0 || (u - std::numeric_limits<double>::epsilon()) > det)
         return false; // outside perimeter, bail
 
     Fsr::Vec3d qvec(tvec.cross(e1));
-    const double v = Rdtx.dir().dot(qvec); // barycentric v coord
+    const double v = Rtx.dir().dot(qvec); // barycentric v coord
     if (v < 0.0 || (u + v - std::numeric_limits<double>::epsilon()) > det)
         return false; // outside perimeter, bail
 
     det = 1.0 / det;
     t = e2.dot(qvec)*det; // intersection distance from ray origin
-    if (t < Rdtx.mindist || t > Rdtx.maxdist)
+    if (t < Rtx.mindist || t > Rtx.maxdist)
         return false; // outside ray's range, bail
 
     uv.x = float(u*det);
     uv.y = float(v*det);
 
     // du differential:
-    pvec = Rdtx.xdir().cross(e2);
+    pvec = Rdif.xDir().cross(e2);
     qvec = tvec.cross(e1);
     det  = 1.0 / e1.dot(pvec);
     uvdx.x = float(tvec.dot(pvec)*det);
-    uvdx.y = float(Rdtx.xdir().dot(qvec)*det);
+    uvdx.y = float(Rdif.xDir().dot(qvec)*det);
 
     // dv differential:
-    pvec = Rdtx.ydir().cross(e2);
+    pvec = Rdif.yDir().cross(e2);
     qvec = tvec.cross(e1);
     det  = 1.0 / e1.dot(pvec);
     uvdy.x = float(tvec.dot(pvec)*det);
-    uvdy.y = float(Rdtx.ydir().dot(qvec)*det);
+    uvdy.y = float(Rdif.yDir().dot(qvec)*det);
 
     return true;
 }

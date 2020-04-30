@@ -56,7 +56,7 @@ ArgSet::getAsSorted(KeyValueSortedMap& sorted_map) const
     if (m_args.size() == 0)
         return;
     for (KeyValueMap::const_iterator it=m_args.begin(); it != m_args.end(); ++it)
-        sorted_map[it->first] = it->second;
+        sorted_map.insert({it->first, it->second});
 }
 
 //-------------------------------------------------------------------------
@@ -130,7 +130,7 @@ ArgSet::getVec2d(const std::string& key, Fsr::Vec2d v) const
 {
     const KeyValueMap::const_iterator it = m_args.find(key);
     if (it != m_args.end() && !it->second.empty())
-        sscanf(it->second.c_str(), "%lf %lf", &v.x, &v.y);
+        std::sscanf(it->second.c_str(), "%lf %lf", &v.x, &v.y);
     return v;
 }
 
@@ -141,7 +141,7 @@ ArgSet::getVec3d(const std::string& key, Fsr::Vec3d v) const
 {
     const KeyValueMap::const_iterator it = m_args.find(key);
     if (it != m_args.end() && !it->second.empty())
-        sscanf(it->second.c_str(), "%lf %lf %lf", &v.x, &v.y, &v.z);
+        std::sscanf(it->second.c_str(), "%lf %lf %lf", &v.x, &v.y, &v.z);
     return v;
 }
 
@@ -152,7 +152,7 @@ ArgSet::getVec4d(const std::string& key, Fsr::Vec4d v) const
 {
     const KeyValueMap::const_iterator it = m_args.find(key);
     if (it != m_args.end() && !it->second.empty())
-        sscanf(it->second.c_str(), "%lf %lf %lf %lf", &v.x, &v.y, &v.z, &v.w);
+        std::sscanf(it->second.c_str(), "%lf %lf %lf %lf", &v.x, &v.y, &v.z, &v.w);
     return v;
 }
 
@@ -163,11 +163,11 @@ ArgSet::getMat4d(const std::string& key, Fsr::Mat4d m) const
 {
     const KeyValueMap::const_iterator it = m_args.find(key);
     if (it != m_args.end() && !it->second.empty())
-        sscanf(it->second.c_str(), "%lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
-                &m.a00, &m.a10, &m.a20, &m.a30,
-                &m.a01, &m.a11, &m.a21, &m.a31,
-                &m.a02, &m.a12, &m.a22, &m.a32,
-                &m.a03, &m.a13, &m.a23, &m.a33);
+        std::sscanf(it->second.c_str(), "%lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
+                    &m.a00, &m.a10, &m.a20, &m.a30,
+                    &m.a01, &m.a11, &m.a21, &m.a31,
+                    &m.a02, &m.a12, &m.a22, &m.a32,
+                    &m.a03, &m.a13, &m.a23, &m.a33);
     return m;
 }
 
@@ -175,63 +175,63 @@ ArgSet::getMat4d(const std::string& key, Fsr::Mat4d m) const
 //-------------------------------------------------------------------------
 
 
-#define DOUBLE_BUF 64
+#define DBL_STR_SIZE 64
 
 void
 ArgSet::setInt(const std::string& key, int value)
 {
-    char buf[DOUBLE_BUF];
-    std::snprintf(buf, DOUBLE_BUF, "%d", value);
-    setString(key, buf);
+    char buf[DBL_STR_SIZE];
+    std::snprintf(buf, DBL_STR_SIZE, "%d", value);
+    m_args.insert(std::make_pair(key, std::string(buf)));
 }
 void
 ArgSet::setDouble(const std::string& key, double value)
 {
-    char buf[DOUBLE_BUF];
-    std::snprintf(buf, DOUBLE_BUF, "%.20g", value);
-    setString(key, buf);
+    char buf[DBL_STR_SIZE];
+    std::snprintf(buf, DBL_STR_SIZE, "%.20g", value);
+    m_args.insert(std::make_pair(key, std::string(buf)));
 }
 void
 ArgSet::setBool(const std::string& key, bool value)
 {
     char buf[4];
     std::snprintf(buf, 4, "%d", value);
-    setString(key, buf);
+    m_args.insert(std::make_pair(key, std::string(buf)));
 }
 void
 ArgSet::setHash(const std::string& key, HashValue value)
 {
-    char buf[DOUBLE_BUF];
-    std::snprintf(buf, DOUBLE_BUF, "%016lx", value);
-    setString(key, buf);
+    char buf[DBL_STR_SIZE];
+    std::snprintf(buf, DBL_STR_SIZE, "%016lx", value);
+    m_args.insert(std::make_pair(key, std::string(buf)));
 }
 //
 void
 ArgSet::setVec2d(const std::string& key, const Fsr::Vec2d& v)
 {
-    char buf[DOUBLE_BUF*2];
-    std::snprintf(buf, DOUBLE_BUF*2, "%.20g %.20g", v.x, v.y);
-    setString(key, buf);
+    char buf[DBL_STR_SIZE*2];
+    std::snprintf(buf, DBL_STR_SIZE*2, "%.20g %.20g", v.x, v.y);
+    m_args.insert(std::make_pair(key, std::string(buf)));
 }
 void
 ArgSet::setVec3d(const std::string& key, const Fsr::Vec3d& v)
 {
-    char buf[DOUBLE_BUF*3];
-    std::snprintf(buf, DOUBLE_BUF*3, "%.20g %.20g %.20g", v.x, v.y, v.z);
-    setString(key, buf);
+    char buf[DBL_STR_SIZE*3];
+    std::snprintf(buf, DBL_STR_SIZE*3, "%.20g %.20g %.20g", v.x, v.y, v.z);
+    m_args.insert(std::make_pair(key, std::string(buf)));
 }
 void
 ArgSet::setVec4d(const std::string& key, const Fsr::Vec4d& v)
 {
-    char buf[DOUBLE_BUF*4];
-    std::snprintf(buf, DOUBLE_BUF*4, "%.20g %.20g %.20g %.20g", v.x, v.y, v.z, v.w);
-    setString(key, buf);
+    char buf[DBL_STR_SIZE*4];
+    std::snprintf(buf, DBL_STR_SIZE*4, "%.20g %.20g %.20g %.20g", v.x, v.y, v.z, v.w);
+    m_args.insert(std::make_pair(key, std::string(buf)));
 }
 void
 ArgSet::setMat4d(const std::string& key, const Fsr::Mat4d& m)
 {
-    char buf[DOUBLE_BUF*16];
-    std::snprintf(buf, DOUBLE_BUF*16,
+    char buf[DBL_STR_SIZE*16];
+    std::snprintf(buf, DBL_STR_SIZE*16,
                     "%.20g %.20g %.20g %.20g "
                     "%.20g %.20g %.20g %.20g "
                     "%.20g %.20g %.20g %.20g "
@@ -240,58 +240,8 @@ ArgSet::setMat4d(const std::string& key, const Fsr::Mat4d& m)
                         m.a01, m.a11, m.a21, m.a31,
                         m.a02, m.a12, m.a22, m.a32,
                         m.a03, m.a13, m.a23, m.a33);
-    setString(key, buf);
+    m_args.insert(std::make_pair(key, std::string(buf)));
 }
-
-
-//-------------------------------------------------------------------------
-//-------------------------------------------------------------------------
-
-// TODO: this is currently a catchall and is only being used as a 
-// abstract container for the ArgSet.
-// Either delete it or make it more useful.
-
-const std::string& NodeContext::getString(const std::string& key, const std::string& dflt_val) const { return m_args.getString(key, dflt_val); }
-const std::string& NodeContext::getString(const char*        key, const std::string& dflt_val) const { return m_args.getString(key, dflt_val); }
-
-int          NodeContext::getInt(const std::string& key, int        dflt_val) const { return    m_args.getInt(key, dflt_val); }
-int          NodeContext::getInt(const char*        key, int        dflt_val) const { return    m_args.getInt(key, dflt_val); }
-double    NodeContext::getDouble(const std::string& key, double     dflt_val) const { return m_args.getDouble(key, dflt_val); }
-double    NodeContext::getDouble(const char*        key, double     dflt_val) const { return m_args.getDouble(key, dflt_val); }
-bool        NodeContext::getBool(const std::string& key, bool       dflt_val) const { return   m_args.getBool(key, dflt_val); }
-bool        NodeContext::getBool(const char*        key, bool       dflt_val) const { return   m_args.getBool(key, dflt_val); }
-HashValue   NodeContext::getHash(const std::string& key, HashValue  dflt_val) const { return   m_args.getHash(key, dflt_val); }
-HashValue   NodeContext::getHash(const char*        key, HashValue  dflt_val) const { return   m_args.getHash(key, dflt_val); }
-
-Fsr::Vec2d NodeContext::getVec2d(const std::string& key, Fsr::Vec2d dflt_val) const { return  m_args.getVec2d(key, dflt_val); }
-Fsr::Vec2d NodeContext::getVec2d(const char*        key, Fsr::Vec2d dflt_val) const { return  m_args.getVec2d(key, dflt_val); }
-
-Fsr::Vec3d NodeContext::getVec3d(const std::string& key, Fsr::Vec3d dflt_val) const { return  m_args.getVec3d(key, dflt_val); }
-Fsr::Vec3d NodeContext::getVec3d(const char*        key, Fsr::Vec3d dflt_val) const { return  m_args.getVec3d(key, dflt_val); }
-
-Fsr::Vec4d NodeContext::getVec4d(const std::string& key, Fsr::Vec4d dflt_val) const { return  m_args.getVec4d(key, dflt_val); }
-Fsr::Vec4d NodeContext::getVec4d(const char*        key, Fsr::Vec4d dflt_val) const { return  m_args.getVec4d(key, dflt_val); }
-
-Fsr::Mat4d NodeContext::getMat4d(const std::string& key, Fsr::Mat4d dflt_val) const { return  m_args.getMat4d(key, dflt_val); }
-Fsr::Mat4d NodeContext::getMat4d(const char*        key, Fsr::Mat4d dflt_val) const { return  m_args.getMat4d(key, dflt_val); }
-
-//-------------------------------------------------------------------------
-
-void NodeContext::setString(const std::string& key, const std::string& value) { m_args.setString(key, value); }
-void NodeContext::setString(const std::string& key, const char*        value) { m_args.setString(key, value); }
-void NodeContext::setString(const char*        key, const std::string& value) { m_args.setString(key, value); }
-void NodeContext::setString(const char*        key, const char*        value) { m_args.setString(key, value); }
-
-void    NodeContext::setInt(const std::string& key, int                value) {    m_args.setInt(key, value); }
-void NodeContext::setDouble(const std::string& key, double             value) { m_args.setDouble(key, value); }
-void   NodeContext::setBool(const std::string& key, bool               value) {   m_args.setBool(key, value); }
-void   NodeContext::setHash(const std::string& key, HashValue          value) {   m_args.setHash(key, value); }
-
-void  NodeContext::setVec2d(const std::string& key, const Fsr::Vec2d&  value) {  m_args.setVec2d(key, value); }
-void  NodeContext::setVec3d(const std::string& key, const Fsr::Vec3d&  value) {  m_args.setVec3d(key, value); }
-void  NodeContext::setVec4d(const std::string& key, const Fsr::Vec4d&  value) {  m_args.setVec4d(key, value); }
-
-void  NodeContext::setMat4d(const std::string& key, const Fsr::Mat4d&  value) {  m_args.setMat4d(key, value); }
 
 
 } // namespace Fsr

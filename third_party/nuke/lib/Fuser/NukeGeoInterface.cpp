@@ -42,89 +42,6 @@ namespace Fsr {
 
 //-----------------------------------------------------------------------------
 
-/*! Get an attribute from the object level of a GeoInfo. *** Not thread safe! ***
-*/
-std::string
-getObjectString(const DD::Image::GeoInfo& info,
-                const char*               name)
-{
-    const DD::Image::AttribContext* ctx = info.get_group_attribcontext(DD::Image::Group_Object, name);
-    if (!ctx || ctx->empty() || !ctx->attribute)
-    {
-        //std::cout << "warning, object attrib '" << name << "' not found!" << std::endl;
-        return std::string();
-    }
-    if (ctx->type == DD::Image::STRING_ATTRIB)
-        return std::string(ctx->attribute->string(0));
-    else if (ctx->type == DD::Image::STD_STRING_ATTRIB)
-        return ctx->attribute->stdstring(0);
-    return std::string();
-}
-
-/*!
-*/
-int
-getObjectInt(const DD::Image::GeoInfo& info,
-             const char* name)
-{
-    const DD::Image::AttribContext* ctx = info.get_typed_group_attribcontext(DD::Image::Group_Object,
-                                                                             name,
-                                                                             DD::Image::INT_ATTRIB);
-    if (!ctx || ctx->empty() || !ctx->attribute)
-    {
-        //std::cout << "warning, object attrib '" << name << "' not found!" << std::endl;
-        return 0;
-    }
-    return ctx->attribute->integer(0);
-}
-
-/*!
-*/
-float
-getObjectFloat(const DD::Image::GeoInfo& info,
-               const char* name)
-{
-    const DD::Image::AttribContext* ctx = info.get_typed_group_attribcontext(DD::Image::Group_Object,
-                                                                             name,
-                                                                             DD::Image::FLOAT_ATTRIB);
-    if (!ctx || ctx->empty() || !ctx->attribute)
-    {
-        //std::cout << "warning, object attrib '" << name << "' not found!" << std::endl;
-        return 0.0f;
-    }
-    return ctx->attribute->flt(0);
-}
-
-/*!
-*/
-bool
-hasObjectAttrib(const DD::Image::GeoInfo& info,
-                const char* name)
-{
-    const DD::Image::AttribContext* ctx = info.get_group_attribcontext(DD::Image::Group_Object, name);
-    return (ctx && !ctx->empty() && ctx->attribute);
-}
-
-/*!
-*/
-void*
-getAttribData(const DD::Image::GeoInfo& info,
-              DD::Image::GroupType group,
-              const char* name,
-              DD::Image::AttribType type)
-{
-    const DD::Image::AttribContext* ctx = info.get_typed_group_attribcontext(group, name, type);
-    if (!ctx || ctx->empty() || !ctx->attribute)
-    {
-        //std::cout << "warning, object attrib '" << name << "' not found!" << std::endl;
-        return NULL;
-    }
-    return ctx->attribute->array();
-}
-
-
-//-----------------------------------------------------------------------------
-
 
 /*! Copy a string pointer to a constant one stored in a static map.
 
@@ -146,6 +63,176 @@ getConstStr(const char* var,
         attrib_const_lock.unlock();
 
     return it.first->c_str();
+}
+
+
+//-----------------------------------------------------------------------------
+
+
+/*! Return the GeoInfo's point array cast to a Vec3f. *** Not thread safe! ***
+*/
+const Fsr::Vec3f*
+getObjectPointArray(const DD::Image::GeoInfo& info)
+{
+    return reinterpret_cast<const Fsr::Vec3f*>(info.point_array());
+}
+
+
+/*! Get an attribute from the object level of a GeoInfo. *** Not thread safe! ***
+*/
+std::string
+getObjectString(const DD::Image::GeoInfo& info,
+                const char*               attrib_name,
+                const std::string&        dflt_val)
+{
+    const DD::Image::AttribContext* ctx = info.get_group_attribcontext(DD::Image::Group_Object, attrib_name);
+    if (!ctx || ctx->empty() || !ctx->attribute)
+    {
+        //std::cout << "warning, object attrib '" << attrib_name << "' not found!" << std::endl;
+        return dflt_val;
+    }
+
+    if (ctx->type == DD::Image::STRING_ATTRIB)
+        return std::string(ctx->attribute->string(0));
+    else if (ctx->type == DD::Image::STD_STRING_ATTRIB)
+        return ctx->attribute->stdstring(0);
+
+    return dflt_val;
+}
+
+/*!
+*/
+int32_t
+getObjectInt(const DD::Image::GeoInfo& info,
+             const char*               attrib_name,
+             int32_t                   dflt_val)
+{
+    const DD::Image::AttribContext* ctx = info.get_typed_group_attribcontext(DD::Image::Group_Object,
+                                                                             attrib_name,
+                                                                             DD::Image::INT_ATTRIB);
+    if (!ctx || ctx->empty() || !ctx->attribute)
+    {
+        //std::cout << "warning, object attrib '" << attrib_name << "' not found!" << std::endl;
+        return dflt_val;
+    }
+    return int32_t(ctx->attribute->integer(0));
+}
+bool
+getObjectBool(const DD::Image::GeoInfo& info,
+              const char*               attrib_name,
+              bool                      dflt_val)
+{
+    return (getObjectInt(info, attrib_name, 0) > 0);
+}
+
+
+/*!
+*/
+float
+getObjectFloat(const DD::Image::GeoInfo& info,
+               const char*               attrib_name,
+               float                     dflt_val)
+{
+    const DD::Image::AttribContext* ctx = info.get_typed_group_attribcontext(DD::Image::Group_Object,
+                                                                             attrib_name,
+                                                                             DD::Image::FLOAT_ATTRIB);
+    if (!ctx || ctx->empty() || !ctx->attribute)
+    {
+        //std::cout << "warning, object attrib '" << attrib_name << "' not found!" << std::endl;
+        return dflt_val;
+    }
+    return ctx->attribute->flt(0);
+}
+
+/*!
+*/
+bool
+hasObjectAttrib(const DD::Image::GeoInfo& info,
+                const char*               attrib_name)
+{
+    const DD::Image::AttribContext* ctx = info.get_group_attribcontext(DD::Image::Group_Object, attrib_name);
+    return (ctx && !ctx->empty() && ctx->attribute);
+}
+
+/*!
+*/
+void*
+getAttribData(const DD::Image::GeoInfo& info,
+              DD::Image::GroupType      attrib_group,
+              const char*               attrib_name,
+              DD::Image::AttribType     attrib_type)
+{
+    const DD::Image::AttribContext* ctx = info.get_typed_group_attribcontext(attrib_group, attrib_name, attrib_type);
+    if (!ctx || ctx->empty() || !ctx->attribute)
+    {
+        //std::cout << "warning, object attrib '" << attrib_name << "' not found!" << std::endl;
+        return NULL;
+    }
+    return ctx->attribute->array();
+}
+
+
+//-----------------------------------------------------------------------------
+
+
+/*! Set an Attribute value at the 'Group_Object' level of a GeoInfo. *** Not thread safe! ***
+*/
+void
+setObjectString(const char*              attrib_name,
+                const std::string&       attrib_value,
+                uint32_t                 obj_index,
+                DD::Image::GeometryList& geometry_list)
+{
+    if (!attrib_name || !attrib_name[0])
+        return;
+    DD::Image::Attribute* attrib =
+        geometry_list.writable_attribute(obj_index,
+                                         DD::Image::Group_Object,
+                                         getConstStr(attrib_name),
+                                         DD::Image::STD_STRING_ATTRIB);
+    assert(attrib); // shouldn't happen...
+    attrib->resize(1); // just in case...
+    attrib->stdstring(0) = attrib_value;
+}
+
+/*!
+*/
+void
+setObjectInt(const char*              attrib_name,
+             int32_t                  attrib_value,
+             uint32_t                 obj_index,
+             DD::Image::GeometryList& geometry_list)
+{
+    if (!attrib_name || !attrib_name[0])
+        return;
+    DD::Image::Attribute* attrib =
+        geometry_list.writable_attribute(obj_index,
+                                         DD::Image::Group_Object,
+                                         getConstStr(attrib_name),
+                                         DD::Image::INT_ATTRIB);
+    assert(attrib); // shouldn't happen...
+    attrib->resize(1); // just in case...
+    attrib->integer(0) = attrib_value;
+}
+
+/*!
+*/
+void
+setObjectFloat(const char*              attrib_name,
+               float                    attrib_value,
+               uint32_t                 obj_index,
+               DD::Image::GeometryList& geometry_list)
+{
+    if (!attrib_name || !attrib_name[0])
+        return;
+    DD::Image::Attribute* attrib =
+        geometry_list.writable_attribute(obj_index,
+                                         DD::Image::Group_Object,
+                                         getConstStr(attrib_name),
+                                         DD::Image::FLOAT_ATTRIB);
+    assert(attrib); // shouldn't happen...
+    attrib->resize(1); // just in case...
+    attrib->flt(0) = attrib_value;
 }
 
 
@@ -179,7 +266,7 @@ GeoInfoCacheRef::GeoInfoCacheRef(const GeoInfoCacheRef& b) :
 
 /*!
 */
-GeoInfoCacheRef::GeoInfoCacheRef(int               obj_index,
+GeoInfoCacheRef::GeoInfoCacheRef(uint32_t          obj_index,
                                  DD::Image::GeoOp* geo) :
     obj(obj_index),
     points_list(NULL),
@@ -189,7 +276,7 @@ GeoInfoCacheRef::GeoInfoCacheRef(int               obj_index,
     if (geo)
     {
         const std::vector<DD::Image::GeoInfo::Cache>& geo_cache_list = geo->getCacheList();
-        if (obj_index >=0 && obj_index < (int)geo_cache_list.size())
+        if (obj_index < (uint32_t)geo_cache_list.size())
             updateFromGeoInfoCache(const_cast<DD::Image::GeoInfo::Cache*>(&geo_cache_list[obj_index]));
     }
 }
@@ -197,7 +284,7 @@ GeoInfoCacheRef::GeoInfoCacheRef(int               obj_index,
 
 /*!
 */
-GeoInfoCacheRef::GeoInfoCacheRef(int                            obj_index,
+GeoInfoCacheRef::GeoInfoCacheRef(uint32_t                       obj_index,
                                  const DD::Image::GeometryList& geometry_list) :
     obj(obj_index),
     points_list(NULL),
@@ -718,6 +805,45 @@ GeoOpGeometryEngineContext::createWritableAttributeThreadSafe(GeoInfoCacheRef&  
 //-----------------------------------------------------------------------------
 
 
+/*! Calc a bbox from current PointList, updating the one in the GeoInfo cache and our copy.
+*/
+void
+GeoOpGeometryEngineContext::updateBBoxThreadSafe(GeoInfoCacheRef& geoinfo_cache)
+{
+    Fsr::Box3f bbox;
+    if (geoinfo_cache.points_list && geoinfo_cache.points_list->size() > 0)
+        bbox.set(reinterpret_cast<Fsr::Vec3f*>(geoinfo_cache.points_list->data()), geoinfo_cache.points_list->size());
+    else
+        bbox.setToEmptyState();
+
+    setBBoxThreadSafe(geoinfo_cache, bbox);
+}
+
+/*! Set the bbox in the GeoInfo cache and our copy.
+*/
+void
+GeoOpGeometryEngineContext::setBBoxThreadSafe(GeoInfoCacheRef&  geoinfo_cache,
+                                              const Fsr::Box3f& bbox)
+{
+    if (!geometry_list ||
+        geoinfo_cache.obj < 0 || geoinfo_cache.obj >= (int)geometry_list->size())
+        return; // don't crash...
+
+    acquireWriteLock();
+    {
+        DD::Image::GeoInfo::Cache* writable_cache =
+            const_cast<DD::Image::GeoInfo::Cache*>((*geometry_list)[geoinfo_cache.obj].get_cache_pointer());
+        writable_cache->bbox = bbox.asDDImage();
+    }
+    releaseWriteLock();
+
+    geoinfo_cache.bbox = bbox;
+}
+
+
+//-----------------------------------------------------------------------------
+
+
 /*! Set an attribute at the Group_Object level of a GeoInfo.
 */
 void
@@ -740,7 +866,7 @@ GeoOpGeometryEngineContext::setObjectStringThreadSafe(GeoInfoCacheRef&   geoinfo
 void
 GeoOpGeometryEngineContext::setObjectIntThreadSafe(GeoInfoCacheRef& geoinfo_cache,
                                                    const char*      attrib_name,
-                                                   int              attrib_value)
+                                                   int32_t          attrib_value)
 {
     if (!attrib_name || !attrib_name[0])
         return;
@@ -801,7 +927,7 @@ void
 GeoOpGeometryEngineContext::setPrimitiveIntThreadSafe(GeoInfoCacheRef& geoinfo_cache,
                                                       uint32_t         prim_index,
                                                       const char*      attrib_name,
-                                                      int              attrib_value)
+                                                      int32_t          attrib_value)
 {
     if (!attrib_name || !attrib_name[0])
         return;

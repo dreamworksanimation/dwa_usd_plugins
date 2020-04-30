@@ -42,9 +42,8 @@
 #  include <pxr/usd/sdf/relationshipSpec.h>
 
 #  include <pxr/usd/ar/resolver.h>
-#  include <pxr/usd/usdGeom/mesh.h>   // for isRenderablePrim
-#  include <pxr/usd/usdGeom/curves.h> // for isRenderablePrim
-#  include <pxr/usd/usdGeom/points.h> // for isRenderablePrim
+
+#  include <pxr/usd/usdShade/material.h>
 
 #  pragma GCC diagnostic pop
 #endif
@@ -61,39 +60,6 @@ static Pxr::UsdStageRefPtr m_null_stage;
 
 //-------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------
-
-
-//!
-bool isRenderablePrim(const Pxr::UsdPrim& prim)
-{
-    if (prim.IsA<Pxr::UsdGeomMesh>())
-        return true;
-#if 0
-    // TODO: enable when we support these types:
-    else if (prim.IsA<Pxr::UsdGeomCurves>())
-        return true;
-    else if (prim.IsA<Pxr::UsdGeomPoints>())
-        return true;
-#endif
-
-    return false;
-}
-
-
-//!
-bool IsBoundablePrim(const Pxr::UsdPrim& prim)
-{
-#if 0
-    if (prim.IsModel() &&
-        ((!prim.IsGroup()) || PxrUsdKatanaUtils::ModelGroupIsAssembly(prim)))
-        return true;
-
-    if (PxrUsdKatanaUtils::PrimIsSubcomponent(prim))
-        return true;
-#endif
-
-    return (prim.IsA<Pxr::UsdGeomBoundable>());
-}
 
 
 #if 0
@@ -135,6 +101,8 @@ _MakeBoundsAttribute(const UsdPrim&                      prim,
 //-------------------------------------------------------------------------------
 
 
+/*!
+*/
 Pxr::UsdPrim
 findMatchingPrimByType(const Pxr::UsdPrim& prim,
                        const std::string&  prim_type)
@@ -158,7 +126,6 @@ findMatchingPrimByType(const Pxr::UsdPrim& prim,
     }
     return Pxr::UsdPrim();
 }
-
 
 /*!
 */
@@ -224,22 +191,38 @@ getNodeDescriptions(const Pxr::UsdPrim&      prim,
     if (++depth > max_depth)
         return;
 
-    // Only consider Prims that are Valid (filled) & Active (enabled):
-    if (!prim.IsValid() || !prim.IsActive())
-        return;
-
-    // Expand (load) all payloads - this can be expensive, but we can't
-    // avoid it since we need to traverse the payload's graph too:
-    if (!prim.IsLoaded())
+#if 0
+    std::cout << "    " << node_description_map.size();
+    std::cout << " '" << prim.GetPath() << "' [" << prim.GetTypeName() << "]";
+    Pxr::SdfPrimSpecHandle spec = prim.GetPrimDefinition();
+    if (spec)
+        std::cout << ", Kind='" << spec->GetKind() << "'";
+    std::cout << ", IsLoaded=" << prim.IsLoaded();
+    std::cout << ", IsValid=" << prim.IsValid();
+    std::cout << ", IsActive=" << prim.IsActive();
+    std::cout << ", IsDefined=" << prim.IsDefined();
+    std::cout << ", IsAbstract=" << prim.IsAbstract();
+    //std::cout << ", isModel=" << prim.IsModel();
+    //std::cout << ", isCamera=" << prim.IsA<Pxr::UsdGeomCamera>();
+    //std::cout << ", isScope=" << prim.IsA<Pxr::UsdGeomScope>();
+    //std::cout << ", isXform=" << prim.IsA<Pxr::UsdGeomXformable>();
+    std::cout << std::endl;
+    if (0)
     {
-        //std::cout << "LOADING '" << prim.GetPath() << "'" << std::endl;
-        // Don't load decendents automatically since we want control over
-        // the max depth:
-        prim.Load(Pxr::UsdLoadWithoutDescendants);
+        std::cout << "      prim layer stack:" << std::endl;
+        const Pxr::SdfPrimSpecHandleVector primspecs = prim.GetPrimStack();
+        TF_FOR_ALL(it, primspecs)
+        {
+            Pxr::SdfPrimSpecHandle child = *it;
+            std::cout << "        " << (*child->GetLayer()).GetDisplayName();
+            std::cout << ": " << (*child->GetLayer()).GetRealPath();
+            std::cout << std::endl;
+        }
     }
+#endif
 
-    // Skip un-Defined (not an override) prims after load:
-    if (!prim.IsDefined())
+    // Only consider Prims that are valid after loading:
+    if (!FuserUsdNode::isLoadedAndUseablePrim(prim))
         return;
 
     const Pxr::UsdPrim::SiblingRange children = prim.GetAllChildren();
@@ -256,7 +239,10 @@ getNodeDescriptions(const Pxr::UsdPrim&      prim,
     Pxr::SdfPrimSpecHandle spec = prim.GetPrimDefinition();
     if (spec)
         std::cout << ", Kind='" << spec->GetKind() << "'";
-    std::cout << ", IsAbstract=" << prim.IsAbstract();
+    //std::cout << ", isModel=" << prim.IsModel();
+    //std::cout << ", isCamera=" << prim.IsA<Pxr::UsdGeomCamera>();
+    //std::cout << ", isScope=" << prim.IsA<Pxr::UsdGeomScope>();
+    //std::cout << ", isXform=" << prim.IsA<Pxr::UsdGeomXformable>();
     std::cout << ", is_leaf=" << is_leaf << ", is_truncated=" << is_truncated;
     std::cout << std::endl;
 #endif
@@ -264,7 +250,7 @@ getNodeDescriptions(const Pxr::UsdPrim&      prim,
     static std::string truncated_name("...");
 
 #ifdef DWA_INTERNAL_BUILD
-    // Check if it's a StereoRig by looking at the name. Bad!!!!
+    // Check if it's a StereoRig by looking at the name. Bad!
     // TODO: this needs to improve with the StereoRig API.
     if (type.empty() && strncmp(name.c_str(), "stereo", 6)==0)
     {
@@ -290,87 +276,129 @@ getNodeDescriptions(const Pxr::UsdPrim&      prim,
 }
 
 
+/*! Add or remove a path from the selection set if it matches any patterns.
+
+    TODO: move this to Fuser SceneLoader or NodeFilterPattern class
+*/
+inline void
+selectMatchingPath(const std::string&                path,
+                   const Fsr::NodeFilterPatternList& node_filter_patterns,
+                   std::set<std::string>&            selected_paths,
+                   bool                              debug=false)
+{
+    if (path.empty())
+        return;
+
+    for (size_t i=0; i < node_filter_patterns.size(); ++i)
+    {
+        const std::string& mask = node_filter_patterns[i].name_expr;
+        if (mask.empty())
+        {
+            std::cerr << "fsrUsdIO::selectMatchingPath(): warning, mask pattern " << i << " is empty!" << std::endl;
+            continue;
+        }
+
+            //std::cout << "    " << " mask='" << mask << "', match=" << Fsr::globMatch(mask, path) << std::endl;
+        if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, path.c_str()))
+        {
+            selected_paths.erase(path);
+            //std::cout << "      remove object '" <<  path << "'" << std::endl;
+        }
+        else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, path.c_str()))
+        {
+            selected_paths.insert(path);
+            //std::cout << "      add object '" <<  path << "'" << std::endl;
+        }
+        else if (Fsr::globMatch(mask, path))
+        {
+            selected_paths.insert(path);
+            //std::cout << "      add object '" <<  path << "'" << std::endl;
+        }
+        else
+        {
+            ;//std::cout << "      no match" << std::endl;
+        }
+    }
+}
+
+
+
 /*! Get a list of nodes with pattern-matched names from the USD file,
     as cheaply as possible...
 */
 static void
 findSelectedNodes(const Pxr::UsdPrim&               prim,
                   const Fsr::NodeFilterPatternList& node_filter_patterns,
-                  std::set<std::string>&            selected_paths,
+                  Fsr::NodePathSelections&          selections,
                   bool                              debug=false)
 {
-    // Only consider Prims that are Valid (filled) & Active (enabled):
-    if (!prim.IsValid() || !prim.IsActive())
+    // Only consider Prims that are valid after loading:
+    if (!FuserUsdNode::isLoadedAndUseablePrim(prim))
         return;
-
-    // Expand (load) all payloads - this can be expensive but we can't
-    // avoid it since we need to traverse the payload's graph too:
-    if (!prim.IsLoaded())
-    {
-        //std::cout << "LOADING '" << prim.GetPath() << "'" << std::endl;
-        prim.Load(Pxr::UsdLoadWithoutDescendants);
-    }
-
-    // Skip un-Defined (not an override) prims after load:
-    if (!prim.IsDefined())
-        return;
-
-    const std::string& path = prim.GetPath().GetString();
-    if (path.empty())
-    {
-        // Empty paths shouldn't happen...
-        std::cerr << "fsrUsdIO::findSelectedNodes(): warning, path for prim '" << prim.GetName();
-        std::cerr << "' is empty!" << std::endl;
-        return;
-    }
-    //std::cout << "  findSelectedNodes() path='" << path << "'" << std::endl;
-
-    if (isRenderablePrim(prim))
-    {
-        //std::cout << "  findSelectedNodes() renderable path='" << path << "'" << std::endl;
-
-        //-------------------------------------------------------------------
-        // TODO: move this to Fuser SceneLoader or NodeFilterPattern class:
-        for (size_t i=0; i < node_filter_patterns.size(); ++i)
-        {
-            const std::string& mask = node_filter_patterns[i].name_expr;
-            if (mask.empty())
-            {
-                std::cerr << "fsrUsdIO::findSelectedNodes(): warning, mask pattern " << i << " is empty!" << std::endl;
-                continue;
-            }
-
-            //std::cout << "  " << " mask='" << mask << "', match=" << Fsr::globMatch(mask, path) << std::endl;
-            if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, path.c_str()))
-            {
-                selected_paths.erase(path);
-                //std::cout << "    remove object '" <<  path << "'" << std::endl;
-            }
-            else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, path.c_str()))
-            {
-                selected_paths.insert(path);
-                //std::cout << "    add object '" <<  path << "'" << std::endl;
-            }
-            else if (Fsr::globMatch(mask, path))
-            {
-                selected_paths.insert(path);
-                //std::cout << "    add object '" <<  path << "'" << std::endl;
-            }
-            else
-            {
-                //std::cout << "    no match" << std::endl;
-            }
-        }
-        //-------------------------------------------------------------------
-
-    }
-    else
-    {
-        // Handle non-renderable types too!
-    }
 
     for (auto child=TfMakeIterator(prim.GetAllChildren()); child; ++child)
-        findSelectedNodes(*child, node_filter_patterns, selected_paths, debug);
+    {
+        const std::string& path = child->GetPath().GetString();
+        if (!path.empty())
+        {
+            //std::cout << "  findSelectedNodes() path='" << path << "' [" << child->GetTypeName() << "]" << std::endl;
+
+#if 0
+            std::cout << "    '" << child->GetPath() << "' [" << child->GetTypeName() << "]";
+            Pxr::SdfPrimSpecHandle spec = child->GetPrimDefinition();
+            if (spec)
+                std::cout << ", Kind='" << spec->GetKind() << "'";
+            std::cout << ", IsLoaded=" << child->IsLoaded();
+            std::cout << ", IsValid=" << child->IsValid();
+            std::cout << ", IsActive=" << child->IsActive();
+            std::cout << ", IsDefined=" << child->IsDefined();
+            std::cout << ", IsAbstract=" << child->IsAbstract();
+            std::cout << ", isModel=" << child->IsModel();
+            //std::cout << ", isCamera=" << child->IsA<Pxr::UsdGeomCamera>();
+            //std::cout << ", isScope=" << child->IsA<Pxr::UsdGeomScope>();
+            //std::cout << ", isXform=" << child->IsA<Pxr::UsdGeomXformable>();
+            std::cout << std::endl;
+#endif
+
+            if (FuserUsdNode::isRenderablePrim(*child))
+            {
+                //std::cout << "    findSelectedNodes() renderable path='" << path << "'" << std::endl;
+                selectMatchingPath(path, node_filter_patterns, selections.objects);
+            }
+            else if (FuserUsdNode::isShadingPrim(*child))
+            {
+                // UsdShade handling - Shaders are *always* underneath a UsdShadeMaterial so instead
+                // of selecting a whole tree of UsdShadeShader nodes we select the top of the network
+                // by adding the top UsdShadeMaterial, then rely on the node creation logic in
+                // buildUsdNode() to create the network tree underneath:
+                if (child->IsA<Pxr::UsdShadeMaterial>())
+                    selectMatchingPath(path, node_filter_patterns, selections.materials);
+
+                continue; // skip going down down shader tree
+            }
+#if 0
+            else if (FuserUsdNode::isLightPrim(*child))
+            {
+                //std::cout << "    findSelectedNodes() light path='" << path << "'" << std::endl;
+                selectMatchingPath(path, node_filter_patterns, selections.lights);
+            }
+#endif
+            else
+            {
+                // Handle non-renderable types too!
+                //std::cout << "      NOT RENDERABLE" << std::endl;
+            }
+
+        }
+        else
+        {
+            // Empty paths shouldn't happen...
+            std::cerr << "fsrUsdIO::findSelectedNodes(): warning, path for child node of '" << prim.GetPath();
+            std::cerr << "' is empty!" << std::endl;
+        }
+
+        findSelectedNodes(*child, node_filter_patterns, selections, debug);
+    }
 }
 
 
@@ -1000,11 +1028,11 @@ FuserUsdArchiveIO::_execute(const Fsr::NodeContext& target_context,
             //-----------------------------------------------------------
             // Execution target requiring a previously created stage
             //-----------------------------------------------------------
-            Fsr::NodeFilterPatternList* node_filter_patterns = reinterpret_cast<Fsr::NodeFilterPatternList*>(src0);
-            std::set<std::string>*      selection_paths      = reinterpret_cast<std::set<std::string>*>(target);
+            Fsr::NodeFilterPatternList*  node_filter_patterns = reinterpret_cast<Fsr::NodeFilterPatternList*>(src0);
+            Fsr::SelectedSceneNodePaths* node_selections      = reinterpret_cast<Fsr::SelectedSceneNodePaths*>(target);
 
             // Any null pointers throw a coding error:
-            if (!node_filter_patterns || !selection_paths)
+            if (!node_filter_patterns || !node_selections || !node_selections->node_path_selections)
                 return error("null objects in target '%s'. This is likely a coding error", target_name);
 
             if (debug_archive)
@@ -1015,14 +1043,11 @@ FuserUsdArchiveIO::_execute(const Fsr::NodeContext& target_context,
                 std::cout << " ]" << std::endl;
             }
 
-            selection_paths->clear();
+            node_selections->node_path_selections->clear();
             if (node_filter_patterns->size() == 0)
                 return true; // no user-abort
 
-            findSelectedNodes(m_stage->GetPseudoRoot(),
-                              *node_filter_patterns,
-                              *selection_paths,
-                              debug_archive);
+            findSelectedNodes(m_stage->GetPseudoRoot(), *node_filter_patterns, *node_selections->node_path_selections, debug_archive);
             //std::cout << "  selection_paths=" << selection_paths->size() << std::endl;
 
             return 0; // success

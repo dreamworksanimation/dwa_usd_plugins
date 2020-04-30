@@ -45,8 +45,10 @@ namespace Fsr {
 
 
 typedef std::vector<bool>        BoolList;
-typedef std::vector<int32_t>     IntList;
-typedef std::vector<uint32_t>    UintList;
+typedef std::vector<int32_t>     Int32List;
+typedef std::vector<int64_t>     Int64List;
+typedef std::vector<uint32_t>    Uint32List;
+typedef std::vector<uint64_t>    Uint64List;
 typedef std::vector<float>       FloatList;
 typedef std::vector<double>      DoubleList;
 typedef std::vector<uint64_t>    HashList;
@@ -211,7 +213,7 @@ typedef TypedAttribute<Fsr::Mat4d>      Mat4dAttribute;
 //-------------------------------------------------------------------------
 
 typedef TypedAttribute<Fsr::BoolList>   BoolListAttribute;
-typedef TypedAttribute<Fsr::IntList>    IntListAttribute;
+typedef TypedAttribute<Fsr::Int32List>  IntListAttribute;
 typedef TypedAttribute<Fsr::FloatList>  FloatListAttribute;
 typedef TypedAttribute<Fsr::DoubleList> DoubleListAttribute;
 typedef TypedAttribute<Fsr::HashList>   HashListAttribute;

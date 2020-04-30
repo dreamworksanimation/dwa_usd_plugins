@@ -257,7 +257,7 @@ class SceneArchiveUIHelperKnob : public DD::Image::Knob
             //    continue;
 
             double tmin, tmax;
-            if (Fsr::intersectAABB(Fsr::Box3d(info.bbox()), Rtx, tmin, tmax))
+            if (Fsr::intersectAABB(Fsr::Box3d(info.bbox()), Fsr::Vec3d(0,0,0), Rtx, tmin, tmax))
             {
                 std::cout << "  geo(" << geo->node_name() << ") object " << j << " bbox" << geo_cache.bbox;
                 std::cout << " - HIT tmin=" << tmin << ", tmax=" << tmax << std::endl;
@@ -355,7 +355,7 @@ GeoSceneGraphReaderFormat::GeoSceneGraphReaderFormat(DD::Image::ReadGeo* geo) :
     FuserGeoReaderFormat(geo)
 {
     //k_object_path          = "";
-    k_surface_mask         = defaultSurfaceMask();
+    k_surface_mask         = "";
     //
     k_scenegraph_scope     = "/";
     k_scenegraph_max_depth = 5;
@@ -659,6 +659,7 @@ GeoSceneGraphReader::knob_changed(DD::Image::Knob* k)
             //
             Fsr::Node::executeImmediate(fuserIOClass(),                 /*node_class*/
                                         node_ctx.args(),                /*node_attribs*/
+                                        NULL,                           /*node-parent*/
                                         target_ctx,                     /*target_context*/
                                         Fsr::SceneArchiveContext::name  /*target_name*/);
 
@@ -909,8 +910,8 @@ GeoSceneGraphReader::_updateReaderUI()
         // Make sure scene file's been opened (this is fast for repeat calls):
         openSceneFile();
 
-        const std::set<std::string>& selected_paths = getObjectPathsForReader();
-        _updateSelectedObjectsMenu(selected_paths);
+        const std::set<std::string>& selected_object_paths = getObjectPathsForReader();
+        _updateSelectedObjectsMenu(selected_object_paths);
 
         m_reader_ui_hash = reader_ui_hash;
     }
@@ -1254,7 +1255,18 @@ GeoSceneGraphReader::_getGlobalTopologyVariance()
     // so that we set the global_topology_variance mask before _validate() gets called,
     // otherwise frame to frame read performance may be very bad.
     if (options->k_surface_mask && options->k_surface_mask[0] != 0)
+    {
+        // Aquire the archive context a minimum of times:
+        DD::Image::Hash reader_ui_hash = getReaderUIHash();
+        if (m_reader_ui_hash != reader_ui_hash)
+        {
+            // Make sure archive is up to date (this is *not* fast for repeat calls):
+            acquireSceneFileArchiveContext();
+            m_reader_ui_hash = reader_ui_hash;
+        }
+        // Make sure scene file's been opened (this is fast for repeat calls):
         openSceneFile();
+    }
 
     Fsr::GeoSceneFileArchiveContext* archive_ctx = sceneFileArchiveContext();
     if (archive_ctx)
@@ -1474,8 +1486,8 @@ GeoSceneGraphReader::acquireSceneFileArchiveContext()
                 //
                 std::vector<std::string>    populate_path_masks;    //!< Archive path population mask patterns
                 //
-                std::set<std::string>       selected_paths;         //!< List of enabled node paths
-                DD::Image::Hash             selected_paths_hash;    //!< Hash values of selected paths
+                Fsr::NodePathSelections     selected_node_paths;    //!< List of enabled(selected) node paths
+                DD::Image::Hash             selected_node_paths_hash;   //!< Hash values of selected node paths
                 //
                 std::string                 archive_context_id;     //!< Archive context identifier string
                 DD::Image::Hash             archive_context_hash;     //!< Hash value for archive cache
@@ -1516,8 +1528,8 @@ GeoSceneGraphReader::acquireSceneFileArchiveContext()
             //
             archive_ctx->populate_path_masks  = populate_path_masks;
             //
-            archive_ctx->selected_paths.clear();
-            archive_ctx->selected_paths_hash.reset();
+            archive_ctx->selected_node_paths.clear();
+            archive_ctx->selected_node_paths_hash.reset();
             //
             archive_ctx->archive_context_id   = "";
             archive_ctx->archive_context_hash = archive_hash;
@@ -1672,7 +1684,7 @@ GeoSceneGraphReader::_appendNodeContextArgs(Fsr::NodeContext& node_ctx)
     node_ctx.setString(Arg::Scene::file, filePathForReader());
 
     node_ctx.setHash(Arg::Scene::node_filter_hash,    archive_ctx->node_filter_hash.value()   );
-    node_ctx.setHash(Arg::Scene::node_selection_hash, archive_ctx->selected_paths_hash.value());
+    node_ctx.setHash(Arg::Scene::node_selection_hash, archive_ctx->selected_node_paths_hash.value());
 
     node_ctx.setString(Arg::Scene::file_archive_context_id,   archive_ctx->archive_context_id        );
     node_ctx.setHash(  Arg::Scene::file_archive_context_hash, archive_ctx->archive_context_hash.value());
@@ -1699,7 +1711,10 @@ GeoSceneGraphReader::_openSceneFile()
 {
     Fsr::GeoSceneFileArchiveContext* archive_ctx = sceneFileArchiveContext();
     if (!archive_ctx)
+    {
+        std::cerr << "  GeoSceneGraphReader(" << this << ")::_openSceneFile(): coding error - archive_ctx is NULL!" << std::endl;
         return true; // don't crash if reader hasn't been validated yet
+    }
 
     const GeoSceneGraphReaderFormat* options = dynamic_cast<GeoSceneGraphReaderFormat*>(geo->handler());
     const bool debug         = (options)?options->k_debug:false;
@@ -1752,8 +1767,8 @@ GeoSceneGraphReader::_openSceneFile()
             std::cerr << " scene file='" << filePathForReader() << "'";
             std::cerr << " note - not creating an archive context, no object paths specified" << std::endl;
         }
-        archive_ctx->selected_paths.clear();
-        archive_ctx->selected_paths_hash.append("<empty-paths>");
+        archive_ctx->selected_node_paths.clear();
+        archive_ctx->selected_node_paths_hash.append("<empty-paths>");
     }
     else
     {
@@ -1786,6 +1801,7 @@ GeoSceneGraphReader::_openSceneFile()
 
         Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuserIOClass(),                        /*node_class*/
                                                             node_ctx.args(),                       /*node_attribs*/
+                                                            NULL,                                  /*node-parent*/
                                                             target_ctx,                            /*target_context*/
                                                             Fsr::GeoSceneFileArchiveContext::name, /*target_name*/
                                                             &archive_ctx->archive_context_id,      /*target*/
@@ -1827,26 +1843,27 @@ GeoSceneGraphReader::_openSceneFile()
 
         // Get the selected paths up to date now so the archive isn't repeatedly
         // traversed in geometry_engine():
-        archive_ctx->selected_paths.clear();
-        archive_ctx->selected_paths_hash.reset();
+        archive_ctx->selected_node_paths.clear();
+        archive_ctx->selected_node_paths_hash.reset();
         _getSelectedNodePaths(archive_ctx->node_filter_patterns,
                               archive_ctx->node_filter_hash,
-                              archive_ctx->selected_paths,
-                              &archive_ctx->selected_paths_hash);
+                              archive_ctx->selected_node_paths,
+                              &archive_ctx->selected_node_paths_hash);
 
         // If there's objects to load prescan them to get their animation capabilites
         // so that we set the global_topology_variance mask before _validate() gets called,
         // otherwise frame to frame read performance may be *very* bad due to prims being
         // rebuilt:
+        const std::set<std::string>& object_paths = archive_ctx->selected_node_paths.objects;
 #if 0
         SceneGraphPrimitive* scene_prim = archive_ctx->getSceneGraphPrimitive();
         scene_prim->updateGlobalTopologyVariance();
 #else
         // TODO: for now we do an execute immediate which causes the node to be
         // created, executed, then destroyed. We should be caching the created
-        // nodes in the SceneGraphPrimitive so they can be reused.
-        for (std::set<std::string>::const_iterator it=archive_ctx->selected_paths.begin();
-                it != archive_ctx->selected_paths.end(); ++it)
+        // nodes in the SceneGraphPrimitive so they can be reused and/or searched
+        // for
+        for (std::set<std::string>::const_iterator it=object_paths.begin(); it != object_paths.end(); ++it)
         {
             Fsr::NodeContext node_ctx;
             Fsr::NodeContext target_ctx;
@@ -1865,6 +1882,7 @@ GeoSceneGraphReader::_openSceneFile()
             uint32_t topology_variance = Fsr::Node::ConstantTopology;
             Fsr::Node::executeImmediate(fuserIOClass(),                               /*node_class*/
                                         node_ctx.args(),                              /*node_attribs*/
+                                        NULL,                                         /*node-parent*/
                                         target_ctx,                                   /*target_context*/
                                         Arg::NukeGeo::node_topology_variance.c_str(), /*target_name*/
                                         &topology_variance                            /*target*/);
@@ -1935,6 +1953,7 @@ GeoSceneGraphReader::_getNodeDescriptions(const char*              file,
 
     Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuserIOClass(),               /*node_class*/
                                                         node_ctx.args(),              /*node_args*/
+                                                        NULL,                         /*node-parent*/
                                                         target_ctx,                   /*target_context*/
                                                         scene_node_descriptions.name, /*target_name*/
                                                         &scene_node_descriptions,     /*target*/
@@ -1969,7 +1988,7 @@ GeoSceneGraphReader::_getNodeDescriptions(const char*              file,
 
 
 /*! Get the list of object names(paths) to read in during geometry_engine.
-    Returns the current archive context's 'selected_paths' string set.
+    Returns the current archive context's 'selected_node_paths.objects' string set.
 */
 /*virtual*/
 const std::set<std::string>&
@@ -1977,9 +1996,39 @@ GeoSceneGraphReader::getObjectPathsForReader()
 {
     Fsr::GeoSceneFileArchiveContext* archive_ctx = sceneFileArchiveContext();
     if (archive_ctx)
-        return archive_ctx->selected_paths;
+        return archive_ctx->selected_node_paths.objects;
 
     return FuserGeoReader::getObjectPathsForReader(); // empty set
+}
+
+
+/*! Get the list of material names(paths) to read in during geometry_engine.
+    Returns the current archive context's 'selected_node_paths.materials' string set.
+*/
+/*virtual*/
+const std::set<std::string>&
+GeoSceneGraphReader::getMaterialPathsForReader()
+{
+    Fsr::GeoSceneFileArchiveContext* archive_ctx = sceneFileArchiveContext();
+    if (archive_ctx)
+        return archive_ctx->selected_node_paths.materials;
+
+    return FuserGeoReader::getMaterialPathsForReader(); // empty set
+}
+
+
+/*! Get the list of light names(paths) to read in during geometry_engine.
+    Returns the current archive context's 'selected_node_paths.lights' string set.
+*/
+/*virtual*/
+const std::set<std::string>&
+GeoSceneGraphReader::getLightPathsForReader()
+{
+    Fsr::GeoSceneFileArchiveContext* archive_ctx = sceneFileArchiveContext();
+    if (archive_ctx)
+        return archive_ctx->selected_node_paths.lights;
+
+    return FuserGeoReader::getLightPathsForReader(); // empty set
 }
 
 
@@ -1989,13 +2038,15 @@ GeoSceneGraphReader::getObjectPathsForReader()
 void
 GeoSceneGraphReader::_getSelectedNodePaths(const Fsr::NodeFilterPatternList& node_filter_patterns,
                                            const DD::Image::Hash&            node_filter_hash,
-                                           std::set<std::string>&            selected_paths,
+                                           Fsr::NodePathSelections&          selected_paths,
                                            DD::Image::Hash*                  selected_paths_hash)
 {
     //std::cout << "  GeoSceneGraphReader(" << this << ")::_getSelectedNodePaths()" << std::endl;
 
     // Don't bother if selected paths already filled in:
-    if (!selected_paths.empty() && selected_paths_hash && *selected_paths_hash != Fsr::defaultHashValue)
+    if (!selected_paths.isEmpty() &&
+        selected_paths_hash &&
+        *selected_paths_hash != Fsr::defaultHashValue)
         return;
 
     // Make sure selected_paths_hash is always non-zero after this:
@@ -2033,13 +2084,17 @@ GeoSceneGraphReader::_getSelectedNodePaths(const Fsr::NodeFilterPatternList& nod
         Fsr::NodeFilterPatternList* filter_patterns =
             const_cast<Fsr::NodeFilterPatternList*>(&node_filter_patterns);
 
-        // Save previous hash:
         selected_paths.clear();
+        Fsr::SelectedSceneNodePaths selections;
+        selections.node_path_selections = &selected_paths;
+
+        // Save previous hash:
         Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuserIOClass(),              /*node_class*/
                                                             node_ctx.args(),             /*node_args*/
+                                                            NULL,                        /*node-parent*/
                                                             target_ctx,                  /*target_context*/
                                                             Fsr::ScenePathFilters::name, /*target_name*/
-                                                            &selected_paths,             /*target*/
+                                                            &selections,                 /*target*/
                                                             filter_patterns              /*src0*/);
         if (err.state < 0)
         {

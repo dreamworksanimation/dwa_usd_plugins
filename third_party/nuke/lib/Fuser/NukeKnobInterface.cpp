@@ -31,6 +31,34 @@
 namespace Fsr {
 
 
+//--------------------------------------------------------------------------------------------------
+
+
+/*!
+*/
+void
+setKnobLabel(DD::Image::Knob* k,
+             const char*      label,
+             const char*      color)
+{
+    if (!k || !label)
+        return; // don't crash...
+
+    if (color && color[0])
+    {
+        // Set knob color via html tag wrapper:
+        char buf[2048];
+        snprintf(buf, 2048, "<font color = \"%s\">%s</font>", color, label);
+        k->label(buf);
+    }
+    else
+        k->label(label);
+}
+
+
+//--------------------------------------------------------------------------------------------------
+
+
 /*!
 */
 void
@@ -184,10 +212,10 @@ storeArrayOfDoublesInKnob(const double*                   values,
 void
 storeDoublesInKnob(DD::Image::Knob*        k,
                    const ArrayKnobDoubles& vals,
-                   int                     knob_index_start,
+                   int                     element_offset,
                    int                     view)
 {
-    storeDoublesInKnob(k, vals.values, vals.doubles_per_value, vals.times, knob_index_start, view);
+    storeDoublesInKnob(k, vals.values, vals.doubles_per_value, vals.times, element_offset, view);
 }
 
 
@@ -198,80 +226,80 @@ storeDoublesInKnob(DD::Image::Knob*           k,
                    const std::vector<double>& values,
                    int                        doubles_per_value,
                    const std::vector<double>& times,
-                   int                        knob_index_start,
+                   int                        element_offset,
                    int                        view)
 {
     if (!k || doubles_per_value <= 0 || values.size() < (size_t)doubles_per_value)
         return; // don't bother...
 
     const int nKnobDoubles = getNumKnobDoubles(k);
-    if (nKnobDoubles == 0 || knob_index_start >= nKnobDoubles)
+    if (nKnobDoubles == 0 || element_offset >= nKnobDoubles)
         return; // don't bother...
 
-    if (knob_index_start < 0)
-        knob_index_start = 0;
+    if (element_offset < 0)
+        element_offset = 0;
     // Clamp the number of doubles to copy:
-    const int nCopyDoubles = ((knob_index_start + doubles_per_value) >= nKnobDoubles) ?
-                                (nKnobDoubles - knob_index_start) : doubles_per_value;
+    const int nCopyDoubles = ((element_offset + doubles_per_value) >= nKnobDoubles) ?
+                                (nKnobDoubles - element_offset) : doubles_per_value;
 
     const bool is_animated = (Fsr::isAnimated(times) && times.size() == (values.size()*doubles_per_value));
 
     if (view < 0)
     {
         // No view:
-        for (int i=knob_index_start; i < nCopyDoubles; ++i)
-            k->clear_animated(i/*index*/); // clear any existing keys
+        for (int i=0; i < nCopyDoubles; ++i)
+            k->clear_animated(element_offset+i/*index*/); // clear any existing keys
 
         if (is_animated)
         {
             // Enable animation on channels:
-            for (int i=knob_index_start; i < nCopyDoubles; ++i)
-                k->set_animated(i/*index*/);
+            for (int i=0; i < nCopyDoubles; ++i)
+                k->set_animated(element_offset+i/*index*/);
 
             // Set keys:
             for (size_t j=0; j < values.size(); j+=doubles_per_value)
             {
                 const double t = times[j];
                 size_t vi = j;
-                for (int i=knob_index_start; i < nCopyDoubles; ++i)
-                    k->set_value_at(values[vi++], t, i/*index*/);
+                for (int i=0; i < nCopyDoubles; ++i)
+                    k->set_value_at(values[vi++], t, element_offset+i/*index*/);
             }
         }
         else
         {
             // Set a uniform value:
             size_t vi = 0;
-            for (int i=knob_index_start; i < nCopyDoubles; ++i)
-                k->set_value(values[vi++], i/*index*/);
+            for (int i=0; i < nCopyDoubles; ++i)
+                k->set_value(values[vi++], element_offset+i/*index*/);
         }
     }
     else
     {
         // Set doubles at a particular view:
-        for (int i=knob_index_start; i < nCopyDoubles; ++i)
-            k->clear_animated_view(view, i/*index*/); // clear any existing keys
+        for (int i=0; i < nCopyDoubles; ++i)
+            k->clear_animated_view(view, element_offset+i/*index*/); // clear any existing keys
 
         if (is_animated)
         {
             // Enable animation on channels:
-            for (int i=knob_index_start; i < nCopyDoubles; ++i)
-                k->set_animated_view(view, i/*index*/);
+            for (int i=0; i < nCopyDoubles; ++i)
+                k->set_animated_view(view, element_offset+i/*index*/);
 
             // Set keys:
             for (size_t j=0; j < values.size(); j+=doubles_per_value)
             {
                 const double t = times[j];
                 size_t vi = j;
-                for (int i=knob_index_start; i < nCopyDoubles; ++i)
-                    k->set_value_at_view(values[vi++], t, view, i/*index*/);
+                for (int i=0; i < nCopyDoubles; ++i)
+                    k->set_value_at_view(values[vi++], t, view, element_offset+i/*index*/);
             }
         }
         else
         {
             // Set a uniform value:
             size_t vi = 0;
-            for (int i=knob_index_start; i < nCopyDoubles; ++i)
-                k->set_value_at_view(values[vi++], 0.0, view, i/*index*/); // need dummy 0.0 time...?
+            for (int i=0; i < nCopyDoubles; ++i)
+                k->set_value_at_view(values[vi++], 0.0, view, element_offset+i/*index*/); // need dummy 0.0 time...?
         }
     }
 }

@@ -104,6 +104,19 @@ struct FSR_EXPORT SceneNodeDescriptions
 };
 
 
+/*! A structure to get/set a selection set of node paths.
+*/
+struct FSR_EXPORT SelectedSceneNodePaths
+{
+    static const char* name; // "SelectedSceneNodePaths" (defined in Node.cpp)
+
+    Fsr::NodePathSelections*    node_path_selections;   //!< List of selected node paths
+
+    //! Ctor sets everything to invalid values.
+    SelectedSceneNodePaths() : node_path_selections(NULL) {}
+};
+
+
 //-------------------------------------------------------------------------
 
 
@@ -114,11 +127,11 @@ struct FSR_EXPORT SceneOpImportContext
     static const char* name; // "SceneOpImport" (defined in Node.cpp)
 
     DD::Image::Op*              op;         //!< AxisOp, Iop, GeoOp, CameraOp, LightOp, etc.
-    DD::Image::OutputContext*   op_ctx;     //!< OutputContext to evaluate Op at
+    DD::Image::OutputContext    op_ctx;     //!< OutputContext to evaluate Op at
 
     //! Ctor sets everything to invalid values.
-    SceneOpImportContext(DD::Image::Op*            _op,
-                         DD::Image::OutputContext* _op_ctx) : op(_op), op_ctx(_op_ctx) {}
+    SceneOpImportContext(DD::Image::Op*                  _op,
+                         const DD::Image::OutputContext& _op_ctx) : op(_op), op_ctx(_op_ctx) {}
 };
 
 
@@ -135,6 +148,45 @@ struct FSR_EXPORT PrimitiveViewerContext
     //! Ctor sets everything to invalid values.
     PrimitiveViewerContext(DD::Image::ViewerContext*    _vtx,
                            DD::Image::PrimitiveContext* _ptx) : vtx(_vtx), ptx(_ptx) {}
+};
+
+
+//-------------------------------------------------------------------------
+
+
+/*! Node execution context structure passed as target data to Fsr::Node::execute()
+    methods, containing generic mesh tessellation data, allowing for n numbers
+    of float, Vec2, Vec3, and Vec4 vertex attribs to be passed and interpolated.
+
+    TODO: turn the vert attrib ptrs into Fsr::Attribute ptrs so there's
+          more info about each one, like their names. However this much
+          info probably not needed for simple subdivision purposes.
+
+*/
+struct FSR_EXPORT MeshTessellateContext
+{
+    static const char* name; // "MeshTessellate"
+
+    Fsr::Uint32List*             verts_per_face;        //!< Face vert count, may not be required
+    Fsr::Uint32List*             vert_position_indices; //!< Per-vertex position indices
+    bool                         all_quads;             //!< Indicates that all faces are quads
+    bool                         all_tris;              //!< Indicates that all faces are triangles
+    // Per-point rate:
+    std::vector<Fsr::Vec3fList*> position_lists;        //!< Per-point positions data lists (motion samples)
+    // Per-vertex rate:
+    std::vector<Fsr::FloatList*> vert_float_attribs;    //!< Arbitrary per-vertex float data lists
+    std::vector<Fsr::Vec2fList*> vert_vec2_attribs;     //!< Arbitrary per-vertex Fsr::Vec2 data lists
+    std::vector<Fsr::Vec3fList*> vert_vec3_attribs;     //!< Arbitrary per-vertex Fsr::Vec3 data lists
+    std::vector<Fsr::Vec4fList*> vert_vec4_attribs;     //!< Arbitrary per-vertex Fsr::Vec4 data lists
+
+    MeshTessellateContext() :
+        verts_per_face(NULL),
+        vert_position_indices(NULL),
+        all_quads(false),
+        all_tris(false)
+    {
+        //
+    }
 };
 
 

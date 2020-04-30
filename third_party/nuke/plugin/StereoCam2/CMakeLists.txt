@@ -11,3 +11,10 @@ pxr_plugin(${PXR_PACKAGE}
     CPPFILES
         StereoCam2.cpp
 )
+
+install(
+    FILES
+        stereocam2_support.py
+    DESTINATION
+        ${PXR_INSTALL_SUBDIR}/plugin
+)

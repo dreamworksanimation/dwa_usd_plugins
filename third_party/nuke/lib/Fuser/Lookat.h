@@ -50,10 +50,10 @@ namespace Fsr {
 
 //-------------------------------------------------------------------------
 
-/*! Interface class providing lookat functionality.
+/*! Interface class providing lookat aim-constraint functionality.
 
 */
-class FSR_EXPORT Lookat
+class FSR_EXPORT LookatVals
 {
   public:
     enum { USE_VECTORS, USE_QUATS };        //!< Rotation calculation methods.
@@ -61,26 +61,55 @@ class FSR_EXPORT Lookat
 
 
   public:
-    bool   k_lookat_enable;     //!< Global enable
-    int    k_lookat_axis;       //!< Axis to align
-    bool   k_lookat_do_rx;      //!< Enable X lookat rotation
-    bool   k_lookat_do_ry;      //!< Enable Y lookat rotation
-    bool   k_lookat_do_rz;      //!< Enable Z lookat rotation
-    int    k_lookat_method;     //!< Which method to use - vectors or quaternions
-    double k_lookat_mix;        //!< Lookat mix
+    bool       k_lookat_enable;     //!< Global enable
+    int        k_lookat_axis;       //!< Axis to align
+    bool       k_lookat_do_rx;      //!< Enable X lookat rotation
+    bool       k_lookat_do_ry;      //!< Enable Y lookat rotation
+    bool       k_lookat_do_rz;      //!< Enable Z lookat rotation
+    bool       k_lookat_use_point;  //!< Use the user-specified point rather than the input connection
+    Fsr::Vec3f k_lookat_point;      //!< User-assigned world-space lookat point
+    bool       k_lookat_method;     //!< Which method to use - vectors(false) or quaternions(true)
+    double     k_lookat_mix;        //!< Lookat mix
 
 
   public:
-    Lookat();
+    //!
+    LookatVals();
+    //! Extracts values from an Op at a specific OutputContext.
+    LookatVals(const DD::Image::Op*            op,
+               const DD::Image::OutputContext& context) { getValsAt(op, context); }
 
+    //! Assigns standard default values to all params.
+    void setToDefault();
 
-    /*! */
+    //!
     void addLookatKnobs(DD::Image::Knob_Callback f,
-                        const char*              label="lookat");
+                        const char*              label="aim_constraint");
 
-    /*!
-    */
+    //!
     void appendLookatHash(DD::Image::Hash& hash) const;
+
+    //!
+    int  knobChanged(const DD::Image::Op* op,
+                     DD::Image::Knob*     k);
+
+    //!
+    void enableLookatKnobs(const DD::Image::Op* op,
+                           bool                 lookat_enabled);
+
+    //!
+    bool getValsAt(const DD::Image::Op*            op,
+                   const DD::Image::OutputContext& context);
+
+    //!
+    static bool store(DD::Image::Op* op,
+                      LookatVals     vals);
+
+
+
+    //!
+    Fsr::Mat4d getLookatXform(const Fsr::Mat4d& parent_matrix,
+                              const Fsr::Mat4d& local_matrix);
 
 
     /*! Assumes a normalized quaternion and an output rotation of ZXY.
@@ -97,8 +126,7 @@ class FSR_EXPORT Lookat
     */
     bool lookatPoint(const Fsr::Vec3d& P,
                      const Fsr::Vec3d& lookatP,
-                     bool              use_quats,
-                     Fsr::Vec3d&       rotations);
+                     Fsr::Vec3d&       rotations) const;
 
 
     /*! Calculate rotations to align with direction vector.
@@ -126,8 +154,8 @@ class FSR_EXPORT Lookat
 
 template <typename T>
 /*static*/ inline void
-Lookat::quatToRotations(const DD::Image::Quaternion& quat,
-                        Fsr::Vec3<T>&                rotations)
+LookatVals::quatToRotations(const DD::Image::Quaternion& quat,
+                            Fsr::Vec3<T>&                rotations)
 {
     const double tilt = quat.vx*quat.vy + quat.vz*quat.s;
     if (tilt > 0.4999)
@@ -157,25 +185,28 @@ Lookat::quatToRotations(const DD::Image::Quaternion& quat,
 }
 
 /*static*/ inline bool
-Lookat::vectorToRotations(int                method,
-                          const Fsr::Vec3d&  dir_vec,
-                          Fsr::AxisDirection align_axis,
-                          bool               do_rx,
-                          bool               do_ry,
-                          bool               do_rz,
-                          double             lookat_strength,
-                          Fsr::Vec3d&        rotations)
+LookatVals::vectorToRotations(int                method,
+                              const Fsr::Vec3d&  dir_vec,
+                              Fsr::AxisDirection align_axis,
+                              bool               do_rx,
+                              bool               do_ry,
+                              bool               do_rz,
+                              double             lookat_strength,
+                              Fsr::Vec3d&        rotations)
 {
-    Fsr::Vec3d dir(dir_vec);
-    const double len = dir.normalize();
-    if (lookat_strength <= 0.0 || len < std::numeric_limits<double>::epsilon())
-        return false; // can't perform lookat
-
-    Fsr::Vec3d look_rotations(0.0);
+    if (lookat_strength <= 0.0)
+        return false; // don't bother
 
     // Which technique do we use?
     if (method == USE_QUATS)
     {
+        Fsr::Vec3d dir(dir_vec);
+        const double len = dir.normalize();
+        if (len < std::numeric_limits<double>::epsilon())
+            return false; // can't perform lookat
+
+        Fsr::Vec3d look_rotations(0.0);
+
         // Use quaternions:
         DD::Image::Vector3 startv;
         switch (align_axis)
@@ -201,60 +232,32 @@ Lookat::vectorToRotations(int                method,
         }
         else
            quatToRotations(rotation_quat, look_rotations);
+
+        if (do_rx) rotations.x = look_rotations.x;
+        if (do_ry) rotations.y = look_rotations.y;
+        if (do_rz) rotations.z = look_rotations.z;
 #endif
     }
     else
     {
-        // Use vector math.
-        // We calculate the primary rotation first then the second, and which rotation axis we
-        // change is determined by the align axis:
-        double d;
-        switch (align_axis)
-        {
-        case Fsr::AXIS_X_MINUS:
-            if (do_ry) { look_rotations.y = ::atan2(-dir.z, dir.x); d = std::sqrt(dir.z*dir.z + dir.x*dir.x); } else { d =  dir.x; }
-            if (do_rz) { look_rotations.z = ::atan2( dir.y, d); }
-            break;
-        case Fsr::AXIS_X_PLUS:
-            if (do_ry) { look_rotations.y = ::atan2( dir.z,-dir.x); d = std::sqrt(dir.z*dir.z + dir.x*dir.x); } else { d = -dir.x; }
-            if (do_rz) { look_rotations.z =-::atan2( dir.y, d); }
-            break;
-        //
-        case Fsr::AXIS_Y_MINUS:
-            if (do_rx) { look_rotations.x = ::atan2( dir.z, dir.y); d = std::sqrt(dir.z*dir.z + dir.y*dir.y); } else { d =  dir.y; }
-            if (do_rz) { look_rotations.z =-::atan2( dir.x, d); }
-            break;
-        case Fsr::AXIS_Y_PLUS:
-            if (do_rx) { look_rotations.x = ::atan2(-dir.z,-dir.y); d = std::sqrt(dir.z*dir.z + dir.y*dir.y); } else { d = -dir.y; }
-            if (do_rz) { look_rotations.z = ::atan2( dir.x, d); }
-            break;
-        //
-        case Fsr::AXIS_Z_MINUS:
-            if (do_ry) { look_rotations.y = ::atan2( dir.x, dir.z); d = std::sqrt(dir.x*dir.x + dir.z*dir.z); } else { d =  dir.z; }
-            if (do_rx) { look_rotations.x =-::atan2( dir.y, d); }
-            break;
-        case Fsr::AXIS_Z_PLUS:
-            if (do_ry) { look_rotations.y = ::atan2(-dir.x,-dir.z); d = std::sqrt(dir.x*dir.x + dir.z*dir.z); } else { d = -dir.z; }
-            if (do_rx) { look_rotations.x = ::atan2( dir.y, d); }
-            break;
-        }
+        // Use vector math:
+        Fsr::Vec3d look_rotations(0.0);
+        Fsr::Mat4d::vectorToRotations(dir_vec, align_axis, do_rx, do_ry, do_rz, look_rotations);
         look_rotations.toDegrees();
-    }
-
-    if (lookat_strength < 1.0f)
-    {
-        // Interpolate between parent rotation and look rotation:
-        if (do_rx) rotations.x = ::lerp(rotations.x, look_rotations.x, lookat_strength);
-        if (do_ry) rotations.y = ::lerp(rotations.y, look_rotations.y, lookat_strength);
-        if (do_rz) rotations.z = ::lerp(rotations.z, look_rotations.z, lookat_strength);
-
-    }
-    else
-    {
-        // Max rotations:
-        if (do_rx) rotations.x = look_rotations.x;
-        if (do_ry) rotations.y = look_rotations.y;
-        if (do_rz) rotations.z = look_rotations.z;
+        if (lookat_strength < 1.0f)
+        {
+            // Interpolate between parent rotation and look rotation:
+            if (do_rx) rotations.x = ::lerp(rotations.x, look_rotations.x, lookat_strength);
+            if (do_ry) rotations.y = ::lerp(rotations.y, look_rotations.y, lookat_strength);
+            if (do_rz) rotations.z = ::lerp(rotations.z, look_rotations.z, lookat_strength);
+        }
+        else
+        {
+            // Use max rotations:
+            if (do_rx) rotations.x = look_rotations.x;
+            if (do_ry) rotations.y = look_rotations.y;
+            if (do_rz) rotations.z = look_rotations.z;
+        }
     }
 
     return true;
@@ -265,10 +268,9 @@ Lookat::vectorToRotations(int                method,
     Return true if rotations have been affected.
 */
 inline bool
-Lookat::lookatPoint(const Fsr::Vec3d& P,
-                    const Fsr::Vec3d& lookatP,
-                    bool              use_quats,
-                    Fsr::Vec3d&       rotations)
+LookatVals::lookatPoint(const Fsr::Vec3d& P,
+                        const Fsr::Vec3d& lookatP,
+                        Fsr::Vec3d&       rotations) const
 {
    if (!k_lookat_enable || k_lookat_mix <= 0.0)
         return false;

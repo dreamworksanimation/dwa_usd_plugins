@@ -50,6 +50,7 @@ pxr_plugin(${PXR_PACKAGE}
         FuserUsdNode.cpp
         FuserUsdShader.cpp
         FuserUsdXform.cpp
+        FuserUsdXformableNode.cpp
 )
 
 install(
@@ -57,6 +58,7 @@ install(
         fsrUsdaIO.tcl
         fsrUsdcIO.tcl
         fsrUsdzIO.tcl
+        fsrAbcIO.tcl
     DESTINATION
         ${PXR_INSTALL_SUBDIR}/plugin
 )

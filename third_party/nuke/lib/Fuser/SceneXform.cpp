@@ -115,70 +115,6 @@ class WorldMatrixProvider : public DD::Image::ArrayKnobI::ValueProvider
 /*extern*/ const char* rotation_orders[] = { "XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX", 0 };
 
 
-//-----------------------------------------
-
-
-// These match the strings in DD::Image::LookAt so Enumeration_Knobs using these
-// save the same thing as stock Nuke:
-/*static*/ const char* const Lookat::method_list[] = { "vectors", "quaternions", 0 };
-
-
-/*!
-*/
-Lookat::Lookat() :
-    k_lookat_enable(true),
-    k_lookat_axis((int)Fsr::AXIS_Z_PLUS),
-    k_lookat_do_rx(true),
-    k_lookat_do_ry(true),
-    k_lookat_do_rz(true),
-    k_lookat_method(USE_VECTORS),
-    k_lookat_mix(1.0)
-{
-    //
-}
-
-
-/*!
-*/
-void
-Lookat::addLookatKnobs(DD::Image::Knob_Callback f,
-                       const char*              label)
-{
-    //DD::Image::Text_knob(f, label);
-    DD::Image::Bool_knob(f, &k_lookat_enable, "lookat_enable", "enable");
-    DD::Image::Bool_knob(f, &k_lookat_do_rx, "lookat_rx", "x rot");
-    DD::Image::Bool_knob(f, &k_lookat_do_ry, "lookat_ry", "y rot");
-    DD::Image::Bool_knob(f, &k_lookat_do_rz, "lookat_rz", "z rot");
-    //
-    DD::Image::Enumeration_knob(f, &k_lookat_method, method_list, "lookat_method", "method");
-        DD::Image::SetFlags(f, DD::Image::Knob::STARTLINE);
-    DD::Image::Enumeration_knob(f, &k_lookat_axis, axis_directions, "lookat_align_axis", "align axis");
-        DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
-        DD::Image::Tooltip(f, "Selects which axis points towards the lookat point.");
-    //
-    DD::Image::Double_knob(f, &k_lookat_mix, "lookat_mix", "mix");
-        DD::Image::SetFlags(f, DD::Image::Knob::STARTLINE | DD::Image::Knob::NO_MULTIVIEW);
-        DD::Image::SetFlags(f, DD::Image::Knob::NO_MULTIVIEW);
-        DD::Image::Tooltip(f, "How much the lookat rotations affect the output rotations.");
-}
-
-
-/*!
-*/
-void
-Lookat::appendLookatHash(DD::Image::Hash& hash) const
-{
-    if (!k_lookat_enable)
-        return;
-    hash.append(k_lookat_axis);
-    hash.append(k_lookat_do_rx);
-    hash.append(k_lookat_do_ry);
-    hash.append(k_lookat_do_rz);
-    hash.append(k_lookat_method);
-    hash.append(k_lookat_mix);
-}
-
-
 //------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------
 
@@ -192,7 +128,6 @@ const char* SceneXformRTTIKnob = "FsrSceneXform";
 */
 SceneXform::SceneXform() :
     SceneOpExtender(),
-    m_input_xform(NULL),
     kParentTranslate(NULL),
     kParentRotate(NULL),
     kParentScale(NULL),
@@ -298,6 +233,7 @@ SceneXform::testInput(int             input,
         DD::Image::AxisOp* axis = dynamic_cast<DD::Image::AxisOp*>(op);
         if (axis)
             return true;
+
         // TODO: allow lookat to support objects in GeometryList!
         //DD::Image::GeoOp* geo = dynamic_cast<DD::Image::GeoOp*>(op);
         //if (geo)
@@ -337,7 +273,7 @@ SceneXform::inputLabel(int   input,
     const int lookat_input = lookatInput();
 
     if (input == parent_input)
-        return "parent";
+        return "axis";
     else if (input == lookat_input)
         return "look";
 
@@ -367,7 +303,7 @@ SceneXform::_addOpTransformKnobs(DD::Image::Knob_Callback f,
     // Add our double-precision Fsr::AxisKnob which calculates a parallel double-precision
     // matrix from the same child knobs as the stock Axis_knob. This relies on the
     // DD::Image::Axis_knob macro being called out separately:
-    kFsrAxisKnob = static_cast<Fsr::AxisKnobWrapper*>(Fsr::AxisKnobWrapper_knob(f, &m_local_matrix, SceneXformRTTIKnob));
+    kFsrAxisKnob = static_cast<Fsr::AxisKnobWrapper*>(Fsr::AxisKnobWrapper_knob(f, &m_xform_matrix, SceneXformRTTIKnob));
 }
 
 
@@ -522,18 +458,12 @@ SceneXform::addLookatKnobs(DD::Image::Knob_Callback f)
 {
     //std::cout << "  SceneXform::addLookatKnobs() makeKnobs=" << f.makeKnobs() << std::endl;
 
-    //DD::Image::Divider(f, "@b;Lookat Constraint");
+    //DD::Image::Divider(f, "@b;Aim (Look) Constraint");
     //----------------------------------------
-    DD::Image::BeginGroup(f, "lookat", "@b;Lookat Constraint");
+    DD::Image::BeginGroup(f, "lookat", "@b;Aim (Look) Constraint");
     {
-        //if (m_group_open)
-        //    DD::Image::ClearFlags(f, DD::Image::Knob::CLOSED);
-        //else
-        //    DD::Image::SetFlags(f, DD::Image::Knob::CLOSED);
-        DD::Image::ClearFlags(f, DD::Image::Knob::CLOSED);
-        //DD::Image::SetFlags(f, DD::Image::Knob::CLOSED);
-
-        m_lookat.addLookatKnobs(f, "lookat"/*label*/);
+        DD::Image::SetFlags(f, DD::Image::Knob::CLOSED);
+        m_lookat.addLookatKnobs(f, "aim_constraint"/*label*/);
     }
     DD::Image::EndGroup(f);
     //----------------------------------------
@@ -551,13 +481,12 @@ SceneXform::knobChanged(DD::Image::Knob* k,
                         int              call_again)
 {
     //std::cout << "SceneXform::knobChanged('" << k->name() << "')" << std::endl;
-#if 0
-
     DD::Image::Op* op = sceneOp();
 #ifdef DEBUG
     assert(op);
 #endif
 
+#if 0
     if (k == &DD::Image::Knob::showPanel)
     {
         const int parent_input = parentingInput();
@@ -582,6 +511,10 @@ SceneXform::knobChanged(DD::Image::Knob* k,
 
     }
 #endif
+
+    int ca = m_lookat.knobChanged(op, k);
+    if (ca)
+        return ca;
 
     return call_again;
 }
@@ -661,7 +594,7 @@ SceneXform::enableSceneXformExtraKnobs(bool read_enabled)
         bool    inversion_updated;  //!< Whether imatrix_ is valid
 */
 void
-SceneXform::_validateAxisOpMatrices(bool for_real,
+SceneXform::_validateAxisOpMatrices(bool                for_real,
                                     DD::Image::Matrix4* localtransform,
                                     DD::Image::Matrix4* local,
                                     DD::Image::Matrix4* matrix,
@@ -678,17 +611,19 @@ SceneXform::_validateAxisOpMatrices(bool for_real,
 #ifdef DEBUG
     assert(op);
 #endif
+    if (op->node_disabled())
+        return; // don't bother...
+
+    //std::cout << "-------------------------------------------------------" << std::endl;
     //std::cout << "SceneXform('" << op->node_name() << "' " << this << ")::_validateAxisOpMatrices()";
     //std::cout << " frame=" << op->outputContext().frame() << ", view=" << op->outputContext().view() << std::endl;
 
     // This logic is also implemented in getInputParentTransformAt(), but this
-    // one assumes the input Op has the same OutputContext, and also gets
-    // m_input_xform pointer:
+    // one assumes the input Op has the same OutputContext:
     const int parent_input = parentingInput();
     if (parent_input < 0)
     {
         // Locally defined parent source
-        m_input_xform = NULL;
         m_input_matrix.setToIdentity();
         // TODO: what to do here? Likely need to call a virtual function on subclass.
     }
@@ -698,10 +633,10 @@ SceneXform::_validateAxisOpMatrices(bool for_real,
         if (parent_axis)
         {
             parent_axis->validate(for_real);
-            m_input_xform = asSceneXform(parent_axis);
-            //std::cout << "  parent='" << op->input(parent_input)->node_name() << "' m_input_xform=" << m_input_xform << std::endl;
-            if (m_input_xform)
-                m_input_matrix = m_input_xform->getWorldTransform();
+            const SceneXform* input_xform = asSceneXform(parent_axis);
+            //std::cout << "  parent='" << op->input(parent_input)->node_name() << "' input_xform=" << input_xform << std::endl;
+            if (input_xform)
+                m_input_matrix = input_xform->getWorldTransform();
             else
                 m_input_matrix = Fsr::Mat4d(parent_axis->matrix()); // single-precision parent
         }
@@ -709,27 +644,30 @@ SceneXform::_validateAxisOpMatrices(bool for_real,
             m_input_matrix.setToIdentity();
     }
 
+    m_world_matrix = m_input_matrix;
+
     // Extract the local transform from the Axis_Knob knobs, build the parent
     // transform and lookat rotations, then produce double-precision matrices
     // from the lot to use:
     m_parent_matrix = getParentConstraintTransformAt(op->outputContext());
-    m_local_matrix  = getLocalTransformAt(op->outputContext());
-#if 0
-    applyLookatTransformAt(concat_matrix, op->outputContext());
-#endif
-
-    m_world_matrix =  m_input_matrix;
     m_world_matrix *= m_parent_matrix;
+
+    // ** m_xform_matrix is filled in by AxisKnobWrapper **
+
+    // Lookat function uses the local xform to get the world-space P
+    // locale, then builds a translation + rotation matrix:
+    m_local_matrix = getLocalTransformWithLookatAt(m_world_matrix, op->outputContext());
     m_world_matrix *= m_local_matrix;
 
     // Update the single-precision matrices in the AxisOp base class:
-    m_local_matrix.toDDImage(*localtransform); // overwrite AxisKnob...?
+    m_xform_matrix.toDDImage(*localtransform); // overwrite AxisKnob...?
     m_local_matrix.toDDImage(*local); // (with lookat)
     m_world_matrix.toDDImage(*matrix);
     *inversion_updated = false; // invalidate the inverted matrix.
 
     //std::cout << "    input_matrix" << m_input_matrix  << std::endl;
     //std::cout << "   parent_matrix" << m_parent_matrix << std::endl;
+    //std::cout << "    xform_matrix" << m_xform_matrix  << std::endl;
     //std::cout << "    local_matrix" << m_local_matrix  << std::endl;
     //std::cout << "    world_matrix" << m_world_matrix  << std::endl;
     //std::cout << " localtransform_" << *localtransform << std::endl;
@@ -740,7 +678,7 @@ SceneXform::_validateAxisOpMatrices(bool for_real,
 }
 
 
-/*! Builds the input transform matrix.
+/*! Builds the input transform matrix at a specific OutputContext.
     Will be identity if no input.
 */
 /*virtual*/
@@ -762,16 +700,16 @@ SceneXform::getInputParentTransformAt(const DD::Image::OutputContext& context) c
 #ifdef DEBUG
     assert(op);
 #endif
-    op->validate(false); // make sure m_input_xform is up to date
 
     DD::Image::AxisOp* parent_axis = dynamic_cast<DD::Image::AxisOp*>(op->input(parent_input));
     if (parent_axis)
     {
-        //std::cout << "    parent='" << parent_axis->node_name() << "' m_input_xform=" << m_input_xform << std::endl;
-
+        parent_axis->validate(false);
+        const SceneXform* input_xform = asSceneXform(parent_axis);
+        //std::cout << "    parent='" << parent_axis->node_name() << "' input_xform=" << input_xform << std::endl;
         // Check if input is a SceneXform and access the double-precision methods:
-        if (m_input_xform)
-            return m_input_xform->getWorldTransformAt(context);
+        if (input_xform)
+            return input_xform->getWorldTransformAt(context);
 
         // Single-precision parent:
         DD::Image::Matrix4 m; parent_axis->matrixAt(context, m);
@@ -782,7 +720,8 @@ SceneXform::getInputParentTransformAt(const DD::Image::OutputContext& context) c
 }
 
 
-/*! Builds the local parent transform matrix from the parent knobs.
+/*! Builds the local parent transform matrix from the parent knobs
+    at a specific OutputContext.
 */
 /*virtual*/
 Fsr::Mat4d
@@ -796,20 +735,20 @@ SceneXform::getParentConstraintTransformAt(const DD::Image::OutputContext& conte
     // Transform order is always SRT for parent contraint:
     if (kParentTranslate)
     {
-        Fsr::Vec3d translate;
+        Fsr::Vec3d translate(0.0);
         getVec3Knob(kParentTranslate, context, translate);
         m.translate(translate);
     }
     if (kParentRotate)
     {
         // Rotation order is always XYZ for parent contraint:
-        Fsr::Vec3d rotate;
+        Fsr::Vec3d rotate(0.0);
         getVec3Knob(kParentRotate, context, rotate);
         m.rotate(Fsr::XYZ_ORDER, rotate.asRadians());
     }
     if (kParentScale)
     {
-        Fsr::Vec3d scale;
+        Fsr::Vec3d scale(1.0);
         getVec3Knob(kParentScale, context, scale);
         m.scale(scale);
     }
@@ -818,7 +757,8 @@ SceneXform::getParentConstraintTransformAt(const DD::Image::OutputContext& conte
 }
 
 
-/*! Builds the local transform matrix.
+/*! Builds the local 'xform' transform matrix from the AxisKnobWrapper knobs
+    at a specific OutputContext.
     Does not include lookat rotations. 
 */
 /*virtual*/
@@ -826,10 +766,16 @@ Fsr::Mat4d
 SceneXform::getLocalTransformAt(const DD::Image::OutputContext& context) const
 {
     //std::cout << "  SceneXform('" << const_cast<SceneXform*>(this)->sceneOp()->node_name() << "' " << this << ")::getLocalTransformAt()" << std::endl;
+    DD::Image::Op* op = const_cast<SceneXform*>(this)->sceneOp();
+#ifdef DEBUG
+    assert(op);
+#endif
+    if (op->node_disabled())
+        return Fsr::Mat4d::getIdentity(); // don't bother...
+
     // Just in case, shouldn't happen but don't crash...
     if (!kFsrAxisKnob)
     {
-        DD::Image::Op* op = const_cast<SceneXform*>(this)->sceneOp();
         std::cerr << "SceneXform('" << op->node_name() << "' " << this << ")::getLocalTransformAt()";
         std::cerr << " warning, kFsrAxisKnob is NULL, likely due to a coding error." << std::endl;
         return Fsr::Mat4d::getIdentity();
@@ -839,26 +785,61 @@ SceneXform::getLocalTransformAt(const DD::Image::OutputContext& context) const
 }
 
 
-/*! Modifes matrix with lookat function applied.
-    Requires concatendated world transform up to local matrix to find vector origin.
-    Make sure the OutputContexts match.
+/*! Build the local xform with lookat applied at a specific OutputContext.
+    Requires world transform up to local matrix (ie the parent xform) to find vector origin.
 
-    Returns true if lookat was applied.
+    It first resolves the local xform to find the translation of the matrix then calculates
+    the lookat rotations from that to the lookat point which may come from the input
+    connection or user value.
+
+    Make sure the OutputContext matches the one used to get the parent matrix!
 */
 /*virtual*/
-bool
-SceneXform::applyLookatTransformAt(Fsr::Mat4d&                     concat_matrix,
-                                   const DD::Image::OutputContext& context) const
+Fsr::Mat4d
+SceneXform::getLocalTransformWithLookatAt(const Fsr::Mat4d&               parent_matrix,
+                                          const DD::Image::OutputContext& context,
+                                          Fsr::Mat4d*                     xform_matrix) const
 {
-#if 1
-    return false;
-#else
-    const int lookat_input = this->lookatInput();
+    //std::cout << "SceneXform('" << const_cast<SceneXform*>(this)->sceneOp()->node_name() << "' " << this << ")::getLookatTransformAt()" << std::endl;
+    DD::Image::Op* op = const_cast<SceneXform*>(this)->sceneOp();
+#ifdef DEBUG
+    assert(op);
+#endif
+    if (op->node_disabled())
+    {
+        if (xform_matrix)
+            xform_matrix->setToIdentity();
+        return Fsr::Mat4d::getIdentity(); // don't bother...
+    }
 
-    Fsr::Vec3d xformP;
+    // Just in case, shouldn't happen but don't crash...
+    if (!kFsrAxisKnob)
+    {
+        std::cerr << "SceneXform('" << op->node_name() << "' " << this << ")::getLocalTransformWithLookatAt()";
+        std::cerr << " warning, kFsrAxisKnob is NULL, likely due to a coding error." << std::endl;
+        if (xform_matrix)
+            xform_matrix->setToIdentity();
+        return Fsr::Mat4d::getIdentity();
+    }
+
+    Fsr::AxisKnobVals axis_vals;
+    kFsrAxisKnob->getValsAt(context, axis_vals);
+
+    Fsr::Mat4d local_matrix = axis_vals.getMatrix();
+    if (xform_matrix)
+        *xform_matrix = local_matrix;
+
+    // Get lookat knob values at context:
+    const LookatVals lookvals(op, context);
+    if (!lookvals.k_lookat_enable)
+        return local_matrix;
+
+    // Need our world-space position to include parent:
+    const Fsr::Mat4d world_matrix(parent_matrix * local_matrix);
+
     Fsr::Vec3d lookP;
-
     bool have_lookat_position = false;
+    const int lookat_input = this->lookatInput();
     if (lookat_input < 0)
     {
         // Locally defined lookat source:
@@ -868,137 +849,89 @@ SceneXform::applyLookatTransformAt(Fsr::Mat4d&                     concat_matrix
     {
         // Get the position of the input AxisOp:
         // TODO: support lookat connections to GeometryList objects
-        DD::Image::AxisOp* lookat_axis = dynamic_cast<DD::Image::AxisOp*>(axis->input(lookat_input));
+        DD::Image::AxisOp* lookat_axis = dynamic_cast<DD::Image::AxisOp*>(op->input(lookat_input));
         if (lookat_axis)
         {
-            lookP = lookat_axis->matrix().translation();
+            lookat_axis->validate(false);
+            const SceneXform* lookat_xform = asSceneXform(lookat_axis);
+            //std::cout << "    lookat='" << lookat_axis->node_name() << "' lookat_xform=" << lookat_xform << std::endl;
+            // Check if input is a SceneXform and access the double-precision methods:
+            if (lookat_xform)
+            {
+                lookP = lookat_xform->getWorldTransformAt(context).getTranslation();
+            }
+            else
+            {
+                // Single-precision parent:
+                DD::Image::Matrix4 m; lookat_axis->matrixAt(context, m);
+                lookP = m.translation();
+            }
             have_lookat_position = true;
         }
     }
 
     if (have_lookat_position)
     {
-        // Need our worldspace position to include parent:
-        Fsr::Mat4d world_matrix;
-        getParentingTransform(context, world_matrix);
+        const Fsr::Vec3d localP(local_matrix.getTranslation());
+        const Fsr::Vec3d xformP(world_matrix.getTranslation());
+        //std::cout << "-------------------------------------------" << std::endl;
+        //std::cout << "   parent_matrix" << parent_matrix  << std::endl;
+        //std::cout << "    local_matrix" << local_matrix  << std::endl;
+        //std::cout << "    world_matrix" << world_matrix  << std::endl;
+        //std::cout << "          localP" << localP << std::endl;
+        //std::cout << "          xformP" << xformP << std::endl;
+        //std::cout << "           lookP" << lookP << std::endl;
 
-        // If the xform order is not translate-last then we need
-        // to build the full transform to get the translation
-        // point...
-        if (!axis_vals.use_matrix &&
-            (axis_vals.xform_order == Fsr::SRT_ORDER || axis_vals.xform_order == Fsr::RST_ORDER))
-        {
-            world_matrix.translate(axis_vals.translate);
-        }
-        else
-        {
-            // Build the local matrix just to get absolute translation... :(
-            world_matrix.applyTransform(axis_vals.xform_order,
-                                        axis_vals.rot_order,
-                                        axis_vals.translate,
-                                        axis_vals.rotate,
-                                        axis_vals.totalScaling(),
-                                        axis_vals.skew,
-                                        axis_vals.pivot);
-        }
-        xformP = world_matrix.getTranslation();
+        // Build nominal aim vectors where +Z pointing towards lookP:
+        double rotZ = 0.0;
+        Fsr::Vec3d rX, rY, rZ;
+        rY.set(-std::sin(rotZ), std::cos(rotZ), 0.0); rY.normalize(); // 'up' vector
+        rZ = (lookP - xformP); rZ.normalize(); // normal
+        rX = rY.cross(rZ);     rX.normalize(); // tangent
+        rY = rZ.cross(rX);     rY.normalize(); // recalc bitangent
 
-        std::cout.precision(7);
-        std::cout << "        xformP" << xformP << std::endl;
-        std::cout << "         lookP" << lookP << std::endl;
-
-#if 0
-        // Also check if lookat is enabled and we can't trivially derive the translation
-        // of the xform to use as a lookat source point the also output matrix:
-        if (lookat_axis != NULL && !axis_vals.use_matrix)
+        // Build a rotation matrix with the aim vectors, swapping them around
+        // to fit desired aim axis:
+        Fsr::Mat4d aim_matrix;
+        aim_matrix.setToTranslation(xformP);
+        switch (lookvals.k_lookat_axis)
         {
-            //std::cout << "        lookat enabled" << std::endl;
-            // In the special (and common) case of SRT and RST xform order the translation
-            // point is always the translation value, so we can simply overwrite the rotations
-            // with the derived ones.
-            if (xform_order == Fsr::SRT_ORDER || xform_order == Fsr::RST_ORDER)
-                use_matrix = false;
-            else
-                use_matrix = true; // enable matrix mode for all other transform orders
+            case AXIS_X_MINUS: aim_matrix.setXYZAxis(-rZ, rY, rX); break;
+            case AXIS_X_PLUS:  aim_matrix.setXYZAxis( rZ, rY,-rX); break;
+            //
+            case AXIS_Y_MINUS: aim_matrix.setXYZAxis( rX,-rZ, rY); break;
+            case AXIS_Y_PLUS:  aim_matrix.setXYZAxis( rX, rZ,-rY); break;
+            //
+            case AXIS_Z_MINUS: aim_matrix.setXYZAxis(-rX, rY,-rZ); break;
+            case AXIS_Z_PLUS:  aim_matrix.setXYZAxis( rX, rY, rZ); break;
         }
 
-        // Write a matrix if 'useMatrix' (specify matrix) is enabled on the AxisOp,
-        // or lookat has forced it:
-        if (axis_vals.use_matrix)
-        {
-            // Use the Axis_KnobI interface to get the user-defined matrix without
-            // the lookat matrix mixed in:
-            DD::Image::Matrix4 m = axis_knob->axisKnob()->matrix(context);
-            if (lookat_axis != NULL)
-                const_cast<DD::Image::AxisOp*>(axis)->lookMatrixAt(context, m); // apply lookat transform
-            matrix = m;
+        // Remove the parent xform from the resulting aim matrix and
+        // decompose to rotations:
+        aim_matrix = parent_matrix.inverse()*aim_matrix;
 
-        }
-        else
-        {
-            // In the special-case lookat mode where the final translation point is always
-            // the translation knob value we can simply overwrite the rotations with the
-            // derived lookat ones:
-            if (lookat_axis != NULL)
-            {
-                Fsr::AxisDirection look_axis = Fsr::AXIS_Z_PLUS;
-                bool               look_rotate_x = true;
-                bool               look_rotate_y = true;
-                double             look_rotate_z = true;
-                bool               look_strength = 1.0;
-                bool               look_use_quaternions = false;
-                //
-                DD::Image::Knob* k;
-                DD::Image::Hash dummy_hash;
-                k = axis->knob("look_axis"           ); if (k) k->store(DD::Image::IntPtr,    &look_axis,     dummy_hash, context);
-                k = axis->knob("look_rotate_x"       ); if (k) k->store(DD::Image::BoolPtr,   &look_rotate_x, dummy_hash, context);
-                k = axis->knob("look_rotate_y"       ); if (k) k->store(DD::Image::BoolPtr,   &look_rotate_y, dummy_hash, context);
-                k = axis->knob("look_rotate_z"       ); if (k) k->store(DD::Image::BoolPtr,   &look_rotate_z, dummy_hash, context);
-                k = axis->knob("look_strength"       ); if (k) k->store(DD::Image::DoublePtr, &look_strength, dummy_hash, context);
-                k = axis->knob("look_use_quaternions"); if (k) k->store(DD::Image::BoolPtr,   &look_use_quaternions, dummy_hash, context);
-                //std::cout << "        look_axis=" << look_axis;
-                //std::cout << ", look_rotate_x=" << look_rotate_x << ", look_rotate_y=" << look_rotate_y << ", look_rotate_z=" << look_rotate_z;
-                //std::cout << ", look_strength=" << look_strength << ", look_use_quaternions=" << look_use_quaternions;
-                //std::cout << std::endl;
+        // Interpolate between local rotation and aim rotations:
 
-                // Remap look axis enum from Nuke's to Fuser's (should do nothing...!):
-                switch (look_axis)
-                {
-                    // Stoopid DDImage LookAt class has protected enums...
-                    case 0/*DD::Image::LookAt::kAxisZPlus*/:  look_axis = Fsr::AXIS_Z_PLUS;  break;
-                    case 1/*DD::Image::LookAt::kAxisZMinus*/: look_axis = Fsr::AXIS_Z_MINUS; break;
-                    case 2/*DD::Image::LookAt::kAxisYPlus*/:  look_axis = Fsr::AXIS_Y_PLUS;  break;
-                    case 3/*DD::Image::LookAt::kAxisYMinus*/: look_axis = Fsr::AXIS_Y_MINUS; break;
-                    case 4/*DD::Image::LookAt::kAxisXPlus*/:  look_axis = Fsr::AXIS_X_PLUS;  break;
-                    case 5/*DD::Image::LookAt::kAxisXMinus*/: look_axis = Fsr::AXIS_X_MINUS; break;
-                }
+        //---------------------------------------------------------------
+        // TODO: This method of interpoation doesn't work right...
+        // I'm missing something w/respect to scaling...
+        Fsr::Vec3d scale, shear;
+        local_matrix.extractScalingAndShear(scale, shear);
 
-                // Decompose lookat vector into rotations, replacing the ones from AxisOp.
-                // Build vector from point to lookat point and convert to rotations:
-                const Fsr::Vec3d axisP(axis->matrix().translation());
-                const Fsr::Vec3d lookP(lookat_axis->matrix().translation());
-                //std::cout << "        axisP=" << axisP << std::endl;
-                //std::cout << "        lookP=" << lookP << std::endl;
-                Fsr::Vec3d look_rotations;
-                Fsr::Lookat::vectorToRotations((look_use_quaternions) ? Fsr::Lookat::USE_QUATS :
-                                                                        Fsr::Lookat::USE_VECTORS,
-                                               (lookP - axisP),
-                                               look_axis,
-                                               look_rotate_x,
-                                               look_rotate_y,
-                                               look_rotate_z,
-                                               look_strength,
-                                               look_rotations);
-                // In lookat mode we always use ZXY order:
-                rot_order = Fsr::ZXY_ORDER;
-                //std::cout << "          new rotate" << rotate << std::endl;
-            }
+        const double t = Fsr::clamp(lookvals.k_lookat_mix);
+        Fsr::Vec3d axisX(Fsr::lerp(local_matrix.getXAxis(), aim_matrix.getXAxis(), t*lookvals.k_lookat_do_rx));
+        Fsr::Vec3d axisY(Fsr::lerp(local_matrix.getYAxis(), aim_matrix.getYAxis(), t*lookvals.k_lookat_do_ry));
+        Fsr::Vec3d axisZ(Fsr::lerp(local_matrix.getZAxis(), aim_matrix.getZAxis(), t*lookvals.k_lookat_do_rz));
 
-        }
-#endif
+        local_matrix.setToTranslation(aim_matrix.getTranslation());
+        local_matrix.setXYZAxis(axisX, axisY, axisZ);
+        local_matrix.scale(scale);
+        local_matrix.skew(shear);
+        //---------------------------------------------------------------
+        //std::cout << "    local_matrix out" << local_matrix  << std::endl;
     }
 
-#endif
+    return local_matrix;
 }
 
 
@@ -1016,7 +949,7 @@ SceneXform::getWorldTransformAt(const DD::Image::OutputContext& context) const
     Fsr::Mat4d m;
     m  = getInputParentTransformAt(context);
     m *= getParentConstraintTransformAt(context);
-    m *= getLocalTransformAt(context);
+    m *= getLocalTransformWithLookatAt(m, context);
 
     //std::cout << "    world_matrix" << m << std::endl;
 

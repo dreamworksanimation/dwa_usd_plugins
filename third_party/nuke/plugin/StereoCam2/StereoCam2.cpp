@@ -35,6 +35,26 @@
 using namespace DD::Image;
 
 
+//----------------------------------------------------------------------------------
+
+
+/* Python script to copy the stereo camera to a new non-stereo, non-animated 'projector' camera.
+*/
+const char* const py_copy_to_projector =
+    // Access an external Python file for the functions rather than hardcoding it all:
+    "import nuke\n"
+    "try:\n"
+    "    import stereocam2_support\n"
+    "    stereocam2_support.copyToProjector(nuke.thisNode())\n"
+    ""
+    "except (ImportError), e:\n"
+    "    print 'Unable to import StereoCam support module'\n"
+    "";
+
+
+//----------------------------------------------------------------------------------
+
+
 /*!
 */
 class StereoCam2 : public Fsr::CameraRigOp
@@ -165,6 +185,11 @@ class StereoCam2 : public Fsr::CameraRigOp
         Double_knob(f, &k_stereo_far_plane_shift, "stereo_far_plane_shift", "far plane shift");
             SetFlags(f, Knob::NO_MULTIVIEW);
             ClearFlags(f, Knob::SLIDER | Knob::RESIZABLE | Knob::STARTLINE);
+
+        PyScript_knob(f, py_copy_to_projector, "generate_projector", "  Generate Projector Cam  ");
+            SetFlags(f, Knob::STARTLINE);
+            Tooltip(f, "Copies the stereo camera at the current frame to a new non-stereo, "
+                       "non-animated 'projector' camera.");
     }
 
 
