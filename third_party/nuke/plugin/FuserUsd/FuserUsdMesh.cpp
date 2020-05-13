@@ -297,7 +297,7 @@ FuserUsdMesh::_validateState(const Fsr::NodeContext& args,
     m_uv_primvar_name         = getPrimvarForNukeAttrib(Fsr::NukeGeo::uvs_attrib_name,       "st"/*dflt*/);
     m_normals_primvar_name    = getPrimvarForNukeAttrib(Fsr::NukeGeo::normals_attrib_name,   "normals"/*dflt*/);
     m_colors_primvar_name     = getPrimvarForNukeAttrib(Fsr::NukeGeo::colors_attrib_name,    "displayColors"/*dflt*/);
-    m_opacities_primvar_name  = getPrimvarForNukeAttrib(Fsr::NukeGeo::opacities_attrib_name, "displayOpacities"/*dflt*/);
+    m_opacities_primvar_name  = getPrimvarForNukeAttrib(Fsr::NukeGeo::opacities_attrib_name, "displayOpacity"/*dflt*/);
     m_velocities_primvar_name = getPrimvarForNukeAttrib(Fsr::NukeGeo::velocity_attrib_name,  "velocities"/*dflt*/);
     //std::cout << "  m_uv_primvar_name='" << m_uv_primvar_name << "'" << std::endl;
     //std::cout << "  m_normals_primvar_name='" << m_normals_primvar_name << "'" << std::endl;
@@ -844,32 +844,70 @@ FuserUsdMesh::getVertexUVs(const MeshSample&   mesh,
     if (mesh.nVerts == 0 || primvar_name.IsEmpty())
         return; // don't crash...
 
-    Fsr::Vec2fList src_uvs;
-
     // Note the GetPrimvar() method automatically prefixes 'primvar:' to attribute name:
-    Pxr::UsdGeomPrimvar uv_primvar = m_ptbased_schema.GetPrimvar(primvar_name);
-    if (getArrayPrimvar<Pxr::GfVec2f>(uv_primvar,
+    const Pxr::UsdGeomPrimvar& uvs_primvar = m_ptbased_schema.GetPrimvar(primvar_name);
+
+    Fsr::Vec2fList src_uvs;
+    if (getArrayPrimvar<Pxr::GfVec2f>(uvs_primvar,
                                       mesh.time,
                                       src_uvs,
-                                      Pxr::UsdGeomTokens->faceVarying/*scope_mask*/,
+                                      Pxr::TfToken("")/*scope_mask*/,
                                       false/*debug*/))
     {
-        // Got mesh vert uvs, copy to output:
-        if (mesh.cw_winding)
+        uvs.resize(mesh.nVerts);
+
+        // Got mesh uvs, copy to output verts possibly converting scope:
+        const Pxr::TfToken& scope = uvs_primvar.GetInterpolation();
+        if      (scope == Pxr::UsdGeomTokens->vertex && src_uvs.size() == mesh.nPoints)
         {
-            // Reverse CW to CCW winding:
-            uvs.resize(mesh.nVerts);
+            // Promote point attrib to vertex level:
             int vindex = 0;
             for (size_t f=0; f < mesh.nFaces; ++f)
             {
                 const int nFaceVerts = mesh.verts_per_face[f];
-                const int vstart = vindex;
-                for (int v=nFaceVerts-1; v >= 0; --v, ++vindex)
-                    uvs[vindex] = src_uvs[vstart + v];
+                for (int v=0; v < nFaceVerts; ++v, ++vindex)
+                {
+                    const int32_t pindex = mesh.facevert_point_indices[vindex];
+                    uvs[vindex] = src_uvs[pindex];
+                }
             }
         }
-        else
-            uvs = src_uvs; // CCW winding matches Nuke's default, copy the raw array
+        else if (scope == Pxr::UsdGeomTokens->faceVarying && src_uvs.size() == mesh.nVerts)
+        {
+            if (mesh.cw_winding)
+            {
+                // Reverse CW to CCW winding:
+                int vindex = 0;
+                for (size_t f=0; f < mesh.nFaces; ++f)
+                {
+                    const int nFaceVerts = mesh.verts_per_face[f];
+                    const int vstart = vindex;
+                    for (int v=nFaceVerts-1; v >= 0; --v, ++vindex)
+                        uvs[vindex] = src_uvs[vstart + v];
+                }
+            }
+            else
+                uvs = src_uvs; // CCW winding matches Nuke's default, copy the raw array
+        }
+        else if (scope == Pxr::UsdGeomTokens->uniform && src_uvs.size() == mesh.nFaces)
+        {
+            // Winding order doesn't matter when all the vert values are the same:
+            int vindex = 0;
+            for (size_t f=0; f < mesh.nFaces; ++f)
+            {
+                const Fsr::Vec2f& uv = src_uvs[f];
+                const int nFaceVerts = mesh.verts_per_face[f];
+                for (int v=0; v < nFaceVerts; ++v, ++vindex)
+                    uvs[vindex] = uv;
+            }
+        }
+        else if (scope == Pxr::UsdGeomTokens->constant && src_uvs.size() == 1)
+        {
+            const Fsr::Vec2f& uv = src_uvs[0];
+            for (size_t v=0; v < mesh.nVerts; ++v)
+                uvs[v] = uv;
+        }
+
     }
 
 } // getVertexUVs()
@@ -887,30 +925,71 @@ FuserUsdMesh::getVertexNormals(const MeshSample&   mesh,
         return; // don't crash...
 
     // Note the GetPrimvar() method automatically prefixes 'primvar:' to attribute name:
+    const Pxr::UsdGeomPrimvar& normals_primvar = m_ptbased_schema.GetPrimvar(primvar_name);
+
     Fsr::Vec3fList src_normals;
-    if (getArrayPrimvar<Pxr::GfVec3f>(m_ptbased_schema.GetPrimvar(primvar_name),
+    if (getArrayPrimvar<Pxr::GfVec3f>(normals_primvar,
                                       mesh.time,
                                       src_normals,
-                                      Pxr::UsdGeomTokens->faceVarying/*scope_mask*/,
+                                      Pxr::TfToken("")/*scope_mask*/,
                                       false/*debug*/))
     {
-        // Got mesh vert normals, copy to output:
-        if (mesh.cw_winding)
+        normals.resize(mesh.nVerts);
+
+        // Got mesh normals, copy to output verts possibly converting scope:
+        const Pxr::TfToken& scope = normals_primvar.GetInterpolation();
+        if      (scope == Pxr::UsdGeomTokens->vertex && src_normals.size() == mesh.nPoints)
         {
-            // Reverse CW to CCW winding:
-            normals.resize(mesh.nVerts);
+            // Promote point attrib to vertex level:
             int vindex = 0;
             for (size_t f=0; f < mesh.nFaces; ++f)
             {
                 const int nFaceVerts = mesh.verts_per_face[f];
-                const int vstart = vindex;
-                for (int v=nFaceVerts-1; v >= 0; --v, ++vindex)
-                    normals[vindex] = src_normals[vstart + v];
+                for (int v=0; v < nFaceVerts; ++v, ++vindex)
+                {
+                    const int32_t pindex = mesh.facevert_point_indices[vindex];
+                    normals[vindex] = src_normals[pindex];
+                }
             }
         }
-        else
-            normals = src_normals; // CCW winding matches Nuke's default, copy the raw array
+        else if (scope == Pxr::UsdGeomTokens->faceVarying && src_normals.size() == mesh.nVerts)
+        {
+            if (mesh.cw_winding)
+            {
+                // Reverse CW to CCW winding:
+                int vindex = 0;
+                for (size_t f=0; f < mesh.nFaces; ++f)
+                {
+                    const int nFaceVerts = mesh.verts_per_face[f];
+                    const int vstart = vindex;
+                    for (int v=nFaceVerts-1; v >= 0; --v, ++vindex)
+                        normals[vindex] = src_normals[vstart + v];
+                }
+            }
+            else
+                normals = src_normals; // CCW winding matches Nuke's default, copy the raw array
+        }
+        else if (scope == Pxr::UsdGeomTokens->uniform && src_normals.size() == mesh.nFaces)
+        {
+            // Winding order doesn't matter when all the vert values are the same:
+            int vindex = 0;
+            for (size_t f=0; f < mesh.nFaces; ++f)
+            {
+                const Fsr::Vec3f& N = src_normals[f];
+                const int nFaceVerts = mesh.verts_per_face[f];
+                for (int v=0; v < nFaceVerts; ++v, ++vindex)
+                    normals[vindex] = N;
+            }
+        }
+        else if (scope == Pxr::UsdGeomTokens->constant && src_normals.size() == 1)
+        {
+            const Fsr::Vec3f& N = src_normals[0];
+            for (size_t v=0; v < mesh.nVerts; ++v)
+                normals[v] = N;
+        }
+
     }
+
 }
 
 
@@ -960,30 +1039,71 @@ FuserUsdMesh::getVertexVelocities(const MeshSample&   mesh,
         return; // don't crash...
 
     // Note the GetPrimvar() method automatically prefixes 'primvar:' to attribute name:
+    const Pxr::UsdGeomPrimvar& velocities_primvar = m_ptbased_schema.GetPrimvar(primvar_name);
+
     Fsr::Vec3fList src_velocities;
-    if (getArrayPrimvar<Pxr::GfVec3f>(m_ptbased_schema.GetPrimvar(primvar_name),
+    if (getArrayPrimvar<Pxr::GfVec3f>(velocities_primvar,
                                       mesh.time,
                                       src_velocities,
-                                      Pxr::UsdGeomTokens->faceVarying/*scope_mask*/,
+                                      Pxr::TfToken("")/*scope_mask*/,
                                       false/*debug*/))
     {
-        // Got mesh vert normals, copy to output:
-        if (mesh.cw_winding)
+        velocities.resize(mesh.nVerts);
+
+        // Got mesh velocities, copy to output verts possibly converting scope:
+        const Pxr::TfToken& scope = velocities_primvar.GetInterpolation();
+        if      (scope == Pxr::UsdGeomTokens->vertex && src_velocities.size() == mesh.nPoints)
         {
-            // Reverse CW to CCW winding:
-            velocities.resize(mesh.nVerts);
+            // Promote point attrib to vertex level:
             int vindex = 0;
             for (size_t f=0; f < mesh.nFaces; ++f)
             {
                 const int nFaceVerts = mesh.verts_per_face[f];
-                const int vstart = vindex;
-                for (int v=nFaceVerts-1; v >= 0; --v, ++vindex)
-                    velocities[vindex] = src_velocities[vstart + v];
+                for (int v=0; v < nFaceVerts; ++v, ++vindex)
+                {
+                    const int32_t pindex = mesh.facevert_point_indices[vindex];
+                    velocities[vindex] = src_velocities[pindex];
+                }
             }
         }
-        else
-            velocities = src_velocities; // CCW winding matches Nuke's default, copy the raw array
+        else if (scope == Pxr::UsdGeomTokens->faceVarying && src_velocities.size() == mesh.nVerts)
+        {
+            if (mesh.cw_winding)
+            {
+                // Reverse CW to CCW winding:
+                int vindex = 0;
+                for (size_t f=0; f < mesh.nFaces; ++f)
+                {
+                    const int nFaceVerts = mesh.verts_per_face[f];
+                    const int vstart = vindex;
+                    for (int v=nFaceVerts-1; v >= 0; --v, ++vindex)
+                        velocities[vindex] = src_velocities[vstart + v];
+                }
+            }
+            else
+                velocities = src_velocities; // CCW winding matches Nuke's default, copy the raw array
+        }
+        else if (scope == Pxr::UsdGeomTokens->uniform && src_velocities.size() == mesh.nFaces)
+        {
+            // Winding order doesn't matter when all the vert values are the same:
+            int vindex = 0;
+            for (size_t f=0; f < mesh.nFaces; ++f)
+            {
+                const Fsr::Vec3f& vel = src_velocities[f];
+                const int nFaceVerts = mesh.verts_per_face[f];
+                for (int v=0; v < nFaceVerts; ++v, ++vindex)
+                    velocities[vindex] = vel;
+            }
+        }
+        else if (scope == Pxr::UsdGeomTokens->constant && src_velocities.size() == 1)
+        {
+            const Fsr::Vec3f& vel = src_velocities[0];
+            for (size_t v=0; v < mesh.nVerts; ++v)
+                velocities[v] = vel;
+        }
+
     }
+
 }
 
 
@@ -1030,10 +1150,17 @@ FuserUsdMesh::getVertexColors(const MeshSample&   mesh,
             const Pxr::TfToken& scope = color_primvar.GetInterpolation();
             if      (scope == Pxr::UsdGeomTokens->vertex && colors.size() == mesh.nPoints)
             {
-                // Error - can't copy point attribute to vertices, at least not easily...
-                const Fsr::Vec4f Cf(1.0f);
-                for (size_t v=0; v < mesh.nVerts; ++v)
-                    Cfs[v] = Cf;
+                // Promote point attrib to vertex level:
+                int vindex = 0;
+                for (size_t f=0; f < mesh.nFaces; ++f)
+                {
+                    const int nFaceVerts = mesh.verts_per_face[f];
+                    for (int v=0; v < nFaceVerts; ++v, ++vindex)
+                    {
+                        const int32_t pindex = mesh.facevert_point_indices[vindex];
+                        Cfs[vindex] = Fsr::Vec4f(colors[pindex], 1.0f);
+                    }
+                }
             }
             else if (scope == Pxr::UsdGeomTokens->faceVarying && colors.size() == mesh.nVerts)
             {
@@ -1085,9 +1212,17 @@ FuserUsdMesh::getVertexColors(const MeshSample&   mesh,
             const Pxr::TfToken& scope = opacity_primvar.GetInterpolation();
             if      (scope == Pxr::UsdGeomTokens->vertex && opacities.size() == mesh.nPoints)
             {
-                // Error - can't copy point attribute to vertices, at least not easily...
-                for (size_t v=0; v < mesh.nVerts; ++v)
-                    Cfs[v].w = 1.0f;
+                // Promote point attrib to vertex level:
+                int vindex = 0;
+                for (size_t f=0; f < mesh.nFaces; ++f)
+                {
+                    const int nFaceVerts = mesh.verts_per_face[f];
+                    for (int v=0; v < nFaceVerts; ++v, ++vindex)
+                    {
+                        const int32_t pindex = mesh.facevert_point_indices[vindex];
+                        Cfs[vindex].w = opacities[pindex];
+                    }
+                }
             }
             else if (scope == Pxr::UsdGeomTokens->faceVarying && opacities.size() == mesh.nVerts)
             {

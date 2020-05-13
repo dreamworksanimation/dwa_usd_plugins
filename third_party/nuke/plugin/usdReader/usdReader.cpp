@@ -55,10 +55,10 @@ static const char* usd_file_extensions =
 //-------------------------------------------------------------------------------
 
 static const char* default_usd_attribute_mappings =
-    "st=uv, uv=uv\n"
+    "st=uv, st_0=uv, uv=uv\n"
     "normals=N\n"
     "displayColor=Cf\n"
-    "displayOpacities=Of\n"
+    "displayOpacity=Of\n"
     "velocities=VEL\n"
 ;
 
