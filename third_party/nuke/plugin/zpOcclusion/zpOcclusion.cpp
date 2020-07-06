@@ -27,9 +27,10 @@
 /// @author Jonathan Egstad
 
 
-#include <zprender/SurfaceShaderOp.h>
+#include "zprOcclusion.h"
+
+#include <zprender/SurfaceMaterialOp.h>
 #include <zprender/RenderContext.h>
-#include <zprender/Sampling.h>
 
 #include <DDImage/Knob.h>
 #include <DDImage/Knobs.h>
@@ -40,20 +41,11 @@ using namespace DD::Image;
 namespace zpr {
 
 
-class zpOcclusion : public SurfaceShaderOp
+class zpOcclusion : public SurfaceMaterialOp
 {
-    bool        k_amb_ocl_enabled;
-    bool        k_refl_ocl_enabled;
-    double      k_amb_ocl_mindist, k_amb_ocl_maxdist, k_amb_ocl_cone_angle;
-    double      k_refl_ocl_mindist, k_refl_ocl_maxdist, k_refl_ocl_cone_angle;
-    double      k_gi_scale;
-    //
-    Channel     k_amb_ocl_output;       //!< AOV channel to route ambient occlusion contribution to
-    Channel     k_refl_ocl_output;      //!< AOV channel to route reflection occlusion contribution to
-
-    float       m_amb_ocl_cone_angle, m_refl_ocl_cone_angle;
-    double      m_amb_ocl_mindist, m_refl_ocl_mindist;
-    double      m_amb_ocl_maxdist, m_refl_ocl_maxdist;
+  protected:
+    zprOcclusion::InputParams k_inputs;
+    zprOcclusion::LocalVars   m_locals;
 
 
   public:
@@ -65,21 +57,40 @@ class zpOcclusion : public SurfaceShaderOp
 
 
     //!
-    zpOcclusion(::Node* node) :
-        SurfaceShaderOp(node)
+    zpOcclusion(::Node* node) : SurfaceMaterialOp(node) {}
+
+
+    /*virtual*/
+    RayShader* _createOutputSurfaceShader(const RenderContext&     rtx,
+                                          std::vector<RayShader*>& shaders)
     {
-        k_amb_ocl_enabled     = true;
-        k_refl_ocl_enabled    = false;
-        k_amb_ocl_mindist     =    0.0;
-        k_amb_ocl_maxdist     = 1000.0;
-        k_amb_ocl_cone_angle  =  180.0; // 180 degree cone
-        k_refl_ocl_mindist    =    0.0;
-        k_refl_ocl_maxdist    = 1000.0;
-        k_refl_ocl_cone_angle =   20.0; // 20 degree cone
-        k_gi_scale            =    1.0;
-        //
-        k_amb_ocl_output      = Chan_Black;
-        k_refl_ocl_output     = Chan_Black;
+        RayShader* output = new zprOcclusion(k_inputs);
+        shaders.push_back(output);
+        return output;
+    }
+
+
+    //! Return the InputBinding for an input.
+    /*virtual*/
+    InputBinding* getInputBinding(uint32_t input)
+    {
+        if (input == 0) return &k_inputs.k_bindings[zprOcclusion::BG0];
+        return NULL;
+    }
+
+
+    /*virtual*/
+    void _validate(bool for_real) 
+    {
+        //std::cout << "zpOcclusion::_validate(" << for_real << ")" << std::endl;
+        // Call base class first to get InputBindings assigned:
+        SurfaceMaterialOp::_validate(for_real);
+
+        zprOcclusion::updateLocals(k_inputs, m_locals);
+
+        // Enable AOV output channels:
+        info_.turn_on(k_inputs.k_amb_ocl_output);
+        info_.turn_on(k_inputs.k_refl_ocl_output);
     }
 
 
@@ -87,17 +98,20 @@ class zpOcclusion : public SurfaceShaderOp
     void knobs(Knob_Callback f)
     {
         //---------------------------------------------------------------------------------
-        // This adds the 'zpSurfaceShaderOp' knob that's used to identify a SurfaceShaderOp
+        // This adds the 'zpSurfaceMaterialOp' knob that's used to identify a SurfaceMaterialOp
         // to other plugins (because dynamic_cast-ing fails).  Atm if this doesn't
         // exist then the _evaluate*() methods will not be called since the node
         // will not be recognized as a RayShader type:
-        addSurfaceShaderOpIdKnob(f);
+        addSurfaceMaterialOpIdKnob(f);
         //---------------------------------------------------------------------------------
         // The top line of ray controls:
-        RayShader::addRayControlKnobs(f);
+        addRayControlKnobs(f);
 
+        InputOp_knob(f, &k_inputs.k_bindings[zprOcclusion::BG0], 0/*input_num*/);
+
+        //----------------------------------------------------------------------------------------------
         Divider(f);
-        Bool_knob(f, &k_amb_ocl_enabled, "amb_ocl_enabled", "ambient occlusion enable");
+        Bool_knob(f, &k_inputs.k_amb_ocl_enabled, "amb_ocl_enabled", "ambient occlusion enable");
             Tooltip(f, "Enable global ambient-occlusion. (fyi this is confusingly termed 'exposure' at Dreamworks...)\n"
                        "This calculates the diffuse angle off the surface for each camera ray and spawns "
                        "diffuse rays (using the diffuse samples count,) stochastically distributed over a "
@@ -108,20 +122,20 @@ class zpOcclusion : public SurfaceShaderOp
                        "scales the distances to bias the appearance.\n"
                        "The final shadowing value is multiplied against the surface color.  This is done *after* "
                        "the surface shader is called so this will incorrectly attenuate specular highlights.");
-        Double_knob(f, &k_amb_ocl_mindist, "amb_ocl_mindist", "min/max");
+        Double_knob(f, &k_inputs.k_amb_ocl_mindist, "amb_ocl_mindist", "min/max");
             ClearFlags(f, Knob::SLIDER); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Ignore surfaces closer than this value.");
-        Double_knob(f, &k_amb_ocl_maxdist, "amb_ocl_maxdist", "");
+        Double_knob(f, &k_inputs.k_amb_ocl_maxdist, "amb_ocl_maxdist", "");
             ClearFlags(f, Knob::SLIDER | Knob::STARTLINE); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Ignore surfaces farther than this value.");
-        Double_knob(f, &k_amb_ocl_cone_angle, "amb_ocl_cone_angle", "cone angle");
+        Double_knob(f, &k_inputs.k_amb_ocl_cone_angle, "amb_ocl_cone_angle", "cone angle");
             ClearFlags(f, Knob::SLIDER | Knob::STARTLINE); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Diffuse distribution cone width angle - in degrees.  180 is a full hemisphere");
-        Channel_knob(f, &k_amb_ocl_output, 1, "amb_ocl_output", "output");
+        Channel_knob(f, &k_inputs.k_amb_ocl_output, 1, "amb_ocl_output", "output");
             Tooltip(f, "Route this shader component to these output channels.");
         //
         Divider(f);
-        Bool_knob(f, &k_refl_ocl_enabled, "refl_ocl_enabled", "reflection occlusion enable");
+        Bool_knob(f, &k_inputs.k_refl_ocl_enabled, "refl_ocl_enabled", "reflection occlusion enable");
             Tooltip(f, "Enable global reflection-occlusion.\n"
                        "This calculates the reflection angle off the surface from each camera ray and spawns "
                        "glossy rays (using the glossy samples count,) stochastically distributed over a "
@@ -130,20 +144,20 @@ class zpOcclusion : public SurfaceShaderOp
                        "then it's considered shadowed.\n"
                        "The final shadowing value is multiplied against the surface color.  This is done *after* "
                        "the surface shader is called so this will incorrectly attenuate specular highlights.");
-        Double_knob(f, &k_refl_ocl_mindist, "refl_ocl_mindist", "min/max");
+        Double_knob(f, &k_inputs.k_refl_ocl_mindist, "refl_ocl_mindist", "min/max");
             ClearFlags(f, Knob::SLIDER); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Ignore surfaces closer than this value.");
-        Double_knob(f, &k_refl_ocl_maxdist, "refl_ocl_maxdist", "");
+        Double_knob(f, &k_inputs.k_refl_ocl_maxdist, "refl_ocl_maxdist", "");
             ClearFlags(f, Knob::SLIDER | Knob::STARTLINE); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Ignore surfaces farther than this value.");
-        Double_knob(f, &k_refl_ocl_cone_angle, "refl_ocl_cone_angle", "cone angle");
+        Double_knob(f, &k_inputs.k_refl_ocl_cone_angle, "refl_ocl_cone_angle", "cone angle");
             ClearFlags(f, Knob::SLIDER | Knob::STARTLINE); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Glossy distribution cone width angle - in degrees.  180 is a full hemisphere");
-        Channel_knob(f, &k_refl_ocl_output, 1, "refl_ocl_output", "output");
+        Channel_knob(f, &k_inputs.k_refl_ocl_output, 1, "refl_ocl_output", "output");
             Tooltip(f, "Route this shader component to these output channels.");
         //
         Divider(f);
-        Double_knob(f, &k_gi_scale, IRange(0.001, 10.0), "gi_scale", "gi scale");
+        Double_knob(f, &k_inputs.k_gi_scale, IRange(0.001, 10.0), "gi_scale", "gi scale");
             ClearFlags(f, Knob::STARTLINE);
             SetFlags(f, Knob::LOG_SLIDER | Knob::NO_MULTIVIEW);
             Tooltip(f, "Scales the calculated distances between objects to bias the distance weights.\n"
@@ -151,94 +165,6 @@ class zpOcclusion : public SurfaceShaderOp
                        "it above 1.0 to make objects 'feel' larger.");
     }
 
-
-    /*virtual*/
-    void _validate(bool for_real) 
-    {
-        //std::cout << "zpOcclusion::_validate(" << for_real << ")" << std::endl;
-        SurfaceShaderOp::_validate(for_real);
-
-        // Precalculate and clamp some shader params:
-        m_amb_ocl_cone_angle = float(clamp(k_amb_ocl_cone_angle, 0.0, 180.0));
-        m_amb_ocl_mindist = MAX(0.001, fabs(k_amb_ocl_mindist));
-        m_amb_ocl_maxdist = MIN(fabs(k_amb_ocl_maxdist), std::numeric_limits<double>::infinity());
-        //
-        m_refl_ocl_cone_angle = float(clamp(k_refl_ocl_cone_angle, 0.0, 180.0));
-        m_refl_ocl_mindist = MAX(0.001, fabs(k_refl_ocl_mindist));
-        m_refl_ocl_maxdist = MIN(fabs(k_refl_ocl_maxdist), std::numeric_limits<double>::infinity());
-
-        // Enable AOV output channels:
-        info_.turn_on(k_amb_ocl_output);
-        info_.turn_on(k_refl_ocl_output);
-    }
-
-
-    //----------------------------------------------------------------------------------
-    //----------------------------------------------------------------------------------
-
-
-    /*! The ray-tracing shader call.
-    */
-    /*virtual*/
-    void _evaluateShading(RayShaderContext& stx,
-                          Fsr::Pixel&       out)
-    {
-        //std::cout << "zpOcclusion::_evaluateShading() [" << stx.x << " " << stx.y << "]" << std::endl;
-        float amb_ocl_weight  = 1.0f;
-        float refl_ocl_weight = 1.0f;
-        if (k_amb_ocl_enabled)
-        {
-             amb_ocl_weight = getOcclusion(stx,
-                                           Fsr::RayContext::DIFFUSE,
-                                           m_amb_ocl_mindist,
-                                           m_amb_ocl_maxdist,
-                                           m_amb_ocl_cone_angle,
-                                           float(k_gi_scale));
-        }
-
-        if (k_refl_ocl_enabled)
-        {
-             refl_ocl_weight = getOcclusion(stx,
-                                            Fsr::RayContext::GLOSSY,
-                                            m_refl_ocl_mindist,
-                                            m_refl_ocl_maxdist,
-                                            m_refl_ocl_cone_angle,
-                                            float(k_gi_scale));
-        }
-
-        // Get the input shading result after (just in case stx gets messed with):
-        SurfaceShaderOp::_evaluateShading(stx, out);
-
-        // Apply occlusion weights:
-        if (k_amb_ocl_enabled)
-        {
-            const float wt = (1.0f - amb_ocl_weight);
-            out[Chan_Red  ] *= wt;
-            out[Chan_Green] *= wt;
-            out[Chan_Blue ] *= wt;
-
-            // Copy AOVs only if they're not overwriting RGBA:
-            if (k_amb_ocl_output > Chan_Alpha)
-            {
-                out.channels += k_amb_ocl_output;
-                out[k_amb_ocl_output] = wt;
-            }
-        }
-        if (k_refl_ocl_enabled)
-        {
-            const float wt = (1.0f - refl_ocl_weight);
-            out[Chan_Red  ] *= wt;
-            out[Chan_Green] *= wt;
-            out[Chan_Blue ] *= wt;
-
-            // Copy AOVs only if they're not overwriting RGBA:
-            if (k_refl_ocl_output > Chan_Alpha)
-            {
-                out.channels += k_refl_ocl_output;
-                out[k_refl_ocl_output] = wt;
-            }
-        }
-    }
 
 };
 

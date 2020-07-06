@@ -79,6 +79,9 @@ class FuserUsdXform : public FuserUsdXformableNode
                                                   std::set<double>&   times);
 
     //!
+    static Fsr::Mat4d getLocalMatrixAtPrim(const Pxr::UsdPrim&     prim,
+                                           const Pxr::UsdTimeCode& timecode);
+    //!
     static Fsr::Mat4d getConcatenatedMatrixAtPrim(const Pxr::UsdPrim&     prim,
                                                   const Pxr::UsdTimeCode& timecode);
 

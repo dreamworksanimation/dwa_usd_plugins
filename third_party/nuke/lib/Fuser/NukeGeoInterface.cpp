@@ -78,6 +78,15 @@ getObjectPointArray(const DD::Image::GeoInfo& info)
 }
 
 
+/*! Some standard attrib queries. *** Not thread safe! ***
+*/
+std::string getObjectName(const DD::Image::GeoInfo& info) { return getObjectString(info, "name"); }
+std::string getObjectPath(const DD::Image::GeoInfo& info)
+    { return getObjectString(info, Arg::Scene::path.c_str()); }
+std::string getObjectMaterialBinding(const DD::Image::GeoInfo& info)
+    { return getObjectString(info, "material:binding"); }
+
+
 /*! Get an attribute from the object level of a GeoInfo. *** Not thread safe! ***
 */
 std::string
@@ -416,21 +425,24 @@ GeoOpGeometryEngineContext::GeoOpGeometryEngineContext(int                      
     assert(geo); // shouldn't happen...
 
 #ifdef DWA_INTERNAL_BUILD
-    typedef std::map<DD::Image::GeoOp*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
+    typedef std::map<void*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
 #else
-    typedef std::unordered_map<DD::Image::GeoOp*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
+    typedef std::unordered_map<void*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
 #endif
     static GeoOpContextMap geoop_context_map;
 
-    const GeoOpContextMap::const_iterator it = geoop_context_map.find(geo);
+    //std::cout << "GeoOpGeometryEngineContext::ctor(" << this << ") node=" << geo->node();
+    const GeoOpContextMap::const_iterator it = geoop_context_map.find(geo->node());
     if (it == geoop_context_map.end())
     {
         geoop_context = new GeoOpContext();
-        geoop_context_map[geo] = geoop_context;
+        geoop_context_map[geo->node()] = geoop_context;
+        //std::cout << ", geo=" << geo << " - NEW geoop_context=" << geoop_context << std::endl;
     }
     else
     {
         geoop_context = it->second;
+        //std::cout << ", geo=" << geo << " - REUSE geoop_context=" << geoop_context << std::endl;
     }
     assert(geoop_context);
 }
@@ -533,7 +545,8 @@ GeoOpGeometryEngineContext::getObjectIndexFromId(const std::string& object_id)
     assert(geoop_context); // shouldn't happen...
 
     const ObjectIndexMap::const_iterator it = geoop_context->object_id_map.find(object_id);
-    return (it == geoop_context->object_id_map.end()) ? -1 : it->second;
+    const int index = (it == geoop_context->object_id_map.end()) ? -1 : it->second;
+    return index;
 }
 
 

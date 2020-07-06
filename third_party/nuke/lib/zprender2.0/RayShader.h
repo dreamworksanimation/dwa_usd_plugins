@@ -33,10 +33,9 @@
 #include "Scene.h"
 #include "Traceable.h"
 #include "RayShaderContext.h"
+#include "InputBinding.h"
 
-#include <Fuser/NukePixelInterface.h> // for Fsr::Pixel
-
-#include <DDImage/Material.h>
+#include <DDImage/Description.h>
 #include <DDImage/Knobs.h>
 
 
@@ -46,107 +45,253 @@ class LightShader;
 class VolumeShader;
 
 
-
 /*! Base interface class of ray-tracing shaders.
 */
 class ZPR_EXPORT RayShader
 {
+  private:
+    //! Disabled copy constructor.
+    RayShader(const RayShader&);
+    //! Disabled assignment operator.
+    RayShader& operator = (const RayShader&);
+
+
   public:
-    //! Frame clamp modes.
-    enum
+    /*! This structure creates a subclass of zpr::RayShader.
+    */
+    class FSR_EXPORT ShaderDescription : public DD::Image::Description
     {
-        FRAME_CLAMP_NONE,
-        FRAME_FWD_RND_UP,
-        FRAME_FWD_RND_DOWN,
-        FRAME_REV_RND_UP,
-        FRAME_REV_RND_DOWN
+      private:
+        const char* m_shader_class;
+
+        /*! Method type defined in DD::Image::Description.h: (*f)(Description*)
+            Called when the plugin .so is first loaded.
+        */
+        static void pluginBuilderCallback(DD::Image::Description* desc);
+
+
+      public:
+        //! Constructor method definition used for 'build()' methods in plugins.
+        typedef RayShader* (*PluginBuilder)(void);
+        PluginBuilder builder_method; // <<< Call this to construct a zpr::RayShader object.
+
+
+      public:
+        //! Constructor sets name and label to same value.
+        ShaderDescription(const char*   shader_class,
+                          PluginBuilder builder);
+
+        //!
+        const char* shaderClass() const { return m_shader_class; }
+
+        //! Find a dso description by name.
+        static const ShaderDescription* find(const char* shader_class);
     };
-    static const char* frame_clamp_modes[];
 
 
   public:
+    /*! Limited data types for RayShader knob inputs.
+       (we'll use Nuke nomenclature here for no good reason... :) )
+    */
+    enum KnobType
+    {
+        EMPTY_KNOB,
+        //
+        STRING_KNOB,    //!< std::string
+        //
+        INT_KNOB,       //!< Also used for boolean
+        DOUBLE_KNOB,    //!< Not bothering with separate float type
+        //
+        VEC2_KNOB,      //!< Fsr::Vec2d
+        VEC3_KNOB,      //!< Fsr::Vec3d
+        VEC4_KNOB,      //!< Fsr::Vec4d
+        MAT4_KNOB,      //!< Fsr::Mat4d
+        //
+        COLOR2_KNOB,    //!< Fsr::Vec2d - mono with alpha
+        COLOR3_KNOB,    //!< Fsr::Vec3d - rgb
+        COLOR4_KNOB,    //!< Fsr::Vec4d - rgba
+        //
+        VEC2ARRAY_KNOB,
+        VEC3ARRAY_KNOB,
+        VEC4ARRAY_KNOB,
+        //
+        PIXEL_KNOB,     //!< Fsr::Pixel (also contains a ChannelSet)
+        //
+        NUM_KNOB_TYPES
+    };
+
+
+    /*! Shader input. Similar to an Op knob except dedicated to RayShader
+        use with support for external binding to another RayShader's output
+        knob.
+    */
+    struct InputKnob
+    {
+        const char* name;           //!<
+        KnobType    type;           //!<
+        void*       data;           //!< Pointer to local data, cast to type
+        RayShader*  shader;         //!< Non-NULL if knob is bound to another RayShader's output
+        int32_t     output_index;   //!< Output index of another RayShader
+
+
+        //!
+        InputKnob() : name(""), type(EMPTY_KNOB), data(NULL), shader(NULL), output_index(-1) {}
+        //!
+        InputKnob(const char* _name,
+                  KnobType    _type) :
+            name(_name),
+            type(_type),
+            data(NULL),
+            shader(NULL),
+            output_index(-1)
+        {
+            //
+        }
+
+        //!
+        void setValue(const char* value);
+    };
+
+    typedef std::vector<InputKnob> InputKnobList;
+
+
     /*!
     */
-    struct MapBinding
+    struct OutputKnob
     {
-        /*! Map binding type.
-            Note that it's a bitmask - if it's an input then it can be
-            multiple types at the same time - i.e. it can be an Op, Iop,
-            Material & RayShader all at once.
-        */
-        enum
+        const char* name;               //!<
+        KnobType    type;               //!<
+
+
+        //!
+        OutputKnob() : name(""), type(EMPTY_KNOB) {}
+        //!
+        OutputKnob(const char* _name,
+                   KnobType    _type) :
+            name(_name),
+            type(_type)
         {
-            NONE       = 0x00,   //!< No binding
-            ATTRIB     = 0x01,   //!< Attribute binding
-            OP         = 0x02,   //!< Op input
-            IOP        = 0x04,   //!< Iop input - generic 2D operator, a texture
-            MATERIAL   = 0x08,   //!< Material input - legacy Nuke shader
-            SURFACEOP  = 0x10    //!< SurfaceShaderOp input
-        };
-        // Flags:
-        enum
-        {
-            IS_TEXTURE = 0x01,   //!< Binding is a texture source
-            HAS_ALPHA  = 0x02,   //!< Input image has an alpha channel
-            IS_MONO    = 0x04    //!< Input image is single-channel
-        };
-
-        uint16_t type;          //!< Type of input
-        uint16_t flags;         //!< Input flags
-
-        MapBinding() : type(0x00), flags(0x00) {}
-
-        //! Convenience methods:
-        inline bool noBinding()         const { return (type == NONE      ); }
-        inline bool isAttrib()          const { return (type & ATTRIB     ); }
-        inline bool isOp()              const { return (type & OP         ); }
-        inline bool isIop()             const { return (type & IOP        ); }
-        inline bool isMaterial()        const { return (type & MATERIAL   ); }
-        inline bool isSurfaceShaderOp() const { return (type & SURFACEOP  ); }
-        //
-        inline bool isTexture()   const { return (flags & IS_TEXTURE); }
-        inline bool hasAlpha()    const { return (flags & HAS_ALPHA ); }
-        inline bool isMono()      const { return (flags & IS_MONO   ); }
+            //
+        }
     };
 
-    //! Returns the MapBinding for input n.
-    const MapBinding& getInputType(int n) const { return m_input_type[n]; }
+    typedef std::vector<OutputKnob> OutputKnobList;
 
 
   protected:
-    std::vector<MapBinding> m_input_type;  //!< Type of input - RayShader, Material, Iop, or Op
+    std::string             m_name;             //!< Shader name
+    //
+    InputKnobList           m_inputs;           //!< Input knobs, copied and updated from the static list
+    OutputKnobList          m_outputs;          //!< Output knobs, copied from the static list
+    //
+    bool                    m_valid;            //!< validateShader() has been called
+    DD::Image::ChannelSet   m_texture_channels; //!< Set of channels output by all texture bindings
+    DD::Image::ChannelSet   m_output_channels;  //!< Set of all output channels
 
-    int  k_sides_mode;               //!< Which side this material applies to (default is SIDES_BOTH)
-    bool k_camera_visibility;        //!< Is this shader visible to camera rays?
-    bool k_shadow_visibility;        //!< Is this shader visible to shadow rays?
-    bool k_specular_visibility;      //!< Is this shader visible to specular rays?
-    bool k_diffuse_visibility;       //!< Is this shader visible to diffuse rays?
-    bool k_transmission_visibility;  //!< Is this shader visible to transmitted rays?
-    int  k_frame_clamp_mode;         //!< How this shader uses the frame number from below.
+
+    //! Subclass implementation of connectInput().
+    virtual void _connectInput(uint32_t    input,
+                               RayShader*  shader,
+                               const char* output_name);
 
 
   public:
     //!
     RayShader();
+    //!
+    RayShader(const InputKnobList&  inputs,
+              const OutputKnobList& output);
 
     //! Must have a virtual destructor!
     virtual ~RayShader() {}
 
 
+    //---------------------------------------------------------
+
+
     //! Returns 'zpRayShader'.
     static const char* zpClass();
 
-    /*! !!HACK ALERT!! This adds an invisible 'zpRayShader' knob that's
-        used to identify a RayShader-derived Op to other plugins.
 
-        If the zprender lib is built static then dynamic_casting fails,
-        so we can test for this knob instead and then static_cast the
-        pointer to RayShader*.
+    //! Returns the class name, must implement.
+    virtual const char* zprShaderClass() const=0;
 
-        Atm if this knob doesn't exist then the _evaluate*() methods will
-        not be called since the node will not be recognized as a RayShader!
-    */
-    void addRayShaderIdKnob(DD::Image::Knob_Callback f);
+
+    //! Create a zpr::RayShader instance based on the shader class name or existing shader description.
+    static RayShader* create(const char* shader_class);
+    static RayShader* create(const ShaderDescription& shader_description);
+
+    //! Find a RayShader::ShaderDescription by shader class name.
+    static const ShaderDescription* find(const char* node_class) { return ShaderDescription::find(node_class); }
+
+
+    //---------------------------------------------------------
+
+
+    //! Whether shader is ready to be evaluated. True after validateShader() has been called.
+    bool isValid() const { return m_valid; }
+    //! Cause validateShader() to be called during next evaluation.
+    void invalidate() { m_valid = false; }
+
+    //! Return the name identifier if assigned.
+    const std::string& getName() const { return m_name; }
+    //! Assign a name identifier.
+    void               setName(const std::string& name) { m_name = name; }
+
+
+    //! Return a static list of input knobs for this shader. Base class returns an empty list.
+    virtual const InputKnobList&  getInputKnobDefinitions() const;
+
+    //! Return a static list of output knobs for this shader. Base class returns only the 'primary' output.
+    virtual const OutputKnobList& getOutputKnobDefinitions() const;
+
+
+    //---------------------------------------------------------
+
+
+    //! Returns the number of input knobs.
+    uint32_t numInputs() const { return (uint32_t)m_inputs.size(); }
+    //! Returns the number of output knobs.
+    uint32_t numOutputs() const { return (uint32_t)m_outputs.size(); }
+
+    //! Returns output knob by index. If there's no knob an empty InputKnob is returned.
+    const InputKnob&  getInputKnob(uint32_t input) const;
+    //! Returns output knob by index. If there's no knob an empty OutputKnob is returned.
+    const OutputKnob& getOutputKnob(uint32_t output) const;
+
+
+    //! Return a named input's index or -1 if not found.
+    int32_t    getInputByName(const char* input_name) const;
+    //! Return a named output's index or -1 if not found.
+    int32_t    getOutputByName(const char* output_name) const;
+
+
+    //! Returns shader pointer for input. May be NULL if there's no input or no connection.
+    RayShader* getInput(uint32_t input) const;
+
+
+    //! Returns an InputBinding object for an input.
+    virtual InputBinding* getInputBinding(uint32_t input) { return NULL; }
+
+
+    //! Returns true if input can be connected to another RayShader's named output.
+    virtual bool canConnectInputTo(uint32_t    input,
+                                   RayShader*  shader,
+                                   const char* output_name="surface");
+
+    //! Assign the input RayShader pointer for input. No range checking!
+    bool         connectInput(uint32_t    input,
+                              RayShader*  shader,
+                              const char* output_name="surface");
+
+    //!
+    void setInputValue(uint32_t    input,
+                       const char* value);
+    void setInputValue(const char* input_name,
+                       const char* value);
+
+    //---------------------------------------------------------
+
 
     //!
     virtual LightShader*  isLightShader()  { return NULL; }
@@ -154,16 +299,12 @@ class ZPR_EXPORT RayShader
     virtual VolumeShader* isVolumeShader() { return NULL; }
 
 
-    //! Get the binding info for an input Op.
-    static MapBinding getOpMapBinding(DD::Image::Op*     op,
-                                      DD::Image::Channel alpha_chan=DD::Image::Chan_Alpha);
-
-
-    //!
-    virtual void addRayControlKnobs(DD::Image::Knob_Callback f);
-
     //! Initialize any vars prior to rendering.
-    virtual void  validateShader(bool for_real);
+    virtual void validateShader(bool                 for_real,
+                                const RenderContext& rtx);
+
+    //! Fill in a list with pointers to the *active* texture bindings this shader and its inputs has.
+    virtual void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
 
 
     /*! Return true if the vertex_shader() method is implemented and should be called.
@@ -174,115 +315,59 @@ class ZPR_EXPORT RayShader
     */
     virtual bool vertexShaderActive() { return false; }
 
-    //! Which uniform subd level to displace to.
-    virtual int getDisplacementSubdivisionLevel() const { return 0; }
 
+    //! Return the channels output by all the textures in this shader, and any inputs.
+    virtual DD::Image::ChannelSet getTextureChannels() { return m_texture_channels; }
 
-    //! Current modes for this shader.
-    int  sides_mode()              const { return k_sides_mode; }
-    bool camera_visibility()       const { return k_camera_visibility; }
-    bool shadow_visibility()       const { return k_shadow_visibility; }
-    bool specular_visibility()     const { return k_specular_visibility; }
-    bool diffuse_visibility()      const { return k_diffuse_visibility; }
-    bool transmission_visibility() const { return k_transmission_visibility; }
+    //! Return the channels output by this shader, and any inputs.
+    virtual DD::Image::ChannelSet getChannels() { return m_output_channels; }
 
 
   public:
-    //! This copies info from the Intersection structure into the RayShaderContext structure.
-    static void updateShaderContextFromIntersection(const Traceable::SurfaceIntersection& I,
-                                                    RayShaderContext&                     stx);
-
-
-    //! Abstracted illumination entry point.
-    static void getIllumination(RayShaderContext&                stx,
-                                Fsr::Pixel&                      out,
-                                Traceable::DeepIntersectionList* deep_out=0);
-
-    //----------------------------------
-
-    /*! Abstracted surface shader entry point allows either legacy fragment shader
-        or new ray-traced shader methods to be called.
-        Shader being called is contained in the RayShaderContext.
+    /*! Surface evaluation returns the radiance and aovs from this RayShader
+        given an intersection point and incoming ray in the RayShaderContext.
+        Base class sets color to 18% grey, full opacity.
     */
-    static void doShading(RayShaderContext& stx,
-                          Fsr::Pixel&       out);
+    virtual void evaluateSurface(RayShaderContext& stx,
+                                 Fsr::Pixel&       out);
 
-    /*! Abstracted displacement entry point allows legacy displacement shader or new ray-traced
-        shader methods to be called.  Shader being called is contained in the RayShaderContext.
+    /*! Surface displacement evaluation call.
+        TODO: implement this, the Pixel output is likely wrong.
+        Base class does nothing.
     */
-    static void doDisplacement(RayShaderContext& stx,
-                               Fsr::Pixel&       out);
-
-
-    //! Top-level ray-tracing geometric surface shader evaluation call.
-    void doGeometricShading(RayShaderContext& stx,
-                            RayShaderContext& out);
-
-    //----------------------------------
-
-    /*! Top-level ray-tracing surface shader evaluation call.
-        This checks global-level params before calling the virtual subclass version.
-    */
-    void evaluateShading(RayShaderContext& stx,
-                         Fsr::Pixel&       out);
-
-    /*! Top-level ray-tracing displacement shader evaluation call.
-        This checks global-level params before calling the virtual subclass version.
-    */
-    void evaluateDisplacement(RayShaderContext& stx,
-                              Fsr::Pixel&       out);
-
-
-  protected:
-    //------------------------------------------------------------------
-    // Subclasses implement these calls to modify the shading.
-    // Called from base class high-level methods like getIllumination().
-    //------------------------------------------------------------------
-
-    /*! The surface evaluation shader call. Base class does nothing.
-        If doing final displacement implement _evaluateDisplacement() instead.
-    */
-    virtual void _evaluateGeometricShading(RayShaderContext& stx,
-                                           RayShaderContext& out) {}
-
-    //! The ray-tracing surface shader evaluation call. Base class does nothing.
-    virtual void _evaluateShading(RayShaderContext& stx,
-                                  Fsr::Pixel&       out) {}
-
-    //! The ray-tracing displacement shader evaluation call. Base class does nothing.
-    virtual void _evaluateDisplacement(RayShaderContext& stx,
-                                       Fsr::Pixel&       out) {}
+    virtual void evaluateDisplacement(RayShaderContext& stx,
+                                      Fsr::Pixel&       out);
 
 
   public:
     //------------------------------------------------------------------
-    // Simepl default integrators, for convenience.
+    // Simple default integrators, for convenience.
     //------------------------------------------------------------------
 
     /*! Return the indirect diffuse illumination for surface point with normal N.
         Indirect diffuse means only rays that hit objects will contribute to the surface color.
     */
-    bool getIndirectDiffuse(RayShaderContext& stx,
-                            const Fsr::Vec3d& N,
-                            double            roughness,
-                            Fsr::Pixel&       out);
+    static bool getIndirectDiffuse(RayShaderContext& stx,
+                                    const Fsr::Vec3d& N,
+                                    double            roughness,
+                                    Fsr::Pixel&       out);
 
     /*! Return the indirect specular illumination for surface point with normal N.
         Indirect diffuse means only reflected rays that hit objects will contribute to the surface color.
     */
-    bool getIndirectGlossy(RayShaderContext& stx,
-                           const Fsr::Vec3d& N,
-                           double            roughness,
-                           Fsr::Pixel&       out);
+    static bool getIndirectGlossy(RayShaderContext& stx,
+                                  const Fsr::Vec3d& N,
+                                  double            roughness,
+                                  Fsr::Pixel&       out);
 
     /*! Return the transmitted illumination for surface point with normal N.
         Transmission means only refracted rays that pass through objects will contribute to the surface color.
     */
-    bool getTransmission(RayShaderContext& stx,
-                         const Fsr::Vec3d& N,
-                         double            eta,
-                         double            roughness,
-                         Fsr::Pixel&       out);
+    static bool getTransmission(RayShaderContext& stx,
+                                const Fsr::Vec3d& N,
+                                double            eta,
+                                double            roughness,
+                                Fsr::Pixel&       out);
 
     /*! Get the occlusion of this surface point.
 
@@ -301,17 +386,6 @@ class ZPR_EXPORT RayShader
                               double            maxdist,
                               double            cone_angle=180.0,
                               double            gi_scale=1.0);
-
-
-  public:
-    //------------------------------------------------------------------
-    // RayShaderContext adapter for calling DDImage Materials with a
-    // DD::Image::VertexContext.
-    //------------------------------------------------------------------
-
-    //! Construct a DD::Image::VertexContext that can be passed to a fragment_shader()
-    static void updateDDImageShaderContext(const RayShaderContext&   stx,
-                                           DD::Image::VertexContext& vtx);
 
 
   public:

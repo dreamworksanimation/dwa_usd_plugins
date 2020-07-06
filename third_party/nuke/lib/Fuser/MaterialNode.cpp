@@ -28,6 +28,7 @@
 
 #include "MaterialNode.h"
 
+#include <mutex> // for std::mutex
 
 namespace Fsr {
 
@@ -35,7 +36,7 @@ namespace Fsr {
 /*!
 */
 MaterialNode::MaterialNode(Node* parent) :
-    Fsr::Node(parent)
+    Fsr::ShaderNode(parent)
 {
     //std::cout << "  MaterialNode::ctor(" << this << ")" << std::endl;
 }
@@ -44,9 +45,22 @@ MaterialNode::MaterialNode(Node* parent) :
 */
 MaterialNode::MaterialNode(const ArgSet& args,
                            Node*         parent) :
-    Fsr::Node(args, parent)
+    Fsr::ShaderNode(args, parent)
 {
     //std::cout << "  MaterialNode::ctor(" << this << ")" << std::endl;
+
+    if (debug())
+    {
+        static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
+        std::cout << "--------------------------------------------------" << std::endl;
+        std::cout << "Fsr::MaterialNode('" << getName() << "')";
+        std::cout << " args[" << m_args << "]" << std::endl;
+    }
+
+    m_surface_outputs.reserve(3);
+    m_displacement_outputs.reserve(3);
+    m_volume_outputs.reserve(3);
 }
 
 

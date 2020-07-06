@@ -32,6 +32,7 @@
 
 #include "api.h"
 #include <Fuser/RayContext.h>
+#include <Fuser/NukePixelInterface.h> // for Fsr::Pixel
 
 #include <DDImage/Iop.h>
 
@@ -154,13 +155,12 @@ struct ZPR_EXPORT RayShaderContext
     Fsr::Vec2f Ryst;                //!< Primitive's barycentric coordinates at Rtdy intersection
 
     Fsr::Vec3d N;                   //!< Shading normal (interpolated & bumped vertex normal)
+    Fsr::Vec3d dNdx;                //!< Ns x-derivative
+    Fsr::Vec3d dNdy;                //!< Ns y-derivative
     Fsr::Vec3d Nf;                  //!< Face-forward shading normal
     Fsr::Vec3d Ng;                  //!< Geometric surface normal
     Fsr::Vec3d Ngf;                 //!< Face-forward geometric normal
-    //-------------------------------------------------------------------
     Fsr::Vec3d Ns;                  //!< Interpolated surface normal (same as N but with no bump)
-    Fsr::Vec3d dNsdx;               //!< Ns x-derivative
-    Fsr::Vec3d dNsdy;               //!< Ns y-derivative
 
     Fsr::Vec2f UV;                  //!< Surface texture coordinate
     Fsr::Vec2f dUVdx;               //!< UV x-derivative
@@ -286,7 +286,7 @@ RayShaderContext::getViewVector() const
 {
     // If it's a camera ray we want to construct a 'fake' view-vector
     // from (hero-cam.origin - shading point) to avoid floating reflections:
-    if ((Rtx.type_mask & Fsr::RayContext::CAMERA) && use_heroV_for_spec)
+    if (Rtx.isCameraPath() && use_heroV_for_spec)
     {
         Fsr::Vec3d V(heroCamOrigin - PW);
         V.normalize();

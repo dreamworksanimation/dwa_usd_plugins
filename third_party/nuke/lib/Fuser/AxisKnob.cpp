@@ -50,6 +50,8 @@ void
 AxisKnobVals::print(const char*   prefix,
                     std::ostream& o) const
 {
+    //o.setf(ios::fixed, ios::floatfield);
+    //o.precision(20);
     o << prefix;
     o << "xform_order=" << xform_order;
     o << ", rot_order=" << rot_order;
@@ -140,11 +142,8 @@ AxisKnobVals::setToDefault(double _time)
 void
 AxisKnobVals::setLocalXformValsToDefault()
 {
-    //T_enable = false;
     translate = default_translate;
-    //R_enable = false;
     rotate    = default_rotate;
-    //S_enable = false;
     scaling   = default_scale;
     uniform_scale = 1.0;
     skew      = default_skew;
@@ -474,12 +473,11 @@ AxisKnobVals::extractFromMatrix(const Fsr::Mat4d&  m,
     if (!m.isIdentity())
     {
         // TODO: add control for parent rot order?
-        const Fsr::RotationOrder rot_order = (apply_to_parent) ? Fsr::ZXY_ORDER : decompose_rot_order;
         decompose_ok = m.extractSHRT(scale0,
                                      skew0,
                                      rotate0,
                                      translate0,
-                                     rot_order);
+                                     decompose_rot_order);
         if (T_enable)
             translate0.roundIfNearlyZero();
         if (R_enable)
@@ -541,37 +539,20 @@ AxisKnobVals::clearAnimation(DD::Image::Op*                  op,
     DD::Image::Knob* k;
     DD::Image::Hash dummy_hash;
 
-    // TODO: these enables should be on the AxisKnobVals class, or something like it.
-    bool do_translate      = true;
-    bool do_rotation       = true;
-    bool do_scaling        = true;
-    bool do_parent_extract = false;
-    k = op->knob("translate_enable" ); if (k) k->store(DD::Image::BoolPtr, &do_translate,      dummy_hash, context);
-    k = op->knob("rotate_enable"    ); if (k) k->store(DD::Image::BoolPtr, &do_rotation,       dummy_hash, context);
-    k = op->knob("scale_enable"     ); if (k) k->store(DD::Image::BoolPtr, &do_scaling,        dummy_hash, context);
-    k = op->knob("do_parent_extract"); if (k) k->store(DD::Image::BoolPtr, &do_parent_extract, dummy_hash, context);
+    k = op->knob("parent_translate"); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+    k = op->knob("parent_rotate"   ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+    k = op->knob("parent_scale"    ); if (k) { k->clear_animated(-1); k->set_value(1.0, -1); }
 
-    if (do_translate)
-    {
-        k = op->knob("translate"); if (k) k->clear_animated(-1);
-        if (do_parent_extract)
-            { k = op->knob("parent_translate"); if (k) k->clear_animated(-1); }
-    }
-    if (do_rotation)
-    {
-        k = op->knob("rotate"); if (k) k->clear_animated(-1);
-        if (do_parent_extract)
-            { k = op->knob("parent_rotate"); if (k) k->clear_animated(-1); }
-    }
-    if (do_scaling)
-    {
-        k = op->knob("scaling"      ); if (k) k->clear_animated(-1);
-        k = op->knob("uniform_scale"); if (k) k->clear_animated(-1);
-        if (do_parent_extract)
-            { k = op->knob("parent_scale" ); if (k) k->clear_animated(-1); }
-    }
-    k = op->knob("skew" ); if (k) k->clear_animated(-1);
-    k = op->knob("pivot"); if (k) k->clear_animated(-1);
+    k = op->knob("translate"       ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+    k = op->knob("rotate"          ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+    k = op->knob("scaling"         ); if (k) { k->clear_animated(-1); k->set_value(1.0, -1); }
+    k = op->knob("uniform_scale"   ); if (k) { k->clear_animated(-1); k->set_value(1.0); }
+    k = op->knob("skew"            ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+    k = op->knob("pivot"           ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+
+    k = op->knob("rot_order"       ); if (k) k->set_value(double(Fsr::XYZ_ORDER));
+    k = op->knob("xform_order"     ); if (k) k->set_value(double(Fsr::SRT_ORDER));
+    k = op->knob("usdMatrix"       ); if (k) k->set_value(0.0);
 }
 
 
@@ -654,8 +635,6 @@ AxisKnobVals::store(DD::Image::Op*   op,
 {
     if (!op)
         return false; // don't crash...
-    if (axis_vals_list.size() == 0)
-        return true; // don't bother...
 
     DD::Image::OutputContext context;
     context.setView(-1);
@@ -668,27 +647,30 @@ AxisKnobVals::store(DD::Image::Op*   op,
         AxisKnobVals::clearAnimation(op, context);
 
         const size_t nSamples = axis_vals_list.size();
-        for (size_t j=0; j < nSamples; ++j)
+        if (nSamples > 0)
         {
-            const AxisKnobVals& axis_vals = axis_vals_list[j];
-            //std::cout << "           time=" << axis_vals.time << std::endl;
-            //std::cout << "          rotate" << axis_vals.rotate << std::endl;
-            //std::cout << "         scaling" << axis_vals.scaling << std::endl;
-            //std::cout << "       translate" << axis_vals.translate << std::endl;
-            //std::cout << "            skew" << axis_vals.skew << std::endl;
-            //std::cout << "  parent_enable=" << axis_vals.parent_enable << std::endl;
-            //std::cout << "parent_translate" << axis_vals.parent_translate << std::endl;
-            //std::cout << "   parent_rotate" << axis_vals.parent_rotate << std::endl;
-            //std::cout << "    parent_scale" << axis_vals.parent_scale << std::endl;
+            for (size_t j=0; j < nSamples; ++j)
+            {
+                const AxisKnobVals& axis_vals = axis_vals_list[j];
+                //std::cout << "           time=" << axis_vals.time << std::endl;
+                //std::cout << "          rotate" << axis_vals.rotate << std::endl;
+                //std::cout << "         scaling" << axis_vals.scaling << std::endl;
+                //std::cout << "       translate" << axis_vals.translate << std::endl;
+                //std::cout << "            skew" << axis_vals.skew << std::endl;
+                //std::cout << "  parent_enable=" << axis_vals.parent_enable << std::endl;
+                //std::cout << "parent_translate" << axis_vals.parent_translate << std::endl;
+                //std::cout << "   parent_rotate" << axis_vals.parent_rotate << std::endl;
+                //std::cout << "    parent_scale" << axis_vals.parent_scale << std::endl;
 
-            context.setFrame(axis_vals.time);
-            axis_vals.store(op, context);
+                context.setFrame(axis_vals.time);
+                axis_vals.store(op, context);
+            }
+
+            // Set the rotation order to match the decompose order:
+            DD::Image::Knob* k;
+            k = op->knob("rot_order"  ); if (k) k->set_value(double(axis_vals_list[0].rot_order  ));
+            k = op->knob("xform_order"); if (k) k->set_value(double(axis_vals_list[0].xform_order));
         }
-
-        // Set the rotation order to match the decompose order:
-        DD::Image::Knob* k;
-        k = op->knob("rot_order"  ); if (k) k->set_value(double(axis_vals_list[0].rot_order  ));
-        k = op->knob("xform_order"); if (k) k->set_value(double(axis_vals_list[0].xform_order));
 
     } // DD::Image::KnobChangeGroup
 

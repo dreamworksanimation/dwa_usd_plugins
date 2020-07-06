@@ -50,18 +50,32 @@ class ZPR_EXPORT RaySphericalCamera : public RayCamera
     Fsr::Vec3d getDirVector(const RayCamera::Sample& cam,
                             const Fsr::Vec2d&        screenWindowST) const
     {
+        // screenWindow is in range -1.0...+1.0 so its size is 2.0:
         const double phi    = M_PI * (screenWindowST.x + 1.0) + (M_PI/2.0); // rotate 90deg
         const double sinphi = ::sin(phi);
         const double cosphi = ::cos(phi);
 
-        const double theta    = (M_PI * (screenWindowST.y + 1.0)*0.5);
+        const double theta    = M_PI * ((screenWindowST.y + 1.0)*0.5);
         const double sintheta = ::sin(M_PI - theta);
         const double costheta = ::cos(M_PI - theta);
 
         return Fsr::Vec3d(sintheta*cosphi,
                           costheta,
                           sintheta*sinphi);
+
     }
+
+
+    /*! Project a world-space point into spherically-projected coordinate
+        at screen-window NDC coordinate (in -1...+1 range)..
+    */
+    /*virtual*/
+    Fsr::Vec2d projectPoint(const RayCamera::Sample& cam,
+                            const Fsr::Vec3d&        worldspaceP) const
+    {
+        return Fsr::Vec2d(0.0, 0.0);
+    }
+
 };
 
 

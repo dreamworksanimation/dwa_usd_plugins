@@ -67,8 +67,18 @@ namespace Fsr {
     by that point.
 */
 
+
 //! Return the GeoInfo's point array cast to a Vec3f. *** Not thread safe! ***
 FSR_EXPORT const Fsr::Vec3f* getObjectPointArray(const DD::Image::GeoInfo& info);
+
+
+//! Some standard attrib queries. *** Not thread safe! ***
+// Returns 'name' string attribute.
+FSR_EXPORT std::string getObjectName(const DD::Image::GeoInfo& info);
+// Returns 'scene:path' string attribute.
+FSR_EXPORT std::string getObjectPath(const DD::Image::GeoInfo& info);
+// Returns 'material:binding' string attribute.
+FSR_EXPORT std::string getObjectMaterialBinding(const DD::Image::GeoInfo& info);
 
 
 //! Get an Attribute value from the 'Group_Object' level of a GeoInfo. *** Not thread safe! ***
@@ -99,6 +109,7 @@ FSR_EXPORT void*       getAttribData(const DD::Image::GeoInfo& info,
                                      DD::Image::GroupType      attrib_group,
                                      const char*               attrib_name,
                                      DD::Image::AttribType     attrib_type);
+
 
 
 //! Set an Attribute value at the 'Group_Object' level of a GeoInfo. *** Not thread safe! ***

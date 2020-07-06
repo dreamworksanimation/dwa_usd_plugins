@@ -55,6 +55,10 @@ class ZPR_EXPORT LightShader : public RayShader
     //!
     static const char* zpClass();
 
+    //! Returns the class name, must implement.
+    /*virtual*/ const char* zprShaderClass() const { return "LightShader"; }
+
+
     /*! !!HACK ALERT!! This adds an invisible 'zpLightShader' knob
         that's used to identify a LightShader-derived Op to other plugins.
 
@@ -73,7 +77,8 @@ class ZPR_EXPORT LightShader : public RayShader
 
 
     //! Initialize any vars prior to rendering.
-    /*virtual*/ void validateShader(bool for_real);
+    /*virtual*/ void validateShader(bool                 for_real,
+                                    const RenderContext& rtx);
 
 
   protected:

@@ -35,9 +35,6 @@
 #include <DDImage/ViewerContext.h> // for display3d_names_source string list
 #include <DDImage/ArrayKnobI.h> // for ArrayKnobI::ValueProvider
 
-// Do we want to expose parenting scale?
-//#define ENABLE_PARENT_SCALE 1
-
 
 //------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------
@@ -399,35 +396,35 @@ SceneXform::addParentingKnobs(DD::Image::Knob_Callback f,
         // XYZ_knob is always floats but we don't want to store floats, so
         // point the knobs at a dummy value and later use Knob::store() to get
         // the underlying doubles:
-        DD::Image::Vector3 dflt(0.0f, 0.0f, 0.0f);
-        kParentTranslate = DD::Image::XYZ_knob(f, &dflt.x, "parent_translate", "parent translate");
+        Fsr::Vec3f dflt_zero(0.0f);
+        kParentTranslate = DD::Image::XYZ_knob(f, &dflt_zero.x, "parent_translate", "parent translate");
             DD::Image::SetFlags(f, DD::Image::Knob::NO_HANDLES);
             DD::Image::Tooltip(f, "This translate is applied prior to the local transform allowing a "
                                   "parenting hierarchy to be kept separate from the local transform.\n"
                                   "\n"
+                                  "Applied in fixed SRT transform order and XYZ rotation order.\n"
+                                  "\n"
                                   "When loading xform node data from a scene file the node's parent "
                                   "transform can be placed here.\n");
-        kParentRotate = DD::Image::XYZ_knob(f, &dflt.x, "parent_rotate", "parent rotate");
+        kParentRotate = DD::Image::XYZ_knob(f, &dflt_zero.x, "parent_rotate", "parent rotate");
             DD::Image::SetFlags(f, DD::Image::Knob::NO_HANDLES);
             DD::Image::Tooltip(f, "This rotate is applied prior to the local transform allowing a "
                                   "parenting hierarchy to be kept separate from the local transform.\n"
                                   "\n"
+                                  "Applied in fixed SRT transform order and XYZ rotation order.\n"
+                                  "\n"
                                   "When loading xform node data from a scene file the node's parent "
                                   "transform can be placed here.\n");
-#ifdef ENABLE_PARENT_SCALE
-        kParentScale = DD::Image::XYZ_knob(f, &dflt.x, "parent_scale", "parent scale");
+        Fsr::Vec3f dflt_one(1.0f);
+        kParentScale = DD::Image::XYZ_knob(f, &dflt_one.x, "parent_scale", "parent scale");
             DD::Image::SetFlags(f, DD::Image::Knob::NO_HANDLES);
             DD::Image::Tooltip(f, "This scale is applied prior to the local transform allowing a "
                                   "parenting hierarchy to be kept separate from the local transform.\n"
                                   "\n"
+                                  "Applied in fixed SRT transform order and XYZ rotation order.\n"
+                                  "\n"
                                   "When loading xform node data from a scene file the node's parent "
                                   "transform can be placed here.\n");
-#else
-        // Create a dummy knob so that scripts load without failure and the scene loaders don't fail.
-        // But since we're not setting kParentScale the transform code will not fail either.
-        DD::Image::XYZ_knob(f, &dflt.x, "parent_scale", DD::Image::INVISIBLE);
-            DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE | DD::Image::Knob::NO_ANIMATION | DD::Image::Knob::NO_RERENDER);
-#endif
     }
     //DD::Image::EndGroup(f);
     //----------------------------------------

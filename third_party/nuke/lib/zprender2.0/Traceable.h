@@ -101,7 +101,7 @@ class ZPR_EXPORT Traceable
   public:
     //--------------------------------------------------------------------------------- 
 
-    /*!
+    /*! Stores surface intersection information that may be motion-blurred.
     */
     struct SurfaceIntersection
     {
@@ -116,14 +116,18 @@ class ZPR_EXPORT Traceable
         int32_t  subpart_index; //!< Part subpart index used for part of a face, etc. -1 indicates unused
 
         /* Surface Params: */
-        Fsr::Vec2f st;          //!< Primitive's parametric coordinates at intersection
-        Fsr::Vec2f Rxst;        //!< Primitive's parametric coordinates at intersection
-        Fsr::Vec2f Ryst;        //!< Primitive's parametric coordinates at intersection
+        Fsr::Vec2f st;          //!< Primitive's parametric coordinate at intersection
+        Fsr::Vec2f Rxst;        //!< X-offset parametric coordinate at intersection
+        Fsr::Vec2f Ryst;        //!< Y-offset parametric coordinate at intersection
         //
         Fsr::Vec3d PW;          //!< Surface point w/displacement
+        Fsr::Vec3d RxPW;        //!< PW at x-derivative offset
+        Fsr::Vec3d RyPW;        //!< PW at y-derivative offset
         Fsr::Vec3d PWg;         //!< Geometric surface point (no displacement)
         //
         Fsr::Vec3f N;           //!< Interpolated surface normal (vertex normal) possibly with bump
+        Fsr::Vec3f RxN;         //!< N at x-derivative offset
+        Fsr::Vec3f RyN;         //!< N at y-derivative offset
         Fsr::Vec3f Ns;          //!< Interpolated surface normal - with no bump
         Fsr::Vec3f Ng;          //!< Geometric surface normal
 

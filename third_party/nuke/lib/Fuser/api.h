@@ -187,7 +187,24 @@ splitString(const std::string&        src,
 
 //-------------------------------------------------------------------------
 
-/*!
+/* Build a path from two parts adding a '/' separator.
+*/
+inline std::string
+buildPath(const std::string& path0,
+          const std::string& path1)
+{
+    if (path0.size() == 0)
+        return path1;
+
+    std::string out; out.reserve(path0.size() + path1.size() + 1);
+    out = path0;
+    if (path0[path0.size()-1] != '/')
+        out += '/';
+    out += path1;
+    return out;
+}
+
+/*! Split a path into the parent and last directory or filename.
 */
 inline void
 splitPath(const std::string& path,
@@ -206,7 +223,7 @@ splitPath(const std::string& path,
     }
 }
 
-/*!
+/*! Extract the filename portion of the path.
 */
 inline std::string
 fileNameFromPath(const std::string& path)

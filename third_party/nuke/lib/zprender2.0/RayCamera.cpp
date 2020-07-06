@@ -234,6 +234,28 @@ RayCamera::_constructRay(const Fsr::Vec2d&      pixelXY,
 }
 
 
+/*! Project a world-space AABB into -1...+1 screen-window (NDC) range.
+    Base class subdivides the bbox depending on whether the projection
+    is linear or not.
+*/
+/*virtual*/ Fsr::Vec2d
+RayCamera::projectBbox(const RayCamera::Sample& cam,
+                       const Fsr::Box3d&        worldspaceBbox) const
+{
+    if (isLinearProjection())
+    {
+        // Project the corners:
+    }
+    else
+    {
+        // Project the corners and several points along each edge:
+    }
+
+    return Fsr::Vec2d(0.0, 0.0);
+}
+
+
+
 } // namespace zpr
 
 // end of zprender/RayCamera.cpp

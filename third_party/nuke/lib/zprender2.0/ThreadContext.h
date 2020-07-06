@@ -32,6 +32,7 @@
 
 #include "RayShaderContext.h"
 #include "Scene.h"
+#include "Texture2dSampler.h"
 #include "Traceable.h" // for SurfaceIntersectionList
 #include "Volume.h"    // for VolumeIntersectionList
 
@@ -44,8 +45,6 @@ namespace zpr {
 
 class RenderContext;
 class BvhNode;
-class TextureSamplerContext;
-
 
 
 /*! The render context (zpr::Context) has one of these for each thread it's
@@ -71,9 +70,6 @@ class ZPR_EXPORT ThreadContext
     zpr::Scene        m_master_lighting_scene;          //!< Lighting contexts set to the frame time
     LightingSceneList m_per_object_lighting_scenes;     //!< Per-object-context lighting scenes (object filtered)
 
-    std::vector<TextureSamplerContext*> m_tex_samplers;     //!< List of active texture samplers for this thread
-    std::map<uint64_t, uint32_t>        m_tex_sampler_map;  //!< Texture ID to texture sampler index map
-
 
   private:
     //-------------------------------------------------------
@@ -94,9 +90,13 @@ class ZPR_EXPORT ThreadContext
     Volume::VolumeIntersectionList       vol_intersections;
     Traceable::UVSegmentIntersectionList uv_intersections;
 
-    Fsr::Pixel surface_color;
-    Fsr::Pixel light_color;
-    Fsr::Pixel volume_color;
+    Fsr::Pixel texture_color;       //!< Used for sampling texture map Iops
+    Fsr::Pixel binding_color;       //!< Used for InputBinding getValue() calls
+    Fsr::Pixel surface_color;       //!< Used for RayShader surface evaluation
+    Fsr::Pixel light_color;         //!< Used for LightShader evaluation
+    Fsr::Pixel volume_color;        //!< Used for VolumeShader evaluation
+    DD::Image::InterestRatchet textureColorInterestRatchet;
+    DD::Image::InterestRatchet bindingColorInterestRatchet;
     DD::Image::InterestRatchet surfaceColorInterestRatchet;
     DD::Image::InterestRatchet lightColorInterestRatchet;
     DD::Image::InterestRatchet volumeColorInterestRatchet;

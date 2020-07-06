@@ -30,111 +30,109 @@
 #ifndef zprender_ColorMapKnob_h
 #define zprender_ColorMapKnob_h
 
-#include "RayShader.h"
+#include "InputBinding.h"
 
+#include <DDImage/Knob.h>
 #include <DDImage/Iop.h>
 
 namespace zpr {
 
 
+/*! Knob construction/store callback 'macro' similar to the ones defined in
+    Knobs.h. It declares a DD::Image::CUSTOM_KNOB enumeration and a
+    DD::Image::Custom data type.
 
-/*!
+    The ColorMap Knob is the most general type supporting Texture
+    and Material inputs as well as user-defined constant value,
+    depending on the expression string in the input binding.
+
+    The implied shader network implied by this can be interpreted and
+    converted into separate shaders or the InputBinding::sample() methods
+    can be used to simplify this without requiring separate shaders.
 */
-class ZPR_EXPORT ColorMapKnob
+DD::Image::Knob* ColorMap_knob(DD::Image::Knob_Callback f,
+                               InputBinding*            binding,
+                               uint32_t                 input_num,
+                               uint32_t                 num_chans,
+                               const char*              name,
+                               const char*              label=NULL);
+
+
+/*! Knob construction/store callback 'macro' similar to the ones defined in
+    Knobs.h. It declares a DD::Image::CUSTOM_KNOB enumeration and a
+    DD::Image::Custom data type.
+
+    The OpInput Knob does not create any user knobs and only supports a
+    blind input connection to an input Op. Use the InputBinding::asGeoOp(),
+    asAxisOp(), etc methods to get the connection cast to the correct type,
+    use the InputBinding::isGeoOp(), isAxisOp(), etc. methods to verify the
+    type if you don't know it already.
+
+    This knob is automatically named 'inputop<#>' using 'input_num'.
+*/
+DD::Image::Knob* InputOp_knob(DD::Image::Knob_Callback f,
+                              InputBinding*            binding,
+                              uint32_t                 input_num);
+
+
+
+
+/*! Wrapper knob around the color map controls.
+*/
+class ZPR_EXPORT ColorMapKnob : public DD::Image::Knob
 {
-  public:
-    struct ExprContext
-    {
-        RayShaderContext*  stx;
-        DD::Image::Vector4 const_val;
-    };
-
-    typedef void (*Handler)(const ExprContext& etx, Fsr::Vec4f& out);
-
-
   protected:
     bool                  k_enable;             //!< Enable/disable the map
-    const char*           k_binding_expr;       //!< Binding expression
+    const char*           k_expr;               //!< Binding expression
     DD::Image::Channel    k_map_chans[4];       //!< Texture map channels to sample
     //
-    DD::Image::Iop*       m_parent;             //!< The shader who owns us
-    ColorMapKnob::Handler m_handler;            //!< Sampler handler to use
-    //
     int                   m_input;              //!< The Node input # the map is coming from
-    RayShader::MapBinding m_binding;            //!< Type of binding (Attribute, Material, RayShader, Iop, etc)
-    int                   m_num_channels;       //!< Number of channels
-    DD::Image::ChannelSet m_channels;           //!< ChannelSet built from k_map_chans[]
-    DD::Image::Hash       m_hash;               //!< Hash of knob
-    Fsr::Vec4f            m_constant;           //!< Value to use if expression is constant
-    Fsr::Vec2f            m_uv_tile_offset;     //!< UDIM utile offset
+    DD::Image::Hash       m_expr_hash;          //!< Hash of expression string
+    InputBinding          m_expr_binding;       //!< The binding resulting from expression parsing
     //
-    const char*           m_knob_names[2];
-
-    //! Parses the binding expression, returning true on success
-    uint32_t parseExpression(const char* expr);
+    const char*           m_knob_names[3];
+    DD::Image::Knob       *kEnable, *kExpr, *kChans;
 
 
   public:
-    ColorMapKnob(DD::Image::Iop*    parent,
-                 int                input_num=1,
-                 int                num_chans=3,
-                 DD::Image::Channel first_chan=DD::Image::Chan_Red);
-    virtual ~ColorMapKnob();
+    //! Ctor used by ColorMap_knob() method.
+    ColorMapKnob(DD::Image::Knob_Closure* cb,
+                 uint32_t                 input_num,
+                 uint32_t                 num_chans,
+                 const char*              name,
+                 const char*              label);
 
-    //! Is the sampler enabled?
-    bool isEnabled() const { return (k_enable && !m_binding.noBinding()); }
-    //! Sampler binding type
-    uint16_t getType()   const { return m_binding.type; }
-    //! Is the map a texture/shader source?
-    bool isTexture() const { return m_binding.isTexture(); }
-    //! Is the input a single channel?
-    bool isMono()    const { return m_binding.isMono(); }
-    //! Does the input have an alpha?
-    bool hasAlpha()  const { return m_binding.hasAlpha(); }
-    //! Does the input have an alpha and we are using 4 channels?
-    bool useAlpha()  const { return (m_binding.hasAlpha() && m_num_channels == 4); }
+    //! Ctor used by OpInput_knob() method.
+    ColorMapKnob(DD::Image::Knob_Closure* cb,
+                 uint32_t                 input_num,
+                 const char*              name);
 
-    //! If set to a constant this is it.
-    const Fsr::Vec4f&     getConstant() const { return m_constant; }
-
-    DD::Image::ChannelSet getChannels() const { return m_channels; }
-
-    //! Assign the input number of the map, the number of channels to fill in, and the starting channel index.
-    void setInput(int                input_num,
-                  int                num_chans=3,
-                  DD::Image::Channel first_chan=DD::Image::Chan_Red);
-
-    //! Build the knobs for this.
-    virtual DD::Image::Knob* addKnobs(DD::Image::Knob_Callback f,
-                                      const char*              name="color_map", const char* label=0);
+    //---------------------------------------------------------------------
+    //---------------------------------------------------------------------
+    // From DD::Image::Knob:
 
     //!
-    virtual bool knobChanged(DD::Image::Knob* k);
+    /*virtual*/ const char* Class() const { return "ColorMapKnob"; }
+
+    //! Don't make an interface. TODO: this causes build problems...
+    ///*virtual*/ WidgetPointer make_widget(const DD::Image::WidgetContext&) { return NULL; }
+
+    //! Don't do anything since the wrapper knob should never be written to a script file.
+    /*virtual*/ bool from_script(const char*) { return true; }
+
+    //! 
+    /*virtual*/ void reset_to_default() {}
 
     //!
-    virtual void validateColorMap(bool for_real);
+    /*virtual*/ void append(DD::Image::Hash&,
+                            const DD::Image::OutputContext*);
 
-    //!
-    virtual void requestColorMap(int count) const;
-
-    //! Sample the texture input, returning RGB in a Vec3f and filling in the optional alpha pointer.
-    virtual Fsr::Vec3f sample(RayShaderContext& stx,
-                              float*            out_alpha=NULL);
+    //! Stores into an InputBinding.
+    /*virtual*/ void store(DD::Image::StoreType            type,
+                           void*                           p,
+                           DD::Image::Hash&                hash,
+                           const DD::Image::OutputContext& context);
 };
-
-
-//-------------------------------------------------------------------------
-
-
-//! Texture_knob helper method.
-inline DD::Image::Knob*
-Texture_knob(DD::Image::Knob_Callback f,
-             ColorMapKnob&            map_knob,
-             const char*              name,
-             const char*              label=NULL)
-{
-    return map_knob.addKnobs(f, name, label);
-}
 
 
 } // namespace zpr

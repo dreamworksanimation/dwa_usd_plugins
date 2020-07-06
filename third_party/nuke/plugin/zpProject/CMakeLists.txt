@@ -10,5 +10,6 @@ pxr_plugin(${PXR_PACKAGE}
         ${NUKE_INCLUDE_DIRS}
 
     CPPFILES
+        zprProject.cpp
         zpProject.cpp
 )

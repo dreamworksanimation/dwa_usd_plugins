@@ -68,8 +68,10 @@ typedef std::set<std::string>              StringSortedSet;
 
 extern FSR_EXPORT std::string empty_string;
 
+
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------
+
 
 /*! Convenience wrapper class around a KeyValueMap providing
     argument get/set access methods.

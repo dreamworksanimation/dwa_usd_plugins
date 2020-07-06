@@ -71,7 +71,8 @@ VolumeShader::addVolumeShaderIdKnob(DD::Image::Knob_Callback f)
 /*!
 */
 /*virtual*/ void
-VolumeShader::validateShader(bool for_real)
+VolumeShader::validateShader(bool                 for_real,
+                             const RenderContext& rtx)
 {
 }
 

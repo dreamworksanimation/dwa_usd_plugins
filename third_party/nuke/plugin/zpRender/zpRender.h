@@ -32,14 +32,29 @@
 
 #include "AxisManipulator.h"//<zprender/AxisManipulator.h>
 #include "zpSamplerSet.h"
+#include "zpSurfaceHandlers.h"
+#include "zpLightVolumeHandler.h"
 
 #include <zprender/RenderContext.h>
 #include <zprender/Volume.h>
-#include <zprender/VolumeShaderOp.h>
+#include <zprender/VolumeMaterialOp.h>
 
 #include <DDImage/Render.h>
 #include <DDImage/DeepOp.h>
 #include <DDImage/LookupCurves.h>
+
+
+// Disable Deep functionality on 11 and below as Nuke will sometimes
+// fail to start zpRender's engine threads (and do request()) for some
+// unknown reason, and get stuck in an infinite gui loop.
+// Under gdb all threads are stuck in waits and no threads are in
+// zpRender code at all. This happens once in a while but enough that
+// we want to avoid it until the root cause is determined. Considering the
+// general bugginess of the Deep system in 10 we'll avoid subclassing off
+// DeepOp in 10 (and maybe 11 too):
+#if kDDImageVersionMajorNum >= 11
+#  define ENABLE_DEEP 1
+#endif
 
 
 #define NUM_AOV_OUTPUTS  10
@@ -59,13 +74,16 @@ namespace zpr {
 /*!
 */
 class zpRender : public DD::Image::Render,
+#ifdef ENABLE_DEEP
                  public DD::Image::DeepOp,
+#endif
                  public zpr::AxisManipulator
 {
   protected:
     enum { SHUTTER_STOCHASTIC, SHUTTER_SLICE, SHUTTER_OFFSET };
     enum { GLOBAL_XFORM_OFF, GLOBAL_XFORM_CAM_OPEN, GLOBAL_XFORM_MANUAL };
     enum { NOISE_FBM, NOISE_TURBULENCE };
+    enum { LIGHTING_ENABLE_AUTO, LIGHTING_ENABLED, LIGHTING_DISABLED };
     // TODO: support more of these cameras
     enum
     {
@@ -73,7 +91,7 @@ class zpRender : public DD::Image::Render,
         //PROJECTION_ORTHOGRAPHIC,
         //PROJECTION_UV,
         PROJECTION_SPHERICAL,
-        //PROJECTION_CYLINDRICAL,
+        PROJECTION_CYLINDRICAL,
         PROJECTION_RENDER_CAMERA
     };
 
@@ -87,6 +105,14 @@ class zpRender : public DD::Image::Render,
     //
     int         k_global_xform_mode;            //!<
     Fsr::Vec3d  k_global_offset;                //!<
+
+
+    //=======================================================
+    //
+    bool        k_use_direct_lighting;          //!< Enable direct scene lighting (shadowed)
+    bool        k_use_indirect_lighting;        //!< Enable indirect scene lighting (bounce)
+    bool        k_use_atmospheric_lighting;     //!< Enable atmospheric scene lighting (light volumes)
+    int         k_autolighting_mode;            //!< Lighting enable mode
 
 
     //=======================================================
@@ -160,7 +186,7 @@ class zpRender : public DD::Image::Render,
 
     //=======================================================
     // Atmospheric ray-marching:
-    VolumeShaderOp k_ambient_volume;
+    AmbientVolumeShader k_ambient_volume;
 
 
     //=======================================================
@@ -172,6 +198,12 @@ class zpRender : public DD::Image::Render,
     int  m_ray_refraction_samples;      //!< Refraction ray samples
 
     bool m_have_bg_Z;
+
+    DD::Image::Hash         m_camera_hash;      //!< Hash value of current camera
+    DD::Image::Hash         m_geometry_hash;    //!< Hash value of all geometric params
+    DD::Image::Hash         m_material_hash;    //!< Hash value of all materials
+    DD::Image::Hash         m_lighting_hash;    //!< Hash value of all lights
+    DD::Image::GeometryMask m_changed_mask;     //!< If a part changed its bit is set (after validate() is called)
 
     SamplerSet*       m_sampler_set;        //!< 
     DD::Image::Hash   m_sampler_set_hash;   //!< Indicates when the sampler set needs to be rebuilt
@@ -372,6 +404,7 @@ class zpRender : public DD::Image::Render,
     //--------------------------------------------------
     // From DD::Image::DeepOp:
 
+#ifdef ENABLE_DEEP
     //!
     /*virtual*/ DD::Image::Op* op() { return this; }
 
@@ -380,6 +413,7 @@ class zpRender : public DD::Image::Render,
 
     //! Deep tile engine.
     /*virtual*/ bool doDeepEngine(DD::Image::Box bbox, const DD::Image::ChannelSet& out_channels, DD::Image::DeepOutputPlane& deep_out_plane);
+#endif
 
 
   private:

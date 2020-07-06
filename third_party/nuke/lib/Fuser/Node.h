@@ -342,12 +342,20 @@ class FSR_EXPORT Node
     //! Will this node generate additional Fsr::Node children?
     virtual bool willProduceChildren() const { return false; }
 
-    //! Add a child node, this node take ownership of pointer.
+    //! Add a child node, this node takes ownership of pointer.
     unsigned addChild(Node* node);
     //!
     unsigned numChildren() const { return (unsigned)m_children.size(); }
-    //!
-    const Node* getChild(unsigned i) const { assert(i < m_children.size()); return m_children[i]; }
+    //! Returns NULL if index is outside range.
+    Node*    getChild(unsigned index) const { assert(index < m_children.size()); return m_children[index]; }
+    //! Returns -1 if not in child list.
+    int      getChild(Node* node) const;
+    //! Returns NULL if named node not in child list.
+    Node*    getChildByName(const char*        child_name) const;
+    Node*    getChildByName(const std::string& child_name) const { return getChildByName(child_name.c_str()); }
+    //! Returns NULL if a node with the path is not found in child list.
+    Node*    getChildByPath(const char*        child_path) const;
+    Node*    getChildByPath(const std::string& child_path) const { return getChildByPath(child_path.c_str()); }
     //!
     const std::vector<Node*>& getChildren() const { return m_children; }
 
@@ -509,7 +517,7 @@ class FSR_EXPORT Node
     void    setVec2d(const std::string& key, const Fsr::Vec2d& value) { m_args.setVec2d(key, value); }
     void    setVec3d(const std::string& key, const Fsr::Vec3d& value) { m_args.setVec3d(key, value); }
     void    setVec4d(const std::string& key, const Fsr::Vec4d& value) { m_args.setVec4d(key, value); }
-    void    setMat4d(const std::string& key, const Fsr::Vec4d& value) { m_args.setVec4d(key, value); }
+    void    setMat4d(const std::string& key, const Fsr::Mat4d& value) { m_args.setMat4d(key, value); }
 
 
   private:

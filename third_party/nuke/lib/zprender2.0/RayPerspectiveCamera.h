@@ -53,10 +53,12 @@ class ZPR_EXPORT RayPerspectiveCamera : public RayCamera
     //! Zoom-scale is film_width/focal_length, or the precalculated lensScale.
     /*virtual*/ double lensMagnification() const { return cam0.lensScale; }
 
-    /*! Find the camera-projected coordinate at NDC coordinate u/v.  This takes into account
-        the camera's win translate & win scale, but not win roll (yet).
 
-        u and v are in NDC coords -1...+1
+    /*! Find the camera-projected coordinate at screen-window NDC
+        coordinate (in -1...+1 range).
+
+        This takes into account the camera's win translate & win scale,
+        but not win roll (yet).
     */
     /*virtual*/
     Fsr::Vec3d getDirVector(const RayCamera::Sample& cam,
@@ -73,6 +75,17 @@ class ZPR_EXPORT RayPerspectiveCamera : public RayCamera
 
         //std::cout << screenWindowST << "=" << P << std::endl;
         return P;
+    }
+
+
+    /*! Project a world-space point into perspectively-projected
+        screen-window (NDC) range.
+    */
+    /*virtual*/
+    Fsr::Vec2d projectPoint(const RayCamera::Sample& cam,
+                            const Fsr::Vec3d&        worldspaceP) const
+    {
+        return Fsr::Vec2d(0.0, 0.0);
     }
 
 };

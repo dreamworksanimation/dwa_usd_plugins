@@ -31,14 +31,17 @@
 #include "Scene.h"
 #include "SurfaceHandler.h"
 #include "ThreadContext.h"
+#include "RayMaterial.h"
 #include "RayShader.h"
 #include "LightShader.h"
-#include "SurfaceShaderOp.h"
+#include "SurfaceMaterialOp.h"
 #include "ConeVolume.h"   // for getConeBBox
 #include "SphereVolume.h" // for getSphereBBox
 
 #include <Fuser/Primitive.h>  // for FUSER_NODE_PRIMITIVE_TYPE, FUSER_MESH_PRIMITIVE_TYPE, etc
 #include <Fuser/NukeGeoInterface.h> // for getObjectString()
+#include <Fuser/Primitive.h>
+#include <Fuser/MaterialNode.h>
 
 
 #include <DDImage/Iop.h>
@@ -68,7 +71,7 @@ static DD::Image::Lock expand_lock;
 // Force the template specialized function symbols to be included in the static library.
 // Without this you may get symbol errors:
 static Bvh<ObjectContext*>  bvh_otx;
-static Bvh<SurfaceContext*> bvh_stx;
+static Bvh<SurfaceContext*> bvh_sftx;
 
 //! Used in Bvh and other places that return a const Fsr::Box3<T>&
 /*extern*/ Fsr::Box3f empty_box3f;
@@ -188,7 +191,7 @@ aov_handler_attribute(const RayShaderContext& stx,
     {
         for (uint32_t i=0; i < 3; ++i)
             gtx.info->UV_ref->copy_to_channels(attrib_indices[i], vP[i]);
-        interpolateVector4(vP[0].UV(),  vP[1].UV(),  vP[2].UV(), st, v.UV());
+        interpolateVec4(vP[0].UV(),  vP[1].UV(),  vP[2].UV(), st, v.UV());
     }
     else
     {
@@ -224,13 +227,13 @@ static void aov_handler_PL(   const RayShaderContext& stx, const AOVLayer& aov, 
     }
 }
 //
-static void aov_handler_N(    const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.N.array(),     3, aov, out); }
-static void aov_handler_Nf(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Nf.array(),    3, aov, out); }
-static void aov_handler_Ng(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ng.array(),    3, aov, out); }
-static void aov_handler_Ngf(  const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ngf.array(),   3, aov, out); }
-static void aov_handler_Ns(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ns.array(),    3, aov, out); }
-static void aov_handler_dNsdx(const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.dNsdx.array(), 3, aov, out); }
-static void aov_handler_dNsdy(const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.dNsdy.array(), 3, aov, out); }
+static void aov_handler_N(    const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.N.array(),    3, aov, out); }
+static void aov_handler_Nf(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Nf.array(),   3, aov, out); }
+static void aov_handler_Ng(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ng.array(),   3, aov, out); }
+static void aov_handler_Ngf(  const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ngf.array(),  3, aov, out); }
+static void aov_handler_Ns(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ns.array(),   3, aov, out); }
+static void aov_handler_dNdx( const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.dNdx.array(), 3, aov, out); }
+static void aov_handler_dNdy( const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.dNdy.array(), 3, aov, out); }
 //
 static void aov_handler_st(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribf(stx.st.array(), 2, aov, out); }
 static void aov_handler_dstdx(const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out)
@@ -318,8 +321,8 @@ assign_aov_handlers(AOVBuiltIn* handlers)
     handlers[AOV_Ng       ].set("ng",              aov_handler_Ng       );
     handlers[AOV_Ngf      ].set("ngf",             aov_handler_Ngf      );
     handlers[AOV_Ns       ].set("ns",              aov_handler_Ns       );
-    handlers[AOV_dNsdx    ].set("dnsdx",           aov_handler_dNsdx    );
-    handlers[AOV_dNsdy    ].set("dnsdy",           aov_handler_dNsdy    );
+    handlers[AOV_dNdx     ].set("dndx",            aov_handler_dNdx     );
+    handlers[AOV_dNdy     ].set("dndy",            aov_handler_dNdy     );
     //              //
     handlers[AOV_UV       ].set("uv",              aov_handler_UV       );
     handlers[AOV_dUVdx    ].set("duvdx",           aov_handler_dUVdx    );
@@ -576,7 +579,7 @@ SurfaceContext::getScene(uint32_t sample)
 /*static*/ const char* RenderContext::shading_interpolation_names[] = { "off", "constant", "smooth", 0 };
 /*static*/ const char* RenderContext::sampling_modes[]     = { "1", "2", "3", "4", "5", "8", "12", "16","32","64", 0 };
 /*static*/ const char* RenderContext::output_bbox_modes[]  = { "scene", "format", 0 };
-/*static*/ const char* RenderContext::sides_modes[]        = { "front", "back", "both", 0 };
+/*static*/ const char* RenderContext::sides_modes[]        = { "both", "front", "back", 0 };
 /*static*/ const char* RenderContext::debug_names[]        = { "off", "low", "medium", "high", 0 };
 /*static*/ const char* RenderContext::diagnostics_modes[]  = { "off", "time", "bounds", "bvh-leafs", "intersections", "volumes", "patches", "render-time", 0 };
 
@@ -589,13 +592,14 @@ static NullSurfaceHandler null_surface_handler;
 
 /*!
 */
-RenderContext::RenderContext()
+RenderContext::RenderContext(DD::Image::Op* parent) :
+    m_parent(parent)
 {
     //----------------------------------------------
     // Driven by knob controls:
     k_shutter_bias              = 0.0;
+    k_projection_mode           = CAMERA_PROJECTION_PERSPECTIVE;
     k_camera_mode               = CAMERA_COMBINED;
-    k_projection_mode           = DD::Image::CameraOp::LENS_PERSPECTIVE;
     k_shading_interpolation     = SHADING_SMOOTH;
     k_sides_mode                = SIDES_FRONT;
     k_preview_mode              = false;
@@ -605,9 +609,6 @@ RenderContext::RenderContext()
     k_spatial_jitter_threshold  = 1;
     k_output_bbox_mode          = BBOX_SCENE_SIZE;
 
-    k_direct_lighting_enabled    = true;
-    k_indirect_lighting_enabled  = true;
-    k_atmospherics_enabled       = false;
     k_atmosphere_alpha_blending  = true;
     k_transparency_enabled       = true;
 
@@ -622,8 +623,10 @@ RenderContext::RenderContext()
     frame0                      = 0.0;
     render_view                 = 1;
     render_view_name            = "main";
-    scene_channels              = DD::Image::Mask_None;
-    render_format               = 0;
+    render_projection           = DD::Image::CameraOp::LENS_PERSPECTIVE;
+    texture_channels            = DD::Image::Mask_None;
+    material_channels           = DD::Image::Mask_None;
+    render_format               = NULL;
     render_channels             = DD::Image::Mask_None;
     color_channels              = DD::Image::Mask_None;
     vector_channels             = DD::Image::Mask_None;
@@ -649,8 +652,15 @@ RenderContext::RenderContext()
     ray_glossy_samples          = 2;
     ray_refraction_samples      = 2;
 
+    direct_lighting_enabled      = true;
+    indirect_lighting_enabled    = true;
+    atmospheric_lighting_enabled = false;
+
     hash.reset();
     objects_initialized         = false;
+
+    objects_bvh_initialized     = false;
+    lights_bvh_initialized      = false;
 
     bvh_max_depth               = 256;
     bvh_max_objects             = 25;
@@ -678,6 +688,9 @@ RenderContext::~RenderContext()
 {
     // Delete object contexts & bvhs:
     destroyAllocations(true/*force*/);
+    destroyObjectBVHs(true);
+    destroyLightBVHs(true);
+    destroyRayMaterials();
 }
 
 
@@ -686,7 +699,6 @@ RenderContext::~RenderContext()
 
 /*! Delete all context allocations.
 */
-/*virtual*/
 void
 RenderContext::destroyAllocations(bool force)
 {
@@ -719,21 +731,1068 @@ RenderContext::destroyAllocations(bool force)
         lshaders.clear();
     }
     per_object_light_shaders.clear();
+}
 
-    //-----
 
+/*! Delete object bvhs
+*/
+void
+RenderContext::destroyObjectBVHs(bool force)
+{
     // TODO: support hash testing before deleting all objects!
     for (uint32_t i=0; i < object_context.size(); ++i)
         delete object_context[i];
     object_context.clear();
     object_map.clear();
     objects_bvh.clear();
+}
 
+/*! Delete light bvhs
+*/
+void
+RenderContext::destroyLightBVHs(bool force)
+{
+    // TODO: support hash testing before deleting all volume objects!
     for (uint32_t i=0; i < light_context.size(); ++i)
         delete light_context[i];
     light_context.clear();
     light_map.clear();
     lights_bvh.clear();
+}
+
+/*!
+*/
+void
+RenderContext::destroyTextureSamplers()
+{
+    //std::cout << "  RenderContext(" << this << ")::destroyTextureSamplers()" << std::endl;
+    for (Texture2dSamplerMap::iterator it=texture_sampler_map.begin(); it != texture_sampler_map.end(); ++it)
+        delete it->second;
+    texture_sampler_map.clear();
+}
+
+/*!
+*/
+void
+RenderContext::destroyRayMaterials()
+{
+    //std::cout << "  RenderContext(" << this << ")::destroyRayMaterials()" << std::endl;
+
+    // Delete the texture samplers *before* the RayMaterials/RayShaders
+    // so any Iop-locked Tiles are release first:
+    destroyTextureSamplers();
+
+    for (size_t i=0; i < ray_materials.size(); ++i)
+        delete ray_materials[i];
+    ray_materials.clear();
+}
+
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+
+
+// This is the maximum 2D bbox we can allow, otherwise some weird numerical
+// problems occur:
+static DD::Image::Box max_format_bbox(-1000000, -1000000, 1000000, 1000000);
+
+
+/*!
+*/
+bool
+RenderContext::validateObject(int32_t                    obj,
+                              DD::Image::Hash&           obj_geometry_hash,
+                              DD::Image::Box3&           obj_bbox,
+                              DD::Image::Box&            obj_screen_bbox,
+                              RayMaterial*&              obj_created_ray_material)
+{
+    obj_geometry_hash.reset();
+    obj_bbox.clear();
+    obj_screen_bbox.clear();
+    obj_created_ray_material = NULL;
+
+    ObjectMaterialRef& material_ref = object_materials[obj];
+    material_ref.raymaterial      = NULL;
+    material_ref.material         = NULL;    
+    material_ref.hash.reset();
+    material_ref.texture_channels = DD::Image::Mask_None;
+    material_ref.output_channels  = DD::Image::Mask_None;
+    material_ref.displacement_max = 0.0f;
+    material_ref.texture_bindings.clear();
+
+    zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+
+    // Skip object if render mode is off:
+    DD::Image::GeoInfo& info0 = scene0->object(obj);
+    //{
+    //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+    //std::cout << "    RenderContext(" << this << ")::validateObject(): obj=" << obj;
+    //std::cout << ", name='" << Fsr::getObjectName(info0) << "', scene:path='" << Fsr::getObjectPath(info0) << "'";
+    //std::cout << std::endl;
+    //}
+
+    if (info0.render_mode == DD::Image::RENDER_OFF)
+        return false;
+
+    //-----------------------------------------------------------
+    // Determine material assignment
+    //-----------------------------------------------------------
+
+    bool material_assigned = false;
+
+    // Check for a material Op override first (ie a connected material Op):
+    if (info0.material)
+    {
+        // We can detect if a GeoInfo does not have an active material assignment
+        // by comparing the pointer to the Iop::default_input(), which should be
+        // assigned to all non-connected inputs, or if it's NULL:
+        //if (info0.material != DD::Image::Iop::default_input(info0.material->outputContext()))
+        //-----------------
+        // TODO: Iop::default_input() sometimes locks up in OpenImageIO...! See if this is a problem
+        // in 11 or 12...
+        // Meantime we use the class name and test for 'Black':
+        if (strcmp(info0.material->Class(), "Black") != 0)
+        {
+            // Only validate the material if it's not a default black Iop from a dangling input.
+            // This is important to get SurfaceMaterialOps inputs up to date before calling
+            // createMaterial() on them:
+            info0.material->validate();
+
+#if 0
+            static DD::Image::ColoredShader solid_shader(NULL/*Node*/);
+            //static SolidShader solid_shader(NULL);
+            sftx->material = &solid_shader;  // default to solid shader
+
+            if (gtx0.info->render_mode >= DD::Image::RENDER_TEXTURED)
+            {
+                //sftx->material = prim->material();  // Primitive material overrides geoinfo
+                if (gtx0.info->material)
+                    sftx->material = gtx0.info->material;
+            }
+#endif
+
+#ifdef ZPR_USE_KNOB_RTTI
+            SurfaceMaterialOp* surface_material_op = (info0.material->knob(SurfaceMaterialOp::zpClass())) ?
+                                                        static_cast<SurfaceMaterialOp*>(info0.material) :
+                                                            NULL;
+#else
+            SurfaceMaterialOp* surface_material_op = dynamic_cast<SurfaceMaterialOp*>(info0.material);
+#endif
+            if (surface_material_op)
+            {
+                material_ref.raymaterial = surface_material_op->createMaterial(*this);
+                // Don't crash...
+                if (material_ref.raymaterial)
+                {
+                    obj_created_ray_material = material_ref.raymaterial; // < take ownership of RayMaterial*
+                    //
+                    material_ref.raymaterial->validateMaterial(true/*for_real*/, *this);
+                    //
+                    material_ref.texture_bindings.reserve(20);
+                    material_ref.raymaterial->getActiveTextureBindings(material_ref.texture_bindings);
+                    //
+                    material_ref.texture_channels = material_ref.raymaterial->getTextureChannels(); 
+                    material_ref.output_channels  = material_ref.raymaterial->getChannels();
+                    //material_ref.hash             = material_ref.raymaterial->hash();
+                    //material_ref.displacement_max = material_ref.raymaterial->getDisplacementBound();
+                    //material_ref.displacement_max = material_ref.raymaterial->displacement_bound();
+                }
+                else
+                {
+                    material_ref.texture_channels = DD::Image::Mask_None; 
+                    material_ref.output_channels  = DD::Image::Mask_None;
+                    material_ref.hash.reset();
+                    material_ref.displacement_max = 0.0f;
+                }
+            }
+            else
+            {
+                // Legacy material, set both to same set:
+                material_ref.material         = info0.material;
+                material_ref.texture_channels = info0.material->channels(); 
+                material_ref.output_channels  = info0.material->channels();
+                material_ref.hash             = info0.material->hash();
+                material_ref.displacement_max = info0.material->displacement_bound();
+            }
+            material_assigned = true;
+            //{
+            //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+            //std::cout << "      material_ref:";
+            //std::cout << " raymaterial=" << material_ref.raymaterial;
+            //std::cout << ", material=" << material_ref.material;
+            //std::cout << ", texture_channels=" << material_ref.texture_channels;
+            //std::cout << ", output_channels=" << material_ref.output_channels;
+            //std::cout << ", displacement_max=" << material_ref.displacement_max;
+            //std::cout << std::endl;
+            //}
+        }
+    }
+
+
+    const unsigned nPrims = info0.primitives();
+    const DD::Image::Primitive** prim_array0 = info0.primitive_array();
+
+    // No explictly connected material Op.
+    // Does the object have an assigned material binding path and does it point
+    // underneath this object's path? ie it's not an absolute path.
+    if (!material_assigned && nPrims > 0)
+    {
+        const std::string material_path = Fsr::getObjectMaterialBinding(info0);
+        //{
+        //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+        //std::cout << "      obj material:binding path='" << material_path << "'";
+        //std::cout << std::endl;
+        //}
+        if (!material_path.empty() && nPrims == 1)
+        {
+
+            // Get Fuser primitive (Mesh usually) and find the child Fuser Node
+            // matching the material path:
+#if DEBUG
+            assert(prim_array0);
+            assert(prim_array0[0]);
+#endif
+            const Fsr::FuserPrimitive* fsr_prim = dynamic_cast<const Fsr::FuserPrimitive*>(prim_array0[0]);
+            if (fsr_prim)
+            {
+                // Find the Fuser MaterialNode as a child of this prim:
+                const Fsr::MaterialNode* mat_node = dynamic_cast<const Fsr::MaterialNode*>(fsr_prim->getChildByPath(material_path));
+                if (mat_node)
+                {
+                    // Create the RayShaders from the Fsr::MaterialNode.
+
+                    // We look at all 'surface' type outputs and handle the one we
+                    // know how to convert to RayShaders.
+
+                    // For now that's just the stock UsdPreviewSurface shader set:
+                    const std::vector<Fsr::ShaderNode*>& surface_outputs = mat_node->surfaceOutputs();
+                    const uint32_t nSurfaceOutputs = (uint32_t)surface_outputs.size();
+                    for (uint32_t i=0; i < nSurfaceOutputs; ++i)
+                    {
+                        Fsr::ShaderNode* output = surface_outputs[i];
+                        assert(output);
+                        const std::string& output_label = output->getString("material:output");
+                        //std::cout << "  node('" << output->getName() << "'): output='" << output_label << "'" << std::endl;
+
+                        // TODO: there should be a plugin callback for this conversion based on the
+                        // label text:
+                        if (output_label == "usd:surface")
+                        {
+                            // TODO: for now we hardcode a UsdPreviewSurface conversion:
+                            material_ref.raymaterial = RayMaterial::createUsdPreviewSurface(output);
+                            break;
+                        }
+                    }
+
+                    // Don't crash...
+                    if (material_ref.raymaterial)
+                    {
+                        obj_created_ray_material = material_ref.raymaterial; // < take ownership of RayMaterial*
+                        //
+                        material_ref.raymaterial->validateMaterial(true/*for_real*/, *this);
+                        //
+                        material_ref.texture_bindings.reserve(20);
+                        material_ref.raymaterial->getActiveTextureBindings(material_ref.texture_bindings);
+                        //
+                        material_ref.texture_channels = material_ref.raymaterial->getTextureChannels(); 
+                        material_ref.output_channels  = material_ref.raymaterial->getChannels();
+                        //material_ref.hash             = material_ref.raymaterial->hash();
+                        //material_ref.displacement_max = material_ref.raymaterial->getDisplacementBound();
+                        //material_ref.displacement_max = material_ref.raymaterial->displacement_bound();
+                    }
+                    else
+                    {
+                        material_ref.texture_channels = DD::Image::Mask_None; 
+                        material_ref.output_channels  = DD::Image::Mask_None;
+                        material_ref.hash.reset();
+                        material_ref.displacement_max = 0.0f;
+                    }
+
+                    material_assigned = true;
+                }
+            }
+        }
+    }
+
+
+    // Even if no material assignment output rgba channels if there's prims:
+    if (!material_assigned && nPrims > 0)
+        material_ref.output_channels = DD::Image::Mask_RGBA;
+
+
+    //-----------------------------------------------------------
+    // Find object extent in worldspace and screenspace
+    //-----------------------------------------------------------
+
+    const uint32_t nShutterSamples = numShutterSamples();
+    for (uint32_t j=0; j < nShutterSamples; ++j)
+    {
+        zpr::Scene* scene = shutter_scenerefs[j].scene;
+        DD::Image::GeoInfo& info = scene->object(obj);
+
+        // Combine the GeoInfo hashes together:
+        obj_geometry_hash.append(info.out_id());
+
+        // Make sure primitives and attribute references are up-to-date:
+        info.validate();
+
+        // Get object bbox, but don't use the GeoInfo::update_bbox() method.
+        //info.update_bbox();
+        Fsr::Box3f bbox;
+
+// TODO: we don't really need to write into the GeoInfo cache for this
+// as we can store the object bbox separately, but it's convenient to
+// have the GeoInfo up to date for later on.
+        if (info.point_list() && info.point_list()->size() > 0)
+            bbox.set(reinterpret_cast<const Fsr::Vec3f*>(info.point_list()->data()), info.point_list()->size());
+
+        DD::Image::GeoInfo::Cache* writable_cache =
+            const_cast<DD::Image::GeoInfo::Cache*>(info.get_cache_pointer());
+
+        // Do individual primitives additionally expand the point bbox?
+        // Common cases of this are particles or instances.
+        const DD::Image::Primitive** prim_array = info.primitive_array();
+        if (prim_array)
+        {
+            const uint32_t nPrims = info.primitives();
+            for (uint32_t j=0; j < nPrims; ++j)
+            {
+                const DD::Image::Primitive* prim = *prim_array++;
+
+                // Do the primitives inside the GeoInfo expand the bbox further than the
+                // point values imply? This is material displacement that's done below.
+                // Example is a PointCloud with point radii that expand the points into
+                // spheres, discs or cards.
+                //
+                // We only check custom zpr prims.
+                //
+                // TODO: finish this!!! Support the other types.
+                if (prim->getPrimitiveType() > DD::Image::ePrimitiveTypeCount ||
+                    prim->getPrimitiveType() == DD::Image::eParticlesSprite)
+                {
+                    bbox.expand(prim->get_bbox(&info0));
+                }
+
+#if 0
+                // TODO: we're ignoring per-prim material assignments - verify this is ok!!
+                DD::Image::Iop* material = (*prim_array++)->material();
+                if (material)
+                    material->validate();
+                material_ref.output_channels += material->channels();
+
+                // Combine the material hashes together:
+                material_ref.hash.append(material->hash());
+#endif
+            }
+        }
+
+        // Possibly further expand it by displacement bounds:
+        if (material_ref.displacement_max > std::numeric_limits<float>::epsilon())
+        {
+            const DD::Image::Vector3 dpad(material_ref.displacement_max, material_ref.displacement_max, material_ref.displacement_max);
+            obj_bbox.set(obj_bbox.min() - dpad, obj_bbox.max() + dpad);
+        }
+
+        writable_cache->bbox = bbox.asDDImage();
+
+        // Combine all scene obj bboxes together:
+        obj_bbox.expand(writable_cache->bbox);
+
+        //{
+        //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+        //std::cout << "     " << obj << ": bbox" << bbox << ", obj_bbox" << Fsr::Box3f(obj_bbox) << std::endl;
+        //}
+
+        // Find the screen projected bbox of this object.
+        obj_screen_bbox = max_format_bbox; // default to max
+
+// TODO: This should use the code that manages the camera projections so that any lens projection can be supported
+// TODO: change this to Fuser math classes
+        if (scene->camera && (render_projection == CAMERA_PROJECTION_PERSPECTIVE ||
+                              render_projection == CAMERA_PROJECTION_ORTHOGRAPHIC))
+        {
+            // Transform it to world-space before projecting:
+            obj_bbox.transform(info.matrix);
+
+            // Check if camera is inside the object's bbox as we can't project a bbox
+            // that's surrounding the camera:
+            if (!obj_bbox.inside(scene->cam_vectors.p))
+            {
+                // Project the object's bbox into screen space:
+                obj_bbox.project(scene->matrix(WORLD_TO_SCREEN), obj_screen_bbox);
+                obj_screen_bbox.intersect(max_format_bbox);
+            }
+        }
+
+    }
+
+    if (obj_bbox.empty())
+        return false; // zero size, can't render
+
+    obj_bbox.append(obj_geometry_hash);
+
+    //{
+    //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+    //std::cout << "      obj_outid=0x" << std::hex << info0.out_id().value() << std::dec << std::endl;
+    //std::cout << "      obj_bbox" << Fsr::Box3f(obj_bbox) << std::endl;
+    //std::cout << "      obj_screen_bbox" << Fsr::Box2i(obj_screen_bbox) << std::endl;
+    //std::cout << "      obj_geometry_hash=0x" << std::hex << obj_geometry_hash.value() << std::dec << std::endl;
+    //}
+
+    return true; // render the object
+}
+
+
+/*! TODO: move this to header
+*/
+struct ObjectState
+{
+    DD::Image::Hash geometry_hash;
+    DD::Image::Box3 bbox;
+    DD::Image::Box  screen_bbox;
+    RayMaterial*    created_ray_material; //!< *Allocated* RayMaterial pointer
+};
+
+
+/*!
+*/
+struct ValidateThreadContext
+{
+    RenderContext* rtx;
+    AtomicCount32  do_obj;
+    //
+    std::vector<ObjectState> obj_states;
+
+    //!
+    ValidateThreadContext(RenderContext* _rtx,
+                          int32_t        nObjects) :
+        rtx(_rtx),
+        do_obj(0)
+    {
+        obj_states.resize(nObjects);
+    }
+
+    /*! DD::Image::Thread spawn callback function to iterate through the object list.
+    */
+    static void thread_proc_cb(unsigned thread_index,
+                               unsigned num_threads,
+                               void*    p)
+    {
+        ValidateThreadContext* ctx = reinterpret_cast<ValidateThreadContext*>(p);
+        assert(ctx && ctx->rtx);
+        //{
+        //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+        //std::cout << "thread_proc_cb(" << std::hex << DD::Image::Thread::GetThreadId() << std::dec << ")";
+        //std::cout << " thread_index=" << thread_index << ", num_threads=" << num_threads;
+        //std::cout << std::endl;
+        //}
+
+        while (1)
+        {
+            const int32_t obj = ctx->do_obj++; // get object to process and atomic increment
+            if (obj >= (int32_t)ctx->obj_states.size())
+                break;
+
+            ObjectState& obj_state = ctx->obj_states[obj];
+            if (ctx->rtx->validateObject(obj,
+                                         obj_state.geometry_hash,
+                                         obj_state.bbox,
+                                         obj_state.screen_bbox,
+                                         obj_state.created_ray_material))
+            {
+                //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+                //std::cout << "      " << obj << ": thread_index=" << thread_index << ", num_threads=" << num_threads << std::endl;
+                //std::cout << "      " << obj << ": obj_state.bbox" << Fsr::Box3f(obj_state.bbox) << std::endl;
+                //std::cout << "      " << obj << ": obj_state.screen_bbox[" << Fsr::Box2i(obj_state.screen_bbox) << std::endl;
+            }
+        }
+        //{
+        //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+        //std::cout << "  thread_proc_cb(" << std::hex << DD::Image::Thread::GetThreadId() << std::dec << ")";
+        //std::cout << " DONE" << std::endl;
+        //}
+
+    }
+};
+
+
+/*! Sample index is not required since we use the absolute frame time instead.
+*/
+/*virtual*/
+void
+RenderContext::validateObjects(zpr::Scene* scene,
+                               bool        for_real)
+{
+    //std::cout << "    RenderContext()::validateObjects():" << std::endl;
+    destroyRayMaterials();
+
+    object_materials.clear();
+    texture_bbox_map.clear(); // this gets filled in getTextureRequests()
+
+    render_bbox.clear();
+    render_region.clear();
+    texture_channels  = DD::Image::Mask_None; // if not Mask_None after validate() there's textures to request()
+    material_channels = DD::Image::Mask_None;
+    shadow_channels   = DD::Image::Mask_None;
+
+    camera_hash.reset();
+    geometry_hash.reset();
+    material_hash.reset();
+    lighting_hash.reset();
+    hash.reset();
+
+    //-------------------------------------------------------
+    // Validate camera vectors
+    // TODO: do we need to do this anymore...? The RayShaders certainly don't need
+    // the camera vectors, but probably legacy shaders like Project3D still use
+    // these for the view vector.
+
+    const uint32_t nShutterSamples = numShutterSamples();
+    for (uint32_t j=0; j < nShutterSamples; ++j)
+    {
+        zpr::Scene* scene = shutter_scenerefs[j].scene;
+
+        //std::cout << "      camera " << scene->camera->matrix() << std::endl;
+        if (scene->camera)
+        {
+            const DD::Image::Matrix4& m = scene->camera->matrix();
+            scene->cam_vectors.p.set(m.a03, m.a13, m.a23); // set the origin
+            scene->cam_vectors.x.set(m.a00, m.a10, m.a20); // X axis
+            scene->cam_vectors.y.set(m.a01, m.a11, m.a21); // Y axis
+            scene->cam_vectors.z.set(m.a02, m.a12, m.a22); // Z axis
+            scene->cam_vectors.x.normalize();
+            scene->cam_vectors.y.normalize();
+            scene->cam_vectors.z.normalize();
+            m.append(camera_hash);
+        }
+        else
+        {
+            // No camera yet, clear the vectors:
+            scene->cam_vectors.p.set(0, 0, 0); // set the origin
+            scene->cam_vectors.x.set(0, 0, 0); // X axis
+            scene->cam_vectors.y.set(0, 0, 0); // Y axis
+            scene->cam_vectors.z.set(0, 0, 0); // Z axis
+        }
+
+        // Null the object matrix:
+        //transforms_.set_object_matrix(DD::Image::Matrix4::identity());
+    }
+
+
+    zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+    const uint32_t nObjects = scene0->objects();
+    if (nObjects > 0)
+    {
+        //-------------------------------------------------------
+        // Validate object bboxes
+
+        object_materials.resize(nObjects);
+
+        ValidateThreadContext validate_ctx(this, nObjects);
+
+        uint32_t num_threads = DD::Image::Thread::numCPUs;
+        if (nObjects < num_threads)
+            num_threads = nObjects;
+        if (num_threads <= 1)
+        {
+            // Pass 0 for num_threads so object loop knows it's not multi-threaded:
+            ValidateThreadContext::thread_proc_cb(0/*thread_index*/, 0/*num_threads*/, &validate_ctx); // just do one
+        }
+        else
+        {
+            // Spawn multiple threads (minus one for this thread to execute,) then wait for them to finish:
+            DD::Image::Thread::spawn(ValidateThreadContext::thread_proc_cb, num_threads-1, &validate_ctx);
+            // This thread handles the last one:
+            ValidateThreadContext::thread_proc_cb(num_threads-1/*thread_index*/, num_threads/*num_threads*/, &validate_ctx); // just do one
+            //
+            DD::Image::Thread::wait(&validate_ctx);
+        }
+
+        // Combine all objects to build global hashes and bboxes:
+        for (uint32_t j=0; j < nObjects; j++)
+        {
+            const ObjectState& obj_state = validate_ctx.obj_states[j];
+            if (obj_state.bbox.empty())
+                continue; // not renderable
+
+            const ObjectMaterialRef& material_ref = object_materials[j];
+
+            if (obj_state.created_ray_material != NULL)
+                ray_materials.push_back(obj_state.created_ray_material);
+
+            geometry_hash.append(obj_state.geometry_hash);
+            material_hash.append(material_ref.hash);
+
+            render_bbox.expand(obj_state.bbox); // expand the Scene's 3D bbox
+
+            if (obj_state.screen_bbox.x() >= render_format->width()  ||
+                obj_state.screen_bbox.y() >= render_format->height() ||
+                obj_state.screen_bbox.r() <= 0 ||
+                obj_state.screen_bbox.t() <= 0)
+            {
+                // skip it
+            }
+            else
+            {
+                render_region.expand(Fsr::Box2i(obj_state.screen_bbox));
+            }
+
+            texture_channels  += material_ref.texture_channels;
+            material_channels += material_ref.output_channels;
+        }
+    }
+
+
+    const uint32_t nLights = (uint32_t)scene0->lights.size();
+    if (nLights > 0)
+    {
+        //-------------------------------------------------------
+        // Validate lights
+        // Handle lights that are volume objects as geometry and find their bboxes.
+
+        const bool atmo_enabled = (atmospheric_lighting_enabled && direct_lighting_enabled);
+        const DD::Image::Matrix4& world2screen = scene0->matrix(WORLD_TO_SCREEN);
+
+        for (uint32_t j=0; j < nLights; j++)
+        {
+#if DEBUG
+            assert(scene0->lights[j]);
+            assert(scene0->lights[j]->light());
+#endif
+            const DD::Image::LightOp* light = scene0->lights[j]->light();
+
+            // Get the shadow channels for any legacy lights:
+            // TODO: do we really need this anymore...? Can't we stop using shadow renderers?
+            shadow_channels += light->getShadowMaskChannel();
+
+            // Combine the light hashes together:
+            lighting_hash.append(light->hash());
+
+            if (atmo_enabled)
+            {
+                // If a light can illuminate atmosphere then it becomes a physical object
+                // of a certain size, so find that size.
+                Fsr::Box3d lt_bbox;
+                if (getVolumeLightTypeAndBbox(light, lt_bbox) != UNRECOGNIZED_PRIM)
+                {
+                    const DD::Image::Box3 bbox(lt_bbox.asDDImage());
+
+                    // Expand the Scene's bbox:
+                    render_bbox.expand(bbox);
+
+// TODO: include other light params in geometry hash, or just add the LightOp hash
+                    bbox.append(geometry_hash);
+
+                    // Check if camera is inside the lights's bbox as we
+                    // can't project a bbox that's surrounding the camera:
+                    if (bbox.inside(scene0->cam_vectors.p))
+                    {
+                        // Camera inside, set to maximum projection:
+                        render_region = max_format_bbox;
+                    }
+                    else
+                    {
+                        DD::Image::Box sbbox;
+                        bbox.project(world2screen, sbbox);
+                        // Clip to screen sides:
+                        if (sbbox.x() >= render_format->width()  || sbbox.r() < 0 ||
+                            sbbox.y() >= render_format->height() || sbbox.t() < 0)
+                        {
+                            // don't include light in screen bbox
+                        }
+                        else
+                        {
+                            // Clamp sbbox to max format values:
+                            sbbox.intersect(max_format_bbox);
+                            render_region.expand(sbbox);
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+    //std::cout << "      render_region" << render_region << std::endl;
+    //std::cout << "  texture_channels=" << texture_channels << std::endl;
+    //std::cout << " material_channels=" << material_channels << std::endl;
+    //std::cout << "       camera_hash=" << std::hex << camera_hash.value() << std::dec << std::endl;
+    //std::cout << "     geometry_hash=" << std::hex << geometry_hash.value() << std::dec << std::endl;
+    //std::cout << "     material_hash=" << std::hex << material_hash.value() << std::dec << std::endl;
+    //std::cout << "     lighting_hash=" << std::hex << lighting_hash.value() << std::dec << std::endl;
+
+}
+
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+
+
+/*!
+*/
+bool
+RenderContext::requestObject(int32_t                      obj,
+                             const DD::Image::ChannelSet& request_channels,
+                             int                          request_count,
+                             DD::Image::Iop*&             obj_material,
+                             DD::Image::Box&              obj_material_bbox)
+{
+    //std::cout << "  RenderContext(" << this << ")::requestObject(): obj=" << obj;
+    //std::cout << ", request_channels=" << request_channels << ", request_count=" << request_count << std::endl;
+
+    // Only do requests on shutter_open scene:
+    zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+
+    // Something broke in 7.0v1 that is not letting the materials request properly,
+    // so we're re-implementing the whole thing here:
+    //
+    DD::Image::GeoInfo& info0 = scene0->object(obj);
+
+    obj_material = info0.material;
+    obj_material_bbox.clear();
+
+    // Don't bother if no material or we're not rendering the object:
+    if (!obj_material || info0.render_mode == DD::Image::RENDER_OFF)
+        return false;
+
+    // Default material bbox to Iop full output bbox:
+    const DD::Image::Box& iop_bbox = obj_material->info();
+    obj_material_bbox = iop_bbox;
+
+#if 0
+// TODO: skip finding the min/max uv range...
+    if (scene0->camera && render_projection != CAMERA_PROJECTION_UV)
+    {
+        // Find min/max uvs for every material which limits the amount of requested
+        // texture cache when only a small section of an object is visible to camera:
+        DD::Image::MatrixArray tmp_transforms = transforms_;
+        tmp_transforms.set_object_matrix(info0.matrix);
+
+        DD::Image::PrimitiveContext tmp_ptx;
+        DD::Image::VArray tmp_varray;
+
+        Fsr::Box2f uv_range(std::numeric_limits<float>::infinity(),
+                            std::numeric_limits<float>::infinity(),
+                           -std::numeric_limits<float>::infinity(),
+                           -std::numeric_limits<float>::infinity());
+
+        const DD::Image::Primitive** prim_array = info0.primitive_array();
+        const uint32_t nPrims = info0.primitives();
+        for (uint32_t j=0; j < nPrims; ++j)
+        {
+            const DD::Image::Primitive* p = *prim_array++;
+
+            tmp_ptx.set_geoinfo(&info0, /*mb*/0);
+            tmp_ptx.set_transforms(&tmp_transforms, /*mb*/0);
+            tmp_ptx.setPrimitive(const_cast<DD::Image::Primitive*>(p));
+            tmp_ptx.setPrimitiveIndex(j);
+#if 1
+            // Nasty hack to get around private var - relies on C++
+            // var packing to be sequential:
+            uint32_t* face_clipmask = reinterpret_cast<uint32_t*>(const_cast<DD::Image::Box3*>(&tmp_ptx.face_uv_bbox() + 1));
+            *face_clipmask = 0x00;
+#else
+            tmp_ptx.face_clipmask_ = 0x00;
+#endif
+
+            uint32_t tmp_face_vertices[1000];
+            const uint32_t nFaces = p->faces();
+            for (uint32_t f=0; f < nFaces; ++f)
+            {
+                const uint32_t nVerts = p->face_vertices(f);
+                p->get_face_vertices(f, tmp_face_vertices);
+
+                // Copying the prim context keeps the clipmask & uv_bbox empty
+                // since we don't have public access to them...sigh:
+                DD::Image::PrimitiveContext tmp_ptx1 = tmp_ptx;
+
+                // Call the vertex shader for each vertex:
+                for (uint32_t v=0; v < nVerts; ++v)
+                    p->vertex_shader(tmp_face_vertices[v], this, &tmp_ptx, tmp_varray);
+
+                // If all the face verts are clipped, skip those uvs:
+                if      (tmp_ptx.face_clipmask() == 0x01) continue; // Right
+                else if (tmp_ptx.face_clipmask() == 0x02) continue; // Left
+                else if (tmp_ptx.face_clipmask() == 0x04) continue; // Top
+                else if (tmp_ptx.face_clipmask() == 0x08) continue; // Bottom
+                else if (tmp_ptx.face_clipmask() == 0x10) continue; // Near
+
+                uv_range.min.x = std::min(uv_range.min.x, tmp_ptx.face_uv_bbox().x());
+                uv_range.min.y = std::min(uv_range.min.y, tmp_ptx.face_uv_bbox().y());
+                uv_range.max.x = std::max(uv_range.max.x, tmp_ptx.face_uv_bbox().r());
+                uv_range.max.y = std::max(uv_range.max.y, tmp_ptx.face_uv_bbox().t());
+            }
+        }
+        //{
+        //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+        //std::cout << "    " << obj << ": uv" << uv_range << std::endl;
+        //}
+
+        if (uv_range.isEmpty())
+        {
+            const DD::Image::Format& f = obj_material->format();
+            const float fX = float(f.x());
+            const float fY = float(f.y());
+            const float fW = float(f.w());
+            const float fH = float(f.h());
+            const int tX = int(floorf((uv_range.min.x*fW + fX) + 0.01f));
+            const int tY = int(floorf((uv_range.min.y*fH + fY) + 0.01f));
+            const int tR = int(floorf((uv_range.max.x*fW + fX) + 0.51f));
+            const int tT = int(floorf((uv_range.max.y*fH + fY) + 0.51f));
+            obj_material_bbox.set(clamp(tX, iop_bbox.x(), iop_bbox.r()),
+                                  clamp(tY, iop_bbox.y(), iop_bbox.t()),
+                                  clamp(tR, iop_bbox.x(), iop_bbox.r())+1,
+                                  clamp(tT, iop_bbox.y(), iop_bbox.t())+1);
+
+        }
+    }
+#endif
+
+    //{
+    //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+    //std::cout << "    " << obj << ": obj_material " << obj_material;
+    //std::cout << " channels=" << obj_material->requested_channels();
+    //std::cout << ", obj_material_bbox" << Fsr::Box2i(obj_material_bbox);
+    //std::cout << ", iop_bbox=" << Fsr::Box2i(iop_bbox);
+    //std::cout << std::endl;
+    //}
+
+    return true; // object material valid
+}
+
+
+/*!
+*/
+struct RequestThreadContext
+{
+    RenderContext*        rtx;
+    DD::Image::ChannelSet request_channels;
+    int32_t               request_count;
+    //
+    AtomicCount32         do_obj;
+    DD::Image::Lock       lock;
+
+    //!
+    RequestThreadContext(RenderContext*               _rtx,
+                         const DD::Image::ChannelSet& _request_channels,
+                         int                          _request_count) :
+        rtx(_rtx),
+        request_channels(_request_channels),
+        request_count(_request_count),
+        do_obj(0)
+    {
+        //
+    }
+
+    /*! DD::Image::Thread spawn callback function to iterate through the object list.
+    */
+    static void thread_proc_cb(unsigned thread_index,
+                               unsigned num_threads,
+                               void*    p)
+    {
+        RequestThreadContext* ctx = reinterpret_cast<RequestThreadContext*>(p);
+        assert(ctx && ctx->rtx);
+        //{
+        //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+        //std::cout << "thread_proc_cb(" << std::hex << DD::Image::Thread::GetThreadId() << std::dec << ")";
+        //std::cout << " thread_index=" << thread_index << ", num_threads=" << num_threads;
+        //std::cout << std::endl;
+        //}
+
+        while (1)
+        {
+            const int32_t obj = ctx->do_obj++; // get object to process and atomic increment
+            if (obj >= (int32_t)ctx->rtx->object_materials.size())
+                break;
+
+            DD::Image::Iop* obj_material = NULL;
+            DD::Image::Box  obj_material_bbox;
+            if (ctx->rtx->requestObject(obj,
+                                        ctx->request_channels,
+                                        ctx->request_count,
+                                        obj_material,
+                                        obj_material_bbox))
+            {
+                assert(obj_material); // shouldn't happen...
+
+                // Renderable object, update global hashes and bboxes:
+                if (num_threads > 0)
+                {
+                    ctx->lock.lock();
+                    ctx->rtx->texture_bbox_map[obj_material] = obj_material_bbox;
+                    ctx->lock.unlock();
+                }
+                else
+                    ctx->rtx->texture_bbox_map[obj_material] = obj_material_bbox;
+            }
+            //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+            //std::cout << "      " << obj << ": thread_index=" << thread_index << ", num_threads=" << num_threads << std::endl;
+            //std::cout << "      " << obj << ": obj_material" << obj_material << std::endl;
+            //std::cout << "      " << obj << ": obj_material_bbox[" << Fsr::Box2i(obj_material_bbox) << std::endl;
+        }
+        //{
+        //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+        //std::cout << "  thread_proc_cb(" << std::hex << DD::Image::Thread::GetThreadId() << std::dec << ")";
+        //std::cout << " DONE" << std::endl;
+        //}
+
+    }
+};
+
+
+/*!
+*/
+/*virtual*/
+void
+RenderContext::doTextureRequests(const DD::Image::ChannelSet& request_channels,
+                                 int                          request_count)
+{
+    //std::cout << "  RenderContext(" << this << ")::doTextureRequests(): request_channels=" << request_channels << ", request_count=" << request_count << std::endl;
+
+    zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+    const uint32_t nObjects = scene0->objects();
+    const uint32_t nLights  = (uint32_t)scene0->lights.size();
+
+    // Only do the requests if there's channels being published from textures:
+    if (texture_channels != DD::Image::Mask_None)
+    {
+        if (nObjects > 0 && texture_bbox_map.empty())
+        {
+            // Get the texture map UV request ranges from all object:
+            RequestThreadContext request_ctx(this, request_channels, request_count);
+
+            uint32_t num_threads = DD::Image::Thread::numCPUs;
+            if (nObjects < num_threads)
+                num_threads = nObjects;
+            if (num_threads <= 1)
+            {
+                // Pass 0 for num_threads so object loop knows it's not multi-threaded:
+                RequestThreadContext::thread_proc_cb(0/*thread_index*/, 0/*num_threads*/, &request_ctx); // just do one
+            }
+            else
+            {
+                // Spawn multiple threads (minus one for this thread to execute,) then wait for them to finish:
+                DD::Image::Thread::spawn(RequestThreadContext::thread_proc_cb, num_threads-1, &request_ctx);
+                // This thread handles the last one:
+                RequestThreadContext::thread_proc_cb(num_threads-1/*thread_index*/, num_threads/*num_threads*/, &request_ctx); // just do one
+                //
+                DD::Image::Thread::wait(&request_ctx);
+            }
+
+#if 0
+            // Build the flattened list of TextureSamplers:
+            texture_samplers.clear();
+            //texture_sampler_map.clear();
+            const uint32_t nObjects = (uint32_t)object_materials.size();
+            for (uint32_t j=0; j < nObjects; ++j)
+            {
+                const ObjectMaterialRef& material_ref = object_materials[j];
+                const uint32_t nMaps = (uint32_t)material_ref.colormapknob_list.size();
+                for (uint32_t i=0; i < nMaps; ++i)
+                {
+                    const ColorMapKnob* map = material_ref.colormapknob_list[i];
+                    if (map && map->getChannels() != DD::Image::Mask_None)
+                    {
+                        DD::Image::Iop* iop = map->getTextureIop();
+                        if (iop)
+                        {
+                            TextureSamplerContext ctx;
+                            ctx.index   = (int32_t)texture_samplers.size();
+                            ctx.sampler = NULL;
+                            texture_samplers.push_back(ctx);
+                            //texture_sampler_map[iop] = ctx.index;
+                        }
+                    }
+                }
+            }
+#endif
+        }
+
+        // Call request() on each unique material.
+        for (TextureBBoxMap::const_iterator it=texture_bbox_map.begin(); it != texture_bbox_map.end(); ++it)
+        {
+            // Atm this also causes SurfaceMaterialOp to do requests on their ColorMapKnobs
+            it->first->request(it->second, request_channels, request_count);
+        }
+
+#if 0
+// TODO: this is not required atm as each SurfaceMaterialOp does requests of its local ColorMapKnobs,
+//   which happens in the above TextureBBoxMap request loop
+        // Call request() on each unique ColorMapKnob:
+        for (uint32_t j=0; j < nObjects; ++j)
+        {
+            const ObjectMaterialRef& material_ref = object_materials[j];
+            const uint32_t nMaps = (uint32_t)material_ref.colormapknob_list.size();
+            for (uint32_t i=0; i < nMaps; ++i)
+            {
+                const ColorMapKnob* map = material_ref.colormapknob_list[i];
+                if (map && map->getChannels() != DD::Image::Mask_None)
+                    map->requestColorMap(request_count);
+            }
+        }
+#endif
+
+    }
+
+
+    if (nLights)
+    {
+        // Request RGB from each light:
+        DD::Image::ChannelSet request_light_channels(DD::Image::Mask_RGBA);
+        for (uint32_t i=0; i < nLights; ++i)
+        {
+            const DD::Image::LightContext* ltx = scene0->lights[i];
+            assert(ltx); // shouldn't happen...
+
+            DD::Image::LightOp* l = ltx->light();
+            assert(l); // shouldn't happen...
+            if (l->node_disabled())
+                continue;
+
+            l->request(request_light_channels, request_count);
+        }
+    }
+
+}
+
+
+/*! Per-pixel texture sampling calling the built-in Iop::sample() methods has become
+    extremely slow, so we create RawGeneralTile for all used textures in the scene
+    and pass them down to the samples in the shaders.
+*/
+void
+RenderContext::requestTextureSamplers()
+{
+    //std::cout << "  RenderContext(" << this << ")::requestTextureSamplers()" << std::endl;
+
+    const uint32_t nObjects = (uint32_t)object_materials.size();
+    for (uint32_t j=0; j < nObjects; ++j)
+    {
+        const ObjectMaterialRef& material_ref = object_materials[j];
+
+        const uint32_t nBindings = (uint32_t)material_ref.texture_bindings.size();
+        for (uint32_t i=0; i < nBindings; ++i)
+        {
+            const InputBinding* binding = material_ref.texture_bindings[i];
+            assert(binding);
+            if (binding && binding->getNumChannels() > 0)
+            {
+                DD::Image::Iop* iop = binding->asTextureIop();
+                if (iop)
+                {
+                    // Request entire texture map region and channels:
+                    const DD::Image::Box& b = iop->info();
+                    iop->request(b.x(), b.y(), b.r(), b.t(), binding->getChannels(), 1/*count*/);
+
+                    // Only add unique & valid Iop samplers:
+                    if (texture_sampler_map.find(iop) == texture_sampler_map.end())
+                    {
+                        Texture2dSampler* sampler = new Texture2dSampler(iop, binding->getChannels());
+                        texture_sampler_map[iop] = sampler;
+                    }
+                }
+            }
+        }
+    }
 
 }
 
@@ -1065,7 +2124,7 @@ RenderContext::updateLightingScenes(const zpr::Scene* ref_scene,
         }
     }
 
-    if (k_direct_lighting_enabled)
+    if (direct_lighting_enabled)
     {
         // Copy the light context list out of the scene to make a
         // thread-safe local version.  We'll update these LightContexts
@@ -1200,6 +2259,8 @@ ThreadContext::ThreadContext(RenderContext* rtx) :
     m_index(0),
     m_ID(0)
 {
+    assert(m_rtx);
+
     // Reserve space for 10 ray bounces:
     m_stx_list.reserve(10);
 
@@ -1211,9 +2272,24 @@ ThreadContext::ThreadContext(RenderContext* rtx) :
     vol_intersections.reserve(500);
     uv_intersections.reserve(500);
 
+    texture_color.setInterestRatchet(&textureColorInterestRatchet);
+    binding_color.setInterestRatchet(&bindingColorInterestRatchet);
     surface_color.setInterestRatchet(&surfaceColorInterestRatchet);
     light_color.setInterestRatchet(&lightColorInterestRatchet);
     volume_color.setInterestRatchet(&volumeColorInterestRatchet);
+
+    //std::vector<TextureSamplerContext*> m_tex_samplers;     //!< List of active texture samplers for this thread
+    //std::map<DD::Image::Iop*, uint32_t> m_tex_sampler_map;  //!< Texture ID to texture sampler index map
+
+#if 0
+    const uint32_t nSamplers = (uint32_t)m_rtx->texture_samplers.size();
+    for (uint32_t j=0; j < nSamplers; ++j)
+    {
+        const TextureSamplerContext& ctx = m_rtx->texture_samplers[j];
+
+        m_tex_samplers[j] = 
+    }
+#endif
 }
 
 /*!
@@ -1262,8 +2338,8 @@ ThreadContext::pushShaderContext(const RayShaderContext* current)
         //
         stx.texture_filter   = NULL;//&texture_filter_; //TODO set this to a default!
         //
-        stx.direct_lighting_enabled   = m_rtx->k_direct_lighting_enabled;
-        stx.indirect_lighting_enabled = m_rtx->k_indirect_lighting_enabled;
+        stx.direct_lighting_enabled   = m_rtx->direct_lighting_enabled;
+        stx.indirect_lighting_enabled = m_rtx->indirect_lighting_enabled;
         stx.master_lighting_scene     = NULL;
         //
         stx.sides_mode          = m_rtx->k_sides_mode; // Which sides to intersect against (SIDES_BOTH, SIDES_FRONT, SIDES_BACK)
@@ -1278,8 +2354,8 @@ ThreadContext::pushShaderContext(const RayShaderContext* current)
 
     // Reset intersection pointers:
     stx.rprim                 = NULL; // Current primitive being evaluated (intersected/shaded)
-    stx.surface_shader        = NULL; // Current RayShader being evaluated (NULL if legacy material)
-    stx.displacement_shader   = NULL; // Current RayShader being evaluated (NULL if legacy material)
+    stx.surface_shader        = NULL; // Current surface RayShader to evaluate (NULL if legacy material)
+    stx.displacement_shader   = NULL; // Current displacement RayShader to evaluate (NULL if legacy material)
     stx.atmosphere_shader     = NULL; // Current atmospheric VolumeShader being evaluated
     stx.material              = NULL; // Current material on primitive - legacy
     stx.displacement_material = NULL; // Current displacement material on primitive - legacy
@@ -1404,6 +2480,7 @@ RenderContext::generateSurfaceContextsForObject(ObjectContext* otx)
 #ifdef DEBUG_OBJECT_EXPANSION
     std::cout << "RenderContext::generateSurfaceContexts(" << otx << ")" << std::endl;
 #endif
+    const uint32_t objIndex = otx->motion_objects[0].index;
 
     GeoInfoContext* gptx = dynamic_cast<GeoInfoContext*>(otx);
     if (gptx)
@@ -1527,11 +2604,11 @@ RenderContext::generateSurfaceContextsForObject(ObjectContext* otx)
             } else {
                 // No direct support for this primitive type,
                 // Have the primitive generate it's render primitives:
-                std::cerr << "zpr::Scene::warning - unsupported primitive type '" << prim0->Class() << "'" << std::endl;
+                std::cerr << "zpr::RenderContext::warning - unsupported primitive type '" << prim0->Class() << "'" << std::endl;
                 continue;
             }
 
-            SurfaceContext* stx = NULL;
+            SurfaceContext* sftx = NULL;
             // Attempt to combine Triangle and Polygon atomic DD::Image::Primitives
             // together into a polysoup assuming they're part of the same mesh:
             if (polysoupPrims.size() > 0)
@@ -1542,11 +2619,11 @@ RenderContext::generateSurfaceContextsForObject(ObjectContext* otx)
                     primIndex == (nPrimitives-1))
                 {
                     // Build the polysoup SurfaceContext:
-                    stx = otx->addSurface();
-                    stx->handler        = surface_handler[prim_type];
-                    stx->obj_index      = gptx->motion_objects[0].index;
-                    stx->prim_index     = -1; // prim_index not needed for PolySoup
-                    stx->polysoup_prims = polysoupPrims;
+                    sftx = otx->addSurface();
+                    sftx->handler        = surface_handler[prim_type];
+                    sftx->obj_index      = objIndex;
+                    sftx->prim_index     = -1; // prim_index not needed for PolySoup
+                    sftx->polysoup_prims = polysoupPrims;
 #ifdef DEBUG_OBJECT_EXPANSION
                     std::cout << "  adding SurfaceContext for polysoup prims[" << primIndex << std::endl;
                     for (uint32_t i=0; i < nPrimitives; ++i)
@@ -1585,10 +2662,10 @@ RenderContext::generateSurfaceContextsForObject(ObjectContext* otx)
                 }
 
                 // Build the prim SurfaceContext:
-                stx = otx->addSurface();
-                stx->handler    = surface_handler[prim_type];
-                stx->obj_index  = gptx->motion_objects[0].index;
-                stx->prim_index = primIndex;
+                sftx = otx->addSurface();
+                sftx->handler    = surface_handler[prim_type];
+                sftx->obj_index  = objIndex;
+                sftx->prim_index = primIndex;
 
 #ifdef DEBUG_OBJECT_EXPANSION
                 std::cout << "  adding SurfaceContext for prim " << primIndex << std::endl;
@@ -1597,59 +2674,77 @@ RenderContext::generateSurfaceContextsForObject(ObjectContext* otx)
             }
 
             // If there's a valid SurfaceContext configure the materials:
-            if (stx != NULL)
+            if (sftx != NULL)
             {
-                static DD::Image::ColoredShader solid_shader(NULL/*Node*/);
-                //static SolidShader solid_shader(NULL);
-                stx->material = &solid_shader;  // default to solid shader
-
-                if (gtx0.info->render_mode >= DD::Image::RENDER_TEXTURED)
-                {
-                    //stx->material = prim->material();  // Primitive material overrides geoinfo
-                    if (gtx0.info->material)
-                        stx->material = gtx0.info->material;
-                }
-
-                // Check if material is a RayShader:
-                // This is a hack to get around dyload not exposing symbols to other plugins:
-#ifdef ZPR_USE_KNOB_RTTI
-                stx->surface_shader = (stx->material->knob(SurfaceShaderOp::zpClass())) ?
-                                        static_cast<SurfaceShaderOp*>(stx->material) :
-                                            NULL;
-#else
-                stx->surface_shader = dynamic_cast<SurfaceShaderOp*>(op);
+                // The ObjectMaterialRef for this object was configured in validate():
+#if DEBUG
+                assert(objIndex < (uint32_t)object_materials.size());
 #endif
+                ObjectMaterialRef& material_ref = object_materials[objIndex];
+                //material_ref.raymaterial      = NULL;
+                //material_ref.material         = NULL;    
+                //material_ref.texture_channels = DD::Image::Mask_None;
+                //material_ref.output_channels  = DD::Image::Mask_None;
+                //material_ref.displacement_max = 0.0f;
 
-                // Determine displacement for this surface:
-                stx->displacement_shader   = NULL;
-                stx->displacement_material = NULL; // TODO: set this!
-                stx->displacement_enabled  = false;
-                stx->displacement_subdivision_level = 0;
-                stx->displacement_bounds.set(0.0f, 0.0f, 0.0f);
-                if (stx->surface_shader)
+                if (material_ref.raymaterial)
                 {
-                    stx->material = NULL;
-                    stx->displacement_shader = stx->surface_shader;
-                    stx->displacement_subdivision_level = stx->surface_shader->getDisplacementSubdivisionLevel();
-
+                    // RayMaterial:
+                    sftx->material              = NULL;
+                    sftx->displacement_material = NULL;
+                    //
+                    sftx->raymaterial = material_ref.raymaterial;
+                    RayShader* disp_shader = sftx->raymaterial->getDisplacementShader();
+                    if (disp_shader)
+                    {
 #if 0
-                    // Scale it by the max of the object's scale:
-                    stx->displacement_bounds = gtx0.info->matrix.scale()*stx->surface_shader->displacement_bound();
+                        sftx->displacement_subdivision_level = disp_shader->getDisplacementSubdivisionLevel();
+                        // Scale it by the max of the object's scale:
+                        sftx->displacement_bounds = gtx0.info->matrix.scale()*disp_shader->displacement_bound();
 
-                    if (stx->displacement_bounds.x > std::numeric_limits<float>::epsilon() ||
-                        stx->displacement_bounds.y > std::numeric_limits<float>::epsilon() ||
-                        stx->displacement_bounds.z > std::numeric_limits<float>::epsilon())
-                        stx->displacement_enabled = true;
-                    //std::cout << "displacement_bounds" << stx->displacement_bounds << std::endl;
+                        if (sftx->displacement_bounds.x > std::numeric_limits<float>::epsilon() ||
+                            sftx->displacement_bounds.y > std::numeric_limits<float>::epsilon() ||
+                            sftx->displacement_bounds.z > std::numeric_limits<float>::epsilon())
+                            sftx->displacement_enabled = true;
+                        //std::cout << "displacement_bounds" << sftx->displacement_bounds << std::endl;
 #endif
+                    }
+                    else
+                    {
+                        sftx->displacement_subdivision_level = 0;
+                        sftx->displacement_bounds.set(0.0f, 0.0f, 0.0f);
+                        sftx->displacement_enabled = false;
+                    }
+                }
+                else
+                {
+                    // Legacy shader:
+                    sftx->raymaterial = NULL;
+                    //
+                    sftx->material = material_ref.material;
+                    //
+                    sftx->displacement_material = NULL;  // TODO: set this!
+                    if (sftx->displacement_material)
+                    {
+                        // TODO: set these!
+                        sftx->displacement_subdivision_level = 0;
+                        sftx->displacement_bounds.set(0.0f, 0.0f, 0.0f);
+                        sftx->displacement_enabled = true;
+                    }
+                    else
+                    {
+                        sftx->displacement_subdivision_level = 0;
+                        sftx->displacement_bounds.set(0.0f, 0.0f, 0.0f);
+                        sftx->displacement_enabled = false;
+                    }
                 }
 
 #if 0
 // TODO: finish this! Need to connect the attribs the geometry contain to their AOVLayer outputs
                 // Assign the AOVLayers:
-                stx->aov_layers.clear();
-                stx->aov_layers.reserve(50);
-                //stx->aov_layers.push_back(rtx.aov_outputs[0]);
+                sftx->aov_layers.clear();
+                sftx->aov_layers.reserve(50);
+                //sftx->aov_layers.push_back(rtx.aov_outputs[0]);
 #endif
 
                 // If this is a polysoup prim run, bail:
@@ -1668,7 +2763,7 @@ RenderContext::generateSurfaceContextsForObject(ObjectContext* otx)
 
     // Not a geo, is it a light?
     LightVolumeContext* ltctx = dynamic_cast<LightVolumeContext*>(otx);
-    if (k_atmospherics_enabled && k_direct_lighting_enabled && ltctx)
+    if (atmospheric_lighting_enabled && direct_lighting_enabled && ltctx)
     {
         //================================================
         // Light Volume type:
@@ -1686,10 +2781,10 @@ RenderContext::generateSurfaceContextsForObject(ObjectContext* otx)
             const uint32_t lt_index0 = ltctx->motion_objects[0].index;
 
             // Build the SurfaceContext:
-            SurfaceContext* stx = otx->addSurface();
-            stx->handler    = surface_handler[prim_type];
-            stx->obj_index  = lt_index0;
-            stx->prim_index = -1; // prim_index not needed
+            SurfaceContext* sftx = otx->addSurface();
+            sftx->handler    = surface_handler[prim_type];
+            sftx->obj_index  = lt_index0;
+            sftx->prim_index = -1; // prim_index not needed
 
             //std::cout << "  adding SurfaceContext for Light " << lt_index0 << std::endl;
         }
@@ -1821,23 +2916,23 @@ RenderContext::generateRenderPrimitivesForObject(ObjectContext* otx)
 #if DEBUG
         assert(otx->surface_list[i]);
 #endif
-        SurfaceContext& stx = *otx->surface_list[i];
-        if (stx.status == SURFACE_NOT_DICED)
+        SurfaceContext& sftx = *otx->surface_list[i];
+        if (sftx.status == SURFACE_NOT_DICED)
         {
 #if DEBUG
-            assert(stx.handler);
+            assert(sftx.handler);
 #endif
 #ifdef DEBUG_OBJECT_EXPANSION
             std::cout << "  dicing surface " << i << " using handler ";
-            std::cout << stx.handler->Class() << "()::generateRenderPrims()";
+            std::cout << sftx.handler->Class() << "()::generateRenderPrims()";
             std::cout << std::endl;
 #endif
 
             //-------------------------------------------
-            stx.handler->generateRenderPrims(*this, stx);
+            sftx.handler->generateRenderPrims(*this, sftx);
             //-------------------------------------------
 
-            stx.status = SURFACE_DICED;
+            sftx.status = SURFACE_DICED;
         }
     }
 

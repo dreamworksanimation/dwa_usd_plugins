@@ -27,8 +27,9 @@
 /// @author Jonathan Egstad
 
 
-#include <zprender/SurfaceShaderOp.h>
-#include <zprender/ColorMapKnob.h>
+#include "zprCutout.h"
+
+#include <zprender/SurfaceMaterialOp.h>
 
 #include "DDImage/VertexContext.h"
 #include "DDImage/ViewerContext.h"
@@ -45,13 +46,12 @@ using namespace DD::Image;
 namespace zpr {
 
 
-class zpCutout : public SurfaceShaderOp
+/*!
+*/
+class zpCutout : public SurfaceMaterialOp
 {
-  public:
-    Channel           k_cutout_channel;     //!< Channel to use for cutout logic
-#ifdef TRY_CUTOUT_MAP
-    ColorMapKnob      k_cutout_map;         //!< Texture map for cutout opacity
-#endif
+  protected:
+    zprCutout::InputParams k_inputs;
 
 
   public:
@@ -61,14 +61,47 @@ class zpCutout : public SurfaceShaderOp
         "This shader cuts out the object in all channels.";
     }
 
-
     //!
-    zpCutout(::Node* node) : SurfaceShaderOp(node)
-#ifdef TRY_CUTOUT_MAP
-        , k_cutout_map( this, 1/*input*/, 1/*num_channels*/, Chan_Red/*first_chan*/)
-#endif
+    zpCutout(::Node* node) : SurfaceMaterialOp(node) {}
+
+
+    /*virtual*/
+    RayShader* _createOutputSurfaceShader(const RenderContext&     rtx,
+                                          std::vector<RayShader*>& shaders)
     {
-        k_cutout_channel = Chan_Mask;
+        RayShader* output = new zprCutout(k_inputs);
+        shaders.push_back(output);
+        return output;
+    }
+
+
+    //! Return the InputBinding for an input.
+    /*virtual*/
+    InputBinding* getInputBinding(uint32_t input)
+    {
+#ifdef TRY_CUTOUT_MAP
+        if (input == 1) return &k_inputs.k_map;
+#endif
+        return NULL;
+    }
+
+
+#ifdef TRY_CUTOUT_MAP
+    //! Return the input number to use for the OpenGL texture display, usually the diffuse.
+    /*virtual*/
+    int32_t getGLTextureInput() const { return 1; }
+#endif
+
+
+    //----------------------------------------------------------------------------------
+
+
+    /*virtual*/
+    void _validate(bool for_real)
+    {
+        // Call base class first to get InputBindings assigned:
+        SurfaceMaterialOp::_validate(for_real);
+        info_.turn_on(k_inputs.k_cutout_channel);
     }
 
 
@@ -76,61 +109,26 @@ class zpCutout : public SurfaceShaderOp
     void knobs(Knob_Callback f)
     {
         //---------------------------------------------------------------------------------
-        // This adds the 'zpSurfaceShaderOp' knob that's used to identify a SurfaceShaderOp
+        // This adds the 'zpSurfaceMaterialOp' knob that's used to identify a SurfaceMaterialOp
         // to other plugins (because dynamic_cast-ing fails).  Atm if this doesn't
         // exist then the _evaluate*() methods will not be called since the node
         // will not be recognized as a RayShader type:
-        addSurfaceShaderOpIdKnob(f);
+        addSurfaceMaterialOpIdKnob(f);
         //---------------------------------------------------------------------------------
         // The top line of ray controls:
-        RayShader::addRayControlKnobs(f);
+        addRayControlKnobs(f);
 
+        InputOp_knob(f, &k_inputs.k_bindings[zprCutout::BG0], 0/*input_num*/);
+
+        //----------------------------------------------------------------------------------------------
         Divider(f);
-        Channel_knob(f, &k_cutout_channel, 1/*channels*/, "cutout_channel", "cutout channel");
-        Tooltip(f, "Use this channel to write cutout value to.  This will need to match the "
-                   "renderer's setting so that front-to-back rendering order is handled "
-                   "properly.");
+        Channel_knob(f, &k_inputs.k_cutout_channel, 1/*channels*/, "cutout_channel", "cutout channel");
+            Tooltip(f, "Use this channel to write cutout value to.  This will need to match the "
+                       "renderer's setting so that front-to-back rendering order is handled "
+                       "properly.");
 #ifdef TRY_CUTOUT_MAP
         Newline(f);
-        Texture_knob(f, k_cutout_map, "opacity", "opacity map");
-#endif
-    }
-
-
-#ifdef TRY_CUTOUT_MAP
-    /*virtual*/
-    int knob_changed(Knob* k)
-    {
-        int ret = 0;
-        if (k_cutout_map.knobChanged(k))
-            ++ret;
-        return (ret > 0);
-    }
-#endif
-
-
-    /*virtual*/
-    void _validate(bool for_real)
-    {
-        SurfaceShaderOp::_validate(for_real);
-#ifdef TRY_CUTOUT_MAP
-        // Validate map knobs:
-        k_cutout_map.validateColorMap(for_real);
-#endif
-
-        info_.turn_on(k_cutout_channel);
-    }
-
-
-    /*virtual*/
-    void _request(int x, int y, int r, int t,
-                  ChannelMask channels,
-                  int         count)
-    {
-        // Request map knobs:
-        SurfaceShaderOp::_request(x, y, r, t, channels, count);
-#ifdef TRY_CUTOUT_MAP
-        k_cutout_map.requestColorMap(count);
+        ColorMap_knob(f, &k_inputs.k_cutout_map, 1/*input*/, 1/*num_chans*/, "opacity", "opacity map");
 #endif
     }
 
@@ -140,7 +138,7 @@ class zpCutout : public SurfaceShaderOp
                          DD::Image::Pixel&    out)
     {
         // Base class call will pass it on up to input0:
-        SurfaceShaderOp::fragment_shader(vtx, out);
+        SurfaceMaterialOp::fragment_shader(vtx, out);
 
         // Clear the output channels *EXCEPT* alpha:
         const float a = out[Chan_Alpha];
@@ -148,68 +146,7 @@ class zpCutout : public SurfaceShaderOp
         out[Chan_Alpha] = a;
 
         // Indicate that this surface is completely cutout:
-        out[k_cutout_channel] = 1.0f;
-    }
-
-
-    //! The ray-tracing shader call.
-    /*virtual*/
-    void _evaluateShading(RayShaderContext& stx,
-                          Fsr::Pixel&       out)
-    {
-        // Base class call will pass it on up to input0:
-        SurfaceShaderOp::_evaluateShading(stx, out);
-
-        // Clear the output channels *EXCEPT* alpha:
-        const float a = out[Chan_Alpha];
-        out.erase();
-        out[Chan_Alpha] = a;
-
-#ifdef TRY_CUTOUT_MAP
-        // Modulate final color by cutout map:
-        if (k_cutout_map.enabled())
-        {
-            Vector3 op = k_diffuse_map.sample(stx, 0/*alpha_ptr*/);
-            if (op.x < 0.0f) {
-            } else {
-            }
-
-        } else {
-            // Indicate that this surface is completely cutout:
-            if (k_cutout_channel != stx.cutout_channel)
-                out[k_cutout_channel] = 1.0f;
-            else
-                out[stx.cutout_channel] = 1.0f;
-        }
-#else
-        // Indicate that this surface is completely cutout:
-        if (k_cutout_channel != stx.cutout_channel)
-            out[k_cutout_channel] = 1.0f;
-        else
-            out[stx.cutout_channel] = 1.0f;
-#endif
-    }
-
-
-    /*virtual*/
-    bool shade_GL(ViewerContext* ctx,
-                  GeoInfo&       geo)
-    {
-         glPushAttrib(GL_LIGHTING_BIT);
-
-         glDisable(GL_LIGHTING);
-
-         glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-
-         return true;
-    }
-
-
-    /*virtual*/
-    void unset_texturemap(ViewerContext* ctx)
-    {
-        SurfaceShaderOp::unset_texturemap(ctx);
-        glPopAttrib();
+        out[k_inputs.k_cutout_channel] = 1.0f;
     }
 
 };

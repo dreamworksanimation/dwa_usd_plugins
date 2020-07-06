@@ -28,12 +28,16 @@
 
 
 #include "RayShader.h"
-#include "SurfaceShaderOp.h"
 #include "VolumeShader.h"
+#include "RayMaterial.h"
 #include "SurfaceHandler.h"
 #include "RenderContext.h"
 #include "ThreadContext.h"
 #include "Sampling.h"
+
+#include <DDImage/plugins.h>
+
+#include <dlfcn.h>  // for dlerror
 
 
 static DD::Image::Lock expand_lock;
@@ -44,58 +48,360 @@ namespace zpr {
 //------------------------------------------------------------------------------------
 
 
-static DD::Image::Vector4 vec4_zero(0.0f, 0.0f, 0.0f, 0.0f);
-static DD::Image::Vector4  vec4_one(1.0f, 1.0f, 1.0f, 1.0f);
+static Fsr::Vec4f vec4_zero(0.0f, 0.0f, 0.0f, 0.0f);
+static Fsr::Vec4f  vec4_one(1.0f, 1.0f, 1.0f, 1.0f);
+
+/*!
+*/
+void
+RayShader::InputKnob::setValue(const char* value)
+{
+    if (!value)
+        return; // don't crash
+
+    //std::cout << "        " << name << "(" << type << ")::setValue(" << value << ") data=" << data << std::endl;
+    switch (type)
+    {
+        default:
+        case EMPTY_KNOB:
+            break;
+        //
+        case STRING_KNOB:
+        {
+            std::string& v = *static_cast<std::string*>(data);
+            v = value;
+            break;
+        }
+        //
+        case INT_KNOB:
+        {
+            int32_t& v = *static_cast<int32_t*>(data);
+            v = ::atoi(value);
+            break;
+        }
+        case DOUBLE_KNOB:
+        {
+            double& v = *static_cast<double*>(data);
+            v = ::atof(value);
+            break;
+        }
+        //
+        case COLOR2_KNOB:
+        case VEC2_KNOB:
+        {
+            Fsr::Vec2d& v = *static_cast<Fsr::Vec2d*>(data);
+            std::sscanf(value, "%lf %lf", &v.x, &v.y);
+            break;
+        }
+        case COLOR3_KNOB:
+        case VEC3_KNOB:
+        {
+            Fsr::Vec3d& v = *static_cast<Fsr::Vec3d*>(data);
+            std::sscanf(value, "%lf %lf %lf", &v.x, &v.y, &v.z);
+            break;
+        }
+        case COLOR4_KNOB:
+        case VEC4_KNOB:
+        {
+            Fsr::Vec4d& v = *static_cast<Fsr::Vec4d*>(data);
+            std::sscanf(value, "%lf %lf %lf %lf", &v.x, &v.y, &v.z, &v.w);
+            break;
+        }
+        case MAT4_KNOB:
+        {
+            Fsr::Mat4d& m = *static_cast<Fsr::Mat4d*>(data);
+            std::sscanf(value, "%lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
+                        &m.a00, &m.a10, &m.a20, &m.a30,
+                        &m.a01, &m.a11, &m.a21, &m.a31,
+                        &m.a02, &m.a12, &m.a22, &m.a32,
+                        &m.a03, &m.a13, &m.a23, &m.a33);
+            break;
+        }
+        //
+        case VEC2ARRAY_KNOB:
+// TODO: support!
+            break;
+        case VEC3ARRAY_KNOB:
+// TODO: support!
+            break;
+        case VEC4ARRAY_KNOB:
+// TODO: support!
+            break;
+        //
+        case PIXEL_KNOB:
+        {
+            // We don't store the channel values yet, just the channel list:
+            Fsr::Pixel& p = *static_cast<Fsr::Pixel*>(data);
+// TODO: parse the channel names!
+            const std::string str(value);
+            if      (str == "rgb" ) p.setChannels(DD::Image::Mask_RGB);
+            else if (str == "rgba") p.setChannels(DD::Image::Mask_RGBA);
+
+            //std::cout << "        " << name << "(" << type << ")::setValue(" << value << ")" << ", channels=" << p.channels << std::endl;
+            break;
+        }
+    }
+
+}
 
 
 //------------------------------------------------------------------------------------
 
+    // See if we recognize any of the outputs.
+    // We can handle generic 'surface' or 'displacement' output which are assumed
+    // to connect to 'Usd*' shaders like UsdPreviewSurface, UsdUVTexture, etc.
+    //
+    // TODO: need to also handle zpr networks as first-class outputs!
+    //
 
-/*static*/ const char* RayShader::frame_clamp_modes[] =
+
+
+//!
+/*static*/ const char* RayShader::zpClass() { return "zpRayShader"; }
+
+static const RayShader::InputKnob      m_empty_input;
+static const RayShader::OutputKnob     m_empty_output;
+static const RayShader::InputKnobList  m_default_inputs = {};
+static const RayShader::OutputKnobList m_default_outputs =
 {
-    "none",
-    "fwd-round-up",
-    "fwd-round-down",
-    "rev-round-up",
-    "rev-round-down",
-    0
+    {RayShader::OutputKnob("surface", RayShader::PIXEL_KNOB)}
 };
 
 
 /*!
 */
 RayShader::RayShader() :
-    k_sides_mode(RenderContext::SIDES_BOTH),
-    k_camera_visibility(true),
-    k_shadow_visibility(true),
-    k_specular_visibility(true),
-    k_diffuse_visibility(true),
-    k_transmission_visibility(true),
-    k_frame_clamp_mode(FRAME_CLAMP_NONE)
+    m_inputs(m_default_inputs),
+    m_outputs(m_default_outputs),
+    m_valid(false)
 {
     //
+    //std::cout << "RayShader::ctor(" << this << "): inputs[";
+    //for (uint32_t i=0; i < m_inputs.size(); ++i)
+    //    std::cout << " '" << m_inputs[i].name << "'";
+    //std::cout << " ] outputs[";
+    //for (uint32_t i=0; i < m_outputs.size(); ++i)
+    //    std::cout << " '" << m_outputs[i].name << "'";
+    //std::cout << " ]" << std::endl;
 }
 
 
-//-----------------------------------------------------------------------------
+/*!
+*/
+RayShader::RayShader(const InputKnobList&  inputs,
+                     const OutputKnobList& outputs) :
+    m_inputs(inputs),
+    m_outputs(outputs),
+    m_valid(false)
+{
+    //
+    //std::cout << "RayShader::ctor(" << this << "): inputs[";
+    //for (uint32_t i=0; i < m_inputs.size(); ++i)
+    //    std::cout << " '" << m_inputs[i].name << "'";
+    //std::cout << " ] outputs[";
+    //for (uint32_t i=0; i < m_outputs.size(); ++i)
+    //    std::cout << " '" << m_outputs[i].name << "'";
+    //std::cout << " ]" << std::endl;
+}
 
 
-//!
-/*static*/ const char* RayShader::zpClass() { return "zpRayShader"; }
+/*! Return a static list of input knobs for this shader.
+    Base class returns an empty list.
+*/
+/*virtual*/
+const RayShader::InputKnobList&
+RayShader::getInputKnobDefinitions() const
+{
+    return m_default_inputs;
+}
+
+
+/*! Return a static list of output knobs for this shader.
+    Base class returns only the 'primary' output.
+*/
+/*virtual*/
+const RayShader::OutputKnobList&
+RayShader::getOutputKnobDefinitions() const
+{
+    return m_default_outputs;
+}
+
+
+/*! Returns output knob by index.
+    If there's no knob an empty InputKnob is returned.
+*/
+const RayShader::InputKnob&
+RayShader::getInputKnob(uint32_t input) const
+{
+    if (input >= m_inputs.size())
+        return m_empty_input;
+    return m_inputs[input];
+}
+
+/*! Returns output knob by index.
+    If there's no knob an empty OutputKnob is returned.
+*/
+const RayShader::OutputKnob&
+RayShader::getOutputKnob(uint32_t output) const
+{
+    if (output >= m_outputs.size())
+        return m_empty_output;
+    return m_outputs[output];
+}
+
+
+/*! Returns shader pointer for input.
+    May be NULL if there's no input or no connection.
+*/
+RayShader*
+RayShader::getInput(uint32_t input) const
+{
+    if (input >= m_inputs.size())
+        return NULL;
+    return getInputKnob(input).shader;
+}
+
+
+/*! Return a named input's index or -1 if not found.
+*/
+int32_t
+RayShader::getInputByName(const char* input_name) const
+{
+    if (!input_name || !input_name[0])
+        return -1;
+    const uint32_t nInputs = (uint32_t)m_inputs.size();
+    for (uint32_t i=0; i < nInputs; ++i)
+        if (strcmp(m_inputs[i].name, input_name)==0)
+            return i;
+    return -1;
+}
+
+
+/*! Return a named output's index or -1 if not found.
+*/
+int32_t
+RayShader::getOutputByName(const char* output_name) const
+{
+    if (!output_name || !output_name[0])
+        return -1;
+    const uint32_t nOutputs = (uint32_t)m_outputs.size();
+    for (uint32_t i=0; i < nOutputs; ++i)
+        if (strcmp(m_outputs[i].name, output_name)==0)
+            return i;
+    return -1;
+}
+
+
+/*! Returns true if input can be connected to another RayShader's named output.
+
+    Base class tests if the shader has the named output and its type matches
+    the input's.
+*/
+/*virtual*/
+bool
+RayShader::canConnectInputTo(uint32_t    input,
+                             RayShader*  shader,
+                             const char* output_name)
+{
+    if (!shader || shader == this || input >= m_inputs.size())
+        return false;
+
+    const int output_index = shader->getOutputByName(output_name);
+    if (output_index == -1)
+        return false; // no output match
+
+    return true;
+}
+
+
+/*! Attempt to connect input to another RayShader's named output.
+
+    The virtual method \b canConnectInputTo() is called on this shader which
+    returns true if the connection is allowed.
+
+    If connection is allowed, the virtual method _connectInput() is
+    called to allow sublasses to do special things with the RayShader
+    input like hook up additional shaders to the input.
+*/
+bool
+RayShader::connectInput(uint32_t    input,
+                        RayShader*  shader,
+                        const char* output_name)
+{
+    if (!shader)
+    {
+        std::cerr << "        " << m_name << "::connectInput(" << input << ") ERROR, null input shader" << std::endl;
+        return false;
+    }
+    else if (shader == this)
+    {
+        std::cerr << "        " << m_name << "::connectInput(" << input << ") ERROR, cannot connect shader to itself" << std::endl;
+        return false;
+    }
+    else if (input >= m_inputs.size())
+    {
+        std::cerr << "        " << m_name << "::connectInput(" << input << ") ERROR, input index out of range" << std::endl;
+        return false;
+    }
+
+    const int output_index = shader->getOutputByName(output_name);
+    if (output_index == -1)
+    {
+        //std::cout << "        " << m_name << "::connectInput(" << input << ") FAILED connection to '" << output_name << "'" << std::endl;
+        return false; // no output match
+    }
+
+    // Connect it up:
+    m_inputs[input].shader       = shader;
+    m_inputs[input].output_index = output_index;
+    //std::cout << "        " << m_name << "::connectInput(" << input << ") shader=" << shader << ", name='" << output_name << "'" << std::endl;
+
+    // Allow subclasses to do their own connection logic:
+    _connectInput(input, shader, output_name);
+
+    return true;
+}
+
+
+/*! Subclass implementation of connectInput().
+	Base class does nothing.
+*/
+/*virtual*/
+void
+RayShader::_connectInput(uint32_t    input,
+                         RayShader*  shader,
+                         const char* output_name)
+{
+    /* Do nothing */
+}
+
 
 /*!
 */
 void
-RayShader::addRayShaderIdKnob(DD::Image::Knob_Callback f)
+RayShader::setInputValue(uint32_t    input,
+                         const char* value)
 {
-#ifdef ZPR_USE_KNOB_RTTI
-    // HACK!!!! Define a hidden knob that can be tested instead of dynamic_cast:
-    int dflt=0;
-    Int_knob(f, &dflt, "zpRayShader", DD::Image::INVISIBLE);
-        DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE |
-                               DD::Image::Knob::NO_ANIMATION |
-                               DD::Image::Knob::NO_RERENDER);
-#endif
+    if (!value || input >= m_inputs.size())
+        return; // don't crash
+
+    InputKnob& knob = m_inputs[input];
+    if (!knob.data)
+        return; // don't crash
+
+    knob.setValue(value);
+}
+
+
+/*!
+*/
+void
+RayShader::setInputValue(const char* input_name,
+                         const char* value)
+{
+    const int input_index = getInputByName(input_name);
+    if (input_index >= 0)
+        setInputValue(input_index, value);
 }
 
 
@@ -106,1004 +412,294 @@ RayShader::addRayShaderIdKnob(DD::Image::Knob_Callback f)
 */
 /*virtual*/
 void
-RayShader::addRayControlKnobs(DD::Image::Knob_Callback f)
+RayShader::validateShader(bool                 for_real,
+                          const RenderContext& rtx)
 {
-    DD::Image::Enumeration_knob(f, &k_sides_mode, RenderContext::sides_modes, "sides_mode", "visibility");
-        DD::Image::SetFlags(f, DD::Image::Knob::STARTLINE);
-        DD::Image::Tooltip(f, "Shader is applied to the front or back face, or both.");
-    DD::Image::Bool_knob(f, &k_camera_visibility,       "camera_visibility",       "camera");
-        DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
-        DD::Image::Tooltip(f, "This shader is visible to camera rays.");
-    DD::Image::Bool_knob(f, &k_shadow_visibility,       "shadow_visibility",       "shadow");
-        DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
-        DD::Image::Tooltip(f, "This shader is visible to shadow occlusion rays.");
-    DD::Image::Bool_knob(f, &k_specular_visibility,     "specular_visibility",     "spec");
-        DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
-        DD::Image::Tooltip(f, "This shader is visible to specular reflection rays.");
-    DD::Image::Bool_knob(f, &k_diffuse_visibility,      "diffuse_visibility",      "diff");
-        DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
-        DD::Image::Tooltip(f, "This shader is visible to diffuse reflection rays.");
-    DD::Image::Bool_knob(f, &k_transmission_visibility, "transmission_visibility", "trans");
-        DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
-        DD::Image::Tooltip(f, "This shader is visible to transmissed (or refracted) rays.");
-    DD::Image::Newline(f);
-    DD::Image::Enumeration_knob(f, &k_frame_clamp_mode, frame_clamp_modes, "frame_clamp_mode", "frame clamp");
-        DD::Image::SetFlags(f, DD::Image::Knob::STARTLINE);
-        DD::Image::Tooltip(f, "Modify the frame number for the shader, none, round-up or round-down.");
-    DD::Image::Newline(f);
-}
+    if (m_valid)
+        return;
 
+    const uint32_t nInputs = (uint32_t)m_inputs.size();
+    for (uint32_t i=0; i < nInputs; ++i)
+        if (getInput(i))
+            getInput(i)->validateShader(for_real, rtx);
 
-/*! Get the binding info for an input Op.
-    If it's an Iop subclass then IS_TEXTURE is enabled.
-*/
-/*static*/
-RayShader::MapBinding
-RayShader::getOpMapBinding(DD::Image::Op*     op,
-                           DD::Image::Channel alpha_chan)
-{
-    MapBinding binding;
-    binding.type  = 0x00;
-    binding.flags = 0x00;
-    if (op)
-    {
-        binding.type |= MapBinding::OP;
-
-        // Determine input type:
-#ifdef ZPR_USE_KNOB_RTTI
-        if (op->knob(SurfaceShaderOp::zpClass()))
-#else
-        if (dynamic_cast<SurfaceShaderOp*>(op))
-#endif
-            binding.type |= (MapBinding::SURFACEOP | MapBinding::MATERIAL | MapBinding::IOP);
-        else if (dynamic_cast<DD::Image::Material*>(op))
-            binding.type |= (MapBinding::MATERIAL | MapBinding::IOP);
-        else if (dynamic_cast<DD::Image::Iop*>(op))
-            binding.type |= MapBinding::IOP;
-
-        // Handle Iop inputs:
-        if (binding.isIop())
-        {
-            DD::Image::Iop* iop = static_cast<DD::Image::Iop*>(op);
-            iop->validate(true);
-
-            binding.flags |= MapBinding::IS_TEXTURE;
-
-            // Does input offer an alpha?
-            if (iop->channels().contains(alpha_chan))
-                binding.flags |= MapBinding::HAS_ALPHA;
-
-            // Does input offer an alpha?
-            if (iop->channels().size() == 1 ||
-                (iop->channels().size() == 2 && binding.hasAlpha()))
-                binding.flags |= MapBinding::IS_MONO;
-        }
-    }
-    return binding;
+    m_valid = true;
 }
 
 
 /*!
 */
-/*virtual*/ void
-RayShader::validateShader(bool for_real)
+/*virtual*/
+void
+RayShader::getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings)
 {
+    const uint32_t nInputs = (uint32_t)m_inputs.size();
+    for (uint32_t i=0; i < nInputs; ++i)
+        if (getInput(i))
+            getInput(i)->getActiveTextureBindings(texture_bindings);
 }
 
 
-//-----------------------------------------------------------------------------
+/*! Surface evaluation returns the radiance and aovs from this RayShader
+    given an intersection point and incoming ray in the RayShaderContext.
 
-
-/*! The top-level surface evaluation shader call.
+    Base class sets sets the output color to 18% grey, full opacity.
 */
+/*virtual*/
 void
-RayShader::doGeometricShading(RayShaderContext& stx,
-                              RayShaderContext& out)
-{
-    // TODO: The only need for this redirection is if we need to
-    // pre-test / pre-build something before calling the virtual function.
-
-    // Call virtual version:
-    _evaluateGeometricShading(stx, out);
-}
-
-
-//-----------------------------------------------------------------------------
-
-
-/*! Abstract surface shader entry point allows either legacy fragment shader
-    or new ray-traced shader methods to be called.
-*/
-/*static*/
-void
-RayShader::doShading(RayShaderContext& stx,
-                     Fsr::Pixel&       out)
-{
-    //std::cout << "RayShader::doShading() shader=" << stx.surface_shader << ", material=" << stx.material << std::endl;
-
-    // If the material is a RayShader then we call it directly, otherwise
-    // we construct a VertexContext that's compatible with std Nuke shaders:
-    if (stx.surface_shader)
-    {
-        //------------------------------------------
-        //------------------------------------------
-        stx.surface_shader->evaluateShading(stx, out);
-        //------------------------------------------
-        //------------------------------------------
-    }
-    else if (stx.material)
-    {
-        // Legacy shaders:
-        updateDDImageShaderContext(stx, stx.thread_ctx->vtx);
-        //------------------------------------------
-        //------------------------------------------
-        stx.material->fragment_shader(stx.thread_ctx->vtx, out);
-        //------------------------------------------
-        //------------------------------------------
-    }
-}
-
-
-/*! Top-level ray-tracing surface shader evaluation call.
-    This checks global-level params before calling the virtual subclass version.
-*/
-void
-RayShader::evaluateShading(RayShaderContext& stx,
+RayShader::evaluateSurface(RayShaderContext& stx,
                            Fsr::Pixel&       out)
 {
-    //std::cout << "RayShader::evaluateShading(" << this << ")" << std::endl;
-    // Evaluate global early-out shader options:
-
-    // Skip surface if material doesn't shade this side:
-    if (sides_mode() != RenderContext::SIDES_BOTH)
-    {
-        const double Rd_dot_N = stx.Rtx.dir().dot(stx.N);
-        if (sides_mode() == RenderContext::SIDES_FRONT && Rd_dot_N >= 0.0)
-            return;
-        else if (sides_mode() == RenderContext::SIDES_BACK && Rd_dot_N < 0.0)
-            return;
-    }
-
-    // Skip surface if material doesn't accept camera rays:
-    if (!camera_visibility() && (stx.Rtx.type_mask & Fsr::RayContext::CAMERA))
-        return;
-    // Skip surface if material doesn't accept shadow rays:
-    if (!shadow_visibility() && (stx.Rtx.type_mask & Fsr::RayContext::SHADOW))
-        return;
-    // Skip surface if material doesn't accept camera rays:
-    if (!specular_visibility() && (stx.Rtx.type_mask & Fsr::RayContext::REFLECTION))
-        return;
-    // Skip surface if material doesn't accept camera rays:
-    if (!diffuse_visibility() && (stx.Rtx.type_mask & Fsr::RayContext::DIFFUSE))
-        return;
-    // Skip surface if material doesn't accept camera rays:
-    if (!transmission_visibility() && (stx.Rtx.type_mask & Fsr::RayContext::TRANSMISSION))
-        return;
-
-    // Call virtual sublcass version:
-    _evaluateShading(stx, out);
+    out.rgba().set(0.18f, 0.18f, 0.18f, 1.0f);
 }
 
 
-//-----------------------------------------------------------------------------
-
-
-/*! Abstract displacement entry point allows legacy displacement shader or new ray-traced
-    shader methods to be called.
+/*! Surface displacement evaluation call.
 */
-/*static*/
-void
-RayShader::doDisplacement(RayShaderContext& stx,
-                          Fsr::Pixel&       out)
-{
-    // If the material is a RayShader then we call it directly, otherwise
-    // we construct a VertexContext that's compatible with std Nuke shaders:
-    if (stx.displacement_shader)
-    {
-        //------------------------------------------
-        //------------------------------------------
-        stx.displacement_shader->evaluateDisplacement(stx, out);
-        //------------------------------------------
-        //------------------------------------------
-    }
-    else if (stx.displacement_material)
-    {
-        // Legacy shaders:
-        updateDDImageShaderContext(stx, stx.thread_ctx->vtx);
-        //------------------------------------------
-        //------------------------------------------
-        stx.displacement_material->displacement_shader(stx.thread_ctx->vtx, stx.thread_ctx->varray);
-        //------------------------------------------
-        //------------------------------------------
-        memcpy(out.array(), stx.thread_ctx->varray.chan, sizeof(float)*/*DD::Image::*/VARRAY_CHANS);
-    }
-}
-
-
-/*! Top-level ray-tracing displacement shader evaluation call.
-    This checks global-level params before calling the virtual subclass version.
-*/
+/*virtual*/
 void
 RayShader::evaluateDisplacement(RayShaderContext& stx,
                                 Fsr::Pixel&       out)
 {
-    // Call virtual version:
-    _evaluateDisplacement(stx, out);
+    // do nothing
 }
 
 
-//-----------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------
 
 
-/*! This routine copies info from the SurfaceIntersection structure into the RayShaderContext
-    structure.
+/*  Map of already loaded ShaderDescriptions to speed up lookups.
 
-    Possibly auto_bumps the normal.
+    Use of this static singleton class allows m_dso_map to be shared between
+    plugins that statically link against libzprender.
+
+    Not clear why this is any functionally different than declaring a static
+    RayShaderDescMap, but I'm sure smarter folk than I know. Probably something
+    to do with when the static object is created in the process memory.
 */
-/*static*/
-void
-RayShader::updateShaderContextFromIntersection(const Traceable::SurfaceIntersection& I,
-                                               RayShaderContext&                     stx)
+class DsoMap
 {
-#if DEBUG
-    assert(I.object);
-#endif
-    stx.rprim = static_cast<zpr::RenderPrimitive*>(I.object);
-
-    // Assign shaders:
-    stx.surface_shader        = stx.rprim->surface_ctx->surface_shader;      // RayShader
-    stx.displacement_shader   = stx.rprim->surface_ctx->displacement_shader; // RayShader
-    stx.atmosphere_shader     = NULL; // Current VolumeShader being evaluated
-
-    stx.material              = stx.rprim->surface_ctx->material;              // legacy Nuke shader (fragment_shader)
-    stx.displacement_material = stx.rprim->surface_ctx->displacement_material; // legacy Nuke shader (vertex shander)
-
-    // TODO: add w2l, t2w to surface context?
-#if 0
-    stx.w2l = NULL;
-    stx.l2w = NULL;
+  private:
+#ifdef DWA_INTERNAL_BUILD
+    typedef std::map<std::string, const RayShader::ShaderDescription*> RayShaderDescMap;
 #else
-    //DD::Image::MatrixArray* transforms = ((GeoInfoContext*)stx.rprim->surface_ctx->parent_object_ctx)->motion_geoinfos[0].transforms;
-    stx.w2l = NULL;//&transforms->matrix(WORLD_TO_LOCAL);
-    stx.l2w = NULL;//&transforms->matrix(LOCAL_TO_WORLD);
+    typedef std::unordered_map<std::string, const RayShader::ShaderDescription*> RayShaderDescMap;
 #endif
+    RayShaderDescMap m_dso_map;
 
 
-    //----------------------------------------------
-    // Update geometric params from Intersection:
-    //----------------------------------------------
-    stx.distance = I.t;
+  public:
+    //!
+    DsoMap()
+    {
+        //std::cout << "DsoMap::ctor(): RayShaderDescMap singleton=" << &m_dso_map << std::endl;
+        //m_dso_map[std::string("Foo")] = NULL;
+    }
 
-    /* RayShaderContext:
-        Fsr::Vec3d PW;                  //!< Displaced shading point in world-space
-        Fsr::Vec3d dPWdx;               //!< PW x-derivative
-        Fsr::Vec3d dPWdy;               //!< PW y-derivative
-        Fsr::Vec3d PWg;                 //!< Geometric surface point (no displacement)
+    /*! Return the static DsoMap singleton.
 
-        Fsr::Vec2f st;                  //!< Primitive's barycentric coordinates at Rtx intersection
-        Fsr::Vec2f Rxst;                //!< Primitive's barycentric coordinates at Rtdx intersection
-        Fsr::Vec2f Ryst;                //!< Primitive's barycentric coordinates at Rtdy intersection
-
-        Fsr::Vec3d N;                   //!< Shading normal (interpolated & bumped vertex normal)
-        Fsr::Vec3d Nf;                  //!< Face-forward shading normal
-        Fsr::Vec3d Ng;                  //!< Geometric surface normal
-        Fsr::Vec3d Ngf;                 //!< Face-forward geometric normal
-        //-------------------------------------------------------------------
-        Fsr::Vec3d Ns;                  //!< Interpolated surface normal (same as N but with no bump)
-        Fsr::Vec3d dNsdx;               //!< Ns x-derivative
-        Fsr::Vec3d dNsdy;               //!< Ns y-derivative
-
-        Fsr::Vec2f UV;                  //!< Surface texture coordinate
-        Fsr::Vec2f dUVdx;               //!< UV x-derivative
-        Fsr::Vec2f dUVdy;               //!< UV y-derivative
-
-        Fsr::Vec4f Cf;                  //!< Vertex color
-        Fsr::Vec4f dCfdx;               //!< Vertex color x-derivative
-        Fsr::Vec4f dCfdy;               //!< Vertex color y-derivative
+        For some magical reason this works across statically linked plugins, but putting
+        'static RayShaderDescMap m_dso_map;' as a global in the cpp file doesn't...
+        Probably something to do with when the static object is created in the process memory.
     */
-
-    const Fsr::Vec3d V = -stx.Rtx.dir(); // view-vector
-
-    stx.PW   = I.PW;
-    stx.PWg  = I.PWg;   // PW non-displaced
-    //
-    stx.st   = I.st;
-    stx.Rxst = I.Rxst;
-    stx.Ryst = I.Ryst;
-    //
-    stx.Ng   = I.Ng;    // Geometric normal
-    stx.Ngf  = faceForward(stx.Ng,
-                           V/*view vector*/,
-                           I.Ng/*geometric normal*/); // Face-forward geometric normal
-    //
-    stx.N    = I.N;     // May get updated by auto_bump()
-    stx.Ns   = I.Ns;    // Interpolated surface normal (same as N but with no bump)
-    stx.Nf   = faceForward(stx.N,
-                           V/*view vector*/,
-                           I.Ng/*geometric normal*/);  // Face-forward shading normal
-
-    //------------------------------------------------------
-    // Get interpolated vertex attributes from primitive:
-    //------------------------------------------------------
-    if (stx.use_differentials)
+    static RayShaderDescMap* dsoMap()
     {
-        Fsr::Pixel vP, vdX, vdY;
-        stx.rprim->getAttributesAtSurfaceIntersection(I, DD::Image::Mask_All, vP, vdX, vdY);
-
-        stx.Ns    =  vP.N(); // Interpolated surface normal (same as N but with no bump)
-        stx.dNsdx = vdX.N(); // Surface normal x-derivative
-        stx.dNsdy = vdY.N(); // Surface normal y-derivative
-
-        const Fsr::Vec4f& uv = vP.UV();
-        stx.UV.set(uv.x/uv.w, uv.y/uv.w);
-
-        const Fsr::Vec4f& dUVdu = vdX.UV();
-        const Fsr::Vec4f& dUVdv = vdY.UV();
-        const float iw2 = 1.0f / (uv.w * uv.w);
-        stx.dUVdx.set((dUVdu.x*uv.w - dUVdu.w*uv.x)*iw2, (dUVdu.y*uv.w - dUVdu.w*uv.y)*iw2);
-        stx.dUVdy.set((dUVdv.x*uv.w - dUVdv.w*uv.x)*iw2, (dUVdv.y*uv.w - dUVdv.w*uv.y)*iw2);
-
-        // Apply autobump, this will update I.PW & I.N:
-#if 0
-#if 0
-        stx.rprim->doAutoBump(stx, I);
-#else
-        if (stx.rprim->surface_ctx->displacement_enabled &&
-              stx.rprim->surface_ctx->surface_shader)
-        {
-           Fsr::Pixel out;
-           RayShader::doDisplacement(stx, out);
-           // Update intersection surface info:
-           stx.PW = out.PW();
-           stx.N  = out.N();
-           // TODO: update derivatives as well...?
-        }
-#endif
-#endif
-
-        // Vertex attribs:
-        stx.Cf    = vP.Cf();  // Cf
-        stx.dCfdx = vdX.Cf(); // Cf x-derivative
-        stx.dCfdy = vdY.Cf(); // Cf y-derivative
-    }
-    else
-    {
-        Fsr::Pixel v;
-        stx.rprim->getAttributesAtSurfaceIntersection(I, DD::Image::Mask_All, v);
-
-        stx.Ns = v.N(); // Interpolated surface normal (same as N but with no bump)
-
-        const Fsr::Vec4f& uv = v.UV();
-        stx.UV.set(uv.x/uv.w, uv.y/uv.w);
-
-        // Disable texture filtering if no differentials:
-        stx.dUVdx.set(0.0f, 0.0f);
-        stx.dUVdy.set(0.0f, 0.0f);
-        stx.texture_filter = NULL;
-
-        // Apply autobump, this will update I.PW & I.N:
-#if 0
-#if 0
-        stx.rprim->doAutoBump(stx, I);
-#else
-        if (stx.rprim->surface_ctx->displacement_enabled &&
-              stx.rprim->surface_ctx->surface_shader)
-        {
-           Fsr::Pixel out;
-           RayShader::doDisplacement(stx, out);
-           // Update intersection surface info:
-           stx.PW = out.PW();
-           stx.N  = out.N();
-           // TODO: update derivatives as well...?
-        }
-#endif
-#endif
-
-        // Vertex attribs:
-        stx.Cf = v.Cf(); // Cf
+        static DsoMap m_instance;
+        //std::cout << "  DsoMap::instance(): singleton=" << &m_instance.m_dso_map << std::endl;
+        return &m_instance.m_dso_map;
     }
 
+    //!
+    static const RayShader::ShaderDescription* find(const std::string& shader_class)
+    {
+        if (shader_class.empty())
+            return NULL;
+        DD::Image::Guard guard(expand_lock); // just in case...
+        RayShaderDescMap::const_iterator it = dsoMap()->find(shader_class);
+        if (it != dsoMap()->end())
+            return it->second;
+        return NULL; // not found
+    }
+    
+    //!
+    static void add(const std::string&                  shader_class,
+                    const RayShader::ShaderDescription* desc)
+    {
+        if (shader_class.empty() || !desc)
+            return;
+        DD::Image::Guard guard(expand_lock); // just in case...
+        (*dsoMap())[shader_class] = desc;
+    }
+
+};
+
+
+//--------------------------------------------------------------------------------------------------
+
+
+
+/*static*/
+RayShader*
+RayShader::create(const ShaderDescription& node_description)
+{
+    return create(node_description.shaderClass());
 }
 
 
-/*! Legacy shader interface.
-    We construct a DD::Image::VertexContext that can be passed to a fragment_shader():
+/*! Create a RayShader instance based on the type name ('abcProcedural', 'PerspectiveCamera', etc.)
+    Calling code takes ownership of returned pointer.
 */
 /*static*/
-void
-RayShader::updateDDImageShaderContext(const RayShaderContext&   stx,
-                                      DD::Image::VertexContext& vtx)
+RayShader*
+RayShader::create(const char* shader_class)
 {
-#if DEBUG
-    assert(stx.rprim);
-    assert(stx.rprim->surface_ctx);
-    assert(stx.rprim->surface_ctx->parent_object_ctx);
-#endif
+    if (!shader_class || !shader_class[0])
+        return NULL;
+    //std::cerr << "zpr::RayShader::create('" << shader_class << "')" << std::endl;
 
-    // Always use the displaced point from the intersection test:
-    vtx.PW()    = (stx.PW - stx.rtx->global_offset).asVec3f(); // back to world-space
-    vtx.dPWdu() = stx.dPWdx;
-    vtx.dPWdv() = stx.dPWdy;
+    // Get the description by name:
+    const RayShader::ShaderDescription* desc = find(shader_class);
+    if (!desc)
+        return NULL; // can't find plugin...
 
-    // Get view vector (also called eye(I) vector) which is just the inverted ray direction:
-    //Fsr::Vec3d V = -stx.Rtx.dir();
-
-    // If we're shading flat then use Ng::
-    if (stx.rtx->k_shading_interpolation == RenderContext::SHADING_CONSTANT)
+    // Allocate a new one and return it:
+    RayShader* dso = desc->builder_method();
+    if (!dso)
     {
-        vtx.N() = stx.Ng;
+        //std::cerr << "zpr::RayShader::create(): error, cannot allocate new shader of type '" << shader_class << "'" << std::endl;
+        return NULL;
     }
-    else
-    {
-        vtx.N() = stx.N;//face_forward(stx.N, V, stx.Ng);
-    }
+    //std::cerr << "loaded description '" << desc->shaderClass() << "', dso=" << dso << std::endl;
 
-    vtx.UV().set(stx.UV.x, stx.UV.y, 0.0f, 1.0f);
-    vtx.dUVdu().set(stx.dUVdx.x, stx.dUVdx.y, 0.0f, 0.0f);
-    vtx.dUVdv().set(stx.dUVdy.x, stx.dUVdy.y, 0.0f, 0.0f);
-
-    vtx.Cf()    = stx.Cf;
-    vtx.dCfdu() = stx.dCfdx;
-    vtx.dCfdv() = stx.dCfdy;
-    //std::cout << "Cf[" << vtx.r() << " " << vtx.g() << " " << vtx.b() << "]" << std::endl;
-
-    // Assign current scene, primitive, primitive transforms,
-    // render primitive and render material for shader access:
-    const GeoInfoContext*         gptx = (const GeoInfoContext*)stx.rprim->surface_ctx->parent_object_ctx;
-    const uint32_t                obj0 = gptx->motion_objects[0].index;
-    const GeoInfoContext::Sample& gtx0 = gptx->motion_geoinfos[0];
-
-    vtx.set_transforms(gtx0.transforms);
-    vtx.set_geoinfo(gtx0.info);
-    vtx.set_renderstate(&gtx0.info->renderState);
-    vtx.set_primitive(NULL); // is this safe...? I think so since we're only calling fragment_shader()
-    //vtx.set_primitive(gtx0.info->primitive_array()[stx.rprim->surface_ctx->prim_index]);
-    vtx.set_rprimitive(NULL);
-
-    // Make sure P().w is 1.0 - if not shaders that assume the vertex params are
-    // in homogeneous space may screw up their calculations...
-    vtx.P().set(float(stx.x), float(stx.y), 0.0f, 1.0f);
-    vtx.dPdu() = vec4_zero;
-    vtx.dPdv() = vec4_zero;
-
-    vtx.ambient.set(0.0f, 0.0f, 0.0f);
-
-    // This is set by the first Iop that fragment_shader() is called
-    // on and is used by the fragment blending logic.
-    vtx.blending_shader = 0;
-
-    // Whether the default shader should sample its texture map.
-    // Relighting systems turn this off because they've already
-    // sampled their texture:
-    vtx.texture_sampling = true;
-
-    vtx.set_rmaterial(stx.material);
-
-    if (stx.master_lighting_scene)
-    {
-        // Lighting enabled:
-        if (stx.per_object_lighting_scenes)
-        {
-#if DEBUG
-            assert(obj0 < stx.per_object_lighting_scenes->size());
-#endif
-            vtx.set_scene((*stx.per_object_lighting_scenes)[obj0]);
-        }
-        else
-        {
-            vtx.set_scene(stx.master_lighting_scene);
-        }
-    }
-    else
-    {
-        // No lighting enabled:
-        vtx.set_scene(&stx.thread_ctx->dummy_lighting_scene);
-    }
-
-    if (!stx.use_differentials)
-        vtx.scene()->filter(NULL);
-    else
-        vtx.scene()->filter(stx.texture_filter);
-
-    // Set this to false to avoid the Iop::fragment_shader() from over-ing
-    // the sample - unfortunately it won't sample alpha properly then, so
-    // we must to it to true...:
-    vtx.scene()->transparency(true);
+    return dso;
 }
 
 
-//-----------------------------------------------------------------------------
+/*! Constructor sets name and label to same value.
+*/
+RayShader::ShaderDescription::ShaderDescription(const char*   shader_class,
+                                                PluginBuilder builder) :
+    m_shader_class(shader_class),
+    builder_method(builder)
+{
+    //std::cout << "  zpr::RayShader::ShaderDescription::ctor(" << shader_class << ")" << std::endl;
+
+    // DD::Image::Description.h:
+    //  const char* compiled;   // Date and DD_IMAGE_VERSION_LONG this was compiled for
+    //  const char* plugin;     // Set to the plugin filename
+    //  License*    license;    // If non-null, license check is run
+
+    // No need for license checks, although this could be leveraged to stop
+    // DD::Image from loading a Fuser plugin accidentally:
+    DD::Image::Description::license = NULL;
+
+    // Register the plugin callback - this is called when the plugin is loaded:
+    ShaderDescription::ctor(pluginBuilderCallback);
+
+    // Update compiled string to use Fuser version rather than kDDImageVersion:
+    DD::Image::Description::compiled = __DATE__ " for Fuser-" FuserVersion;
+}
 
 
-/*! Abstracted illumination entry point.
+/*! Called when the plugin .so is first loaded.
+    This adds the plugin class to the map of loaded dsos so that we don't need
+    to search or load the .so again.
 */
 /*static*/
 void
-RayShader::getIllumination(RayShaderContext&                stx,
-                           Fsr::Pixel&                      out,
-                           Traceable::DeepIntersectionList* deep_out)
+RayShader::ShaderDescription::pluginBuilderCallback(DD::Image::Description* desc)
 {
-#if DEBUG
-    assert(stx.rtx); // shouldn't happen...
-#endif
-    //std::cout << "RayShader::getIllumination(): Rtx[" << stx.Rtx << "]" << std::endl;
-    out.channels += DD::Image::Mask_RGBA;
-    out.channels += stx.cutout_channel;
-    out.clearAllChannels();
-    out.Z() = std::numeric_limits<float>::infinity();
+    if (!desc)
+        return; // don't crash...
 
-    if (deep_out)
-        deep_out->clear();
+    const RayShader::ShaderDescription* dso_desc = static_cast<const RayShader::ShaderDescription*>(desc);
 
-    // Make sure ray is valid:
-    const Fsr::Vec3d& Rd = stx.Rtx.dir();
-    if (::isnan(Rd.x) || ::isnan(Rd.y) || ::isnan(Rd.z))
-        return;
+    const char* shader_class = dso_desc->shaderClass();
+    assert(shader_class && shader_class[0]);
 
-    // Are we at max depth?
-    if (++stx.depth >= stx.rtx->ray_max_depth)
-        return;
+    //std::cout << "  zpr::RayShader::ShaderDescription::pluginBuilderCallback(" << dso_desc << "):";
+    //std::cout << " shader_class='" << shader_class << "'" << std::endl;
 
-    // Validate the current index-of-refraction.
-    // If not yet defined, default to air
-    if (stx.index_of_refraction < 0.0)
-        stx.index_of_refraction = 1.00029; // ior of air
-
-    Fsr::Pixel& surface_color = stx.thread_ctx->surface_color;
-    surface_color.channels = out.channels;
-    Fsr::Pixel& volume_color = stx.thread_ctx->volume_color;
-    volume_color.channels = out.channels;
-
-    bool  surface_is_cutout = false;
-    float surface_Zf        = 0.0f;
-
-    //-----------------------------------------------------------
-    // Intersect and shade hard surfaces
-    //
-    Traceable::SurfaceIntersectionList& I_list = stx.thread_ctx->I_list;
-    I_list.clear();
-
-    double tmin = stx.Rtx.mindist;
-    double tmax = stx.Rtx.maxdist;
-    stx.rtx->objects_bvh.getIntersections(stx, I_list, tmin, tmax);
-    uint32_t nSurfaces = (uint32_t)I_list.size();
-
-    if (nSurfaces > 10000)
+    // Add to dso map if it doesn't already exist.
+    // Statically linked plugins will cause the libFuser built in descriptions
+    // to call this repeatedly, so ignore any repeats:
+    if (!DsoMap::find(std::string(shader_class)))
     {
-        std::cout << "error! intersection count " << nSurfaces;
-        std::cout << " exceeds max allowed - tmin=" << tmin << " tmax=" << tmax;
-        std::cout << ", this is likely due to a coding error.";
-        std::cout << std::endl;
+        DsoMap::add(std::string(shader_class), dso_desc);
+        //std::cout << "    (pluginBuilderCallback) adding '" << shader_class << "'=" << dso_desc << std::endl;
     }
-    else if (nSurfaces > 0 && tmin < tmax)
+}
+
+
+/*! Find a dso description by name.
+
+    If it's been loaded before it quickly returns an existing cached
+    ShaderDescription, otherwise it prepends 'zpr' to the start of the name
+    (ie 'zprMyShaderClass')  before searching the plugin paths for a
+    matching plugin filename.
+
+    Returns NULL if not found.
+*/
+/*static*/
+const RayShader::ShaderDescription*
+RayShader::ShaderDescription::find(const char* shader_class)
+{
+    if (!shader_class || !shader_class[0])
+        return NULL;  // just in case...
+    const std::string dso_name(shader_class);
+
+    //std::cout << "zpr::RayShader::ShaderDescription::find('" << dso_name << "') dso_map=" << DsoMap::dsoMap() << std::endl;
+
+    // Search for existing dso using the base shaderClass() name
+    // (ie UsdIO, UsdaIO, MeshPrim, etc)
+    const RayShader::ShaderDescription* dso_desc = DsoMap::find(dso_name);
+    if (dso_desc)
+        return dso_desc;
+
+    // Not found, prepend 'zpr' to name and search the plugin paths for
+    // the plugin dso file (ie zprBaseSurface.so, zprDisplacement.tcl, etc)
+    std::string plugin_name("zpr");
+    plugin_name += dso_name;
+
+    // Use the stock DDImage plugin load method, which supports .tcl redirectors.
+    // It's important because we're relying on .tcl directors to handle aliasing
+    // in several plugins:
+    // NOTE: DD::Image::plugin_load() says that it returns NULL if a plugin is
+    // not loaded but that does not appear to be the case. It returns the path
+    // to the plugin it *attempted* to load, but only by checking plugin_error()
+    // can we tell if dlopen() failed and what was returned in dlerror()
+    const char* plugin_path = DD::Image::plugin_load(plugin_name.c_str());
+    if (!plugin_path || !plugin_path[0])
     {
-        std::vector<uint32_t>& sorted_list = stx.thread_ctx->index_list;
-        sorted_list.clear();
-
-        // TODO: isn't there a faster way to sort these...? If we sort the intersection
-        // list using std::sort() there's a bunch of memcps and a SurfaceIntersection is
-        // kinda big. So I think we just need another struct with Z and index and sort that,
-        // just like we do in an OpenDCX DeepPixel.
-#if 0
-        Traceable::sortIntersections(I_list);
-#else
-        if (nSurfaces == 1)
-        {
-            // No need to sort:
-            sorted_list.push_back(0);
-        }
-        else if (nSurfaces == 2)
-        {
-            if (I_list[0].t < I_list[1].t)
-            {
-                sorted_list.push_back(0);
-                sorted_list.push_back(1);
-            }
-            else
-            {
-                sorted_list.push_back(1);
-                sorted_list.push_back(0);
-            }
-        }
-        else
-        {
-            for (uint32_t i=0; i < nSurfaces; ++i)
-            {
-                const Traceable::SurfaceIntersection& I = I_list[i];
-                sorted_list.push_back(0);
-                for (int j=(int)sorted_list.size() - 1; ; --j)
-                {
-                    if (j == 0 || I.t > I_list[sorted_list[j - 1]].t)
-                    {
-                        sorted_list[j] = i;
-                        break;
-                    }
-                    sorted_list[j] = sorted_list[j - 1];
-                }
-            }
-            //
-            nSurfaces = (uint32_t)sorted_list.size();
-        }
-#endif
-
-        if (stx.rtx->k_show_diagnostics == RenderContext::DIAG_BVH_LEAF)
-        {
-            //-----------------------------------------------------------
-            // Output diagnostic info
-            //
-            const Traceable::SurfaceIntersection& I = I_list[sorted_list[0]];
-            const float Rd_dot_N = powf(float(stx.Rtx.dir().dot(-I.Ns))*0.5f, 1.0f/0.26f);
-
-            out.color().set(Rd_dot_N);
-            out.alpha() = 1.0f;
-            out.cutoutAlpha() = 1.0f;
-        }
-        else
-        {
-            //-----------------------------------------------------------
-            // Shade the surfaces from front to back
-            //
-            bool have_first_solid_surface = false;
-
-            // Temp channel to accumulate 'true' alpha, don't add to out's channel set:
-            out.cutoutAlpha() = 0.0f;
-
-            // Iterate through surfaces from near to far:
-            for (uint32_t i=0; i < nSurfaces; ++i)
-            {
-                const Traceable::SurfaceIntersection& I = I_list[sorted_list[i]];
-
-                // Skip surface if it's too close to Ray origin or no object:
-                if (I.t < std::numeric_limits<double>::epsilon() || I.object == NULL)
-                    continue;
-
-                // Evaluate the surface shader and determine if it's transparent enough to
-                // continue tracing:
-                // TODO: we need to use the RayShaderContexts in the thread_ctx for this!
-                RayShaderContext stx_shade(stx);
-                updateShaderContextFromIntersection(I, stx_shade);
-
-                // Having surface_color be black is essential to front-to-back
-                // under-ing because the Nuke legacy shaders are doing overs
-                // internally:
-                surface_color.clearAllChannels();
-
-                //------------------------------------------------
-                //------------------------------------------------
-                doShading(stx_shade,
-                          surface_color);
-
-                surface_Zf = float(I.t); // default Z to intersection distance
-                surface_color.Z() = surface_Zf; 
-                surface_is_cutout = (surface_color[stx.cutout_channel] > 0.5f);
-                //------------------------------------------------
-                //------------------------------------------------
-
-                if (deep_out)
-                    deep_out->push_back(Traceable::DeepIntersection(I, surface_color, stx.sampler->subpixel.spmask));
-
-                // Save current A & B alphas, as out[Chan_Alpha] can get mucked up in merges below:
-                const float Aa = surface_color.alpha();
-                const bool is_solid_surface = (Aa >= stx.rtx->k_alpha_threshold);
-                // If the surface isn't solid don't bother adding it to output:
-                if (!is_solid_surface)
-                    continue;
-
-                // Get AOVs:
-                const uint32_t nAOVs = (uint32_t)stx.rtx->aov_outputs.size();
-                if (nAOVs > 0)
-                {
-                    //===========================================================
-                    //                        AOVs
-                    //===========================================================
-                    for (uint32_t j=0; j < nAOVs; ++j)
-                    {
-                        const AOVLayer& aov = stx.rtx->aov_outputs[j];
-#if DEBUG
-                        assert(aov.type < AOV_LAST_TYPE && aov.handler);
-#endif
-                        // Call the aov handler to extract values:
-                        aov.handler(stx_shade, aov, surface_color);
-                    }
-                }
-
-                if (!have_first_solid_surface)
-                {
-                    //==========================================
-                    // First surface - direct copy
-                    //==========================================
-                    have_first_solid_surface = true;
-
-                    if (surface_is_cutout) {
-                        // Matte object, color chans are black so just replace alpha:
-                        out.alpha() = Aa;
-
-                    } else {
-                        // First surface is normally just a replace:
-                        foreach(z, stx.rtx->under_channels)
-                            out[z] = surface_color[z];
-                        out.cutoutAlpha() = Aa;
-                    }
-
-                    bool do_Z = true;
-                    if (nAOVs > 0)
-                    {
-                        //===========================================================
-                        //                        AOVs
-                        //===========================================================
-                        for (uint32_t j=0; j < nAOVs; ++j)
-                        {
-                            const AOVLayer& aov = stx.rtx->aov_outputs[j];
-                            //
-                            if (aov.mask.contains(DD::Image::Chan_Z))
-                                do_Z = false; // This AOV writes Z
-                            //
-                            // Only apply the premulting to AOV when there's more than one surface:
-                            if (aov.merge_mode == AOVLayer::AOV_MERGE_PREMULT_UNDER &&
-                                stx.rtx->k_transparency_enabled)
-                            {
-                                // Premult AOV by Aa:
-                                foreach(z, aov.mask)
-                                    out[z] = surface_color[z]*Aa;
-                            } else {
-                                // Just copy:
-                                foreach(z, aov.mask)
-                                    out[z] = surface_color[z];
-                            }
-                        }
-                    }
-                    // Handle Z even if no AOV has:
-                    if (do_Z)
-                        out.Z() = float(I.t);
-
-                    // If we're not allowing transparency or the surface is solid
-                    // we're done at solid first surface:
-                    if (!stx.rtx->k_transparency_enabled ||
-                        out.alpha() >= (1.0f - std::numeric_limits<float>::epsilon()))
-                    {
-                        if (out.alpha() >= (1.0f - std::numeric_limits<float>::epsilon()))
-                           out.alpha() = 1.0f;
-
-                        // Final cutout alpha remains in the Chan_Cutout_Alpha!  We don't move it
-                        // to Chan_Alpha here so that we can do more cutout logic post illumination()
-                        if (out.cutoutAlpha() >= (1.0f - std::numeric_limits<float>::epsilon()))
-                            out.cutoutAlpha() = 1.0f;
-
-                        break;
-                    }
-
-                    continue;
-                }
-
-                const float Ba  = out.alpha();
-                const float iBa = (1.0f - Ba);
-
-                // UNDER the non-aov channels:
-                if (surface_is_cutout)
-                {
-                    // Matte object, color chans are black so just under alpha:
-                    out.alpha() += Aa*iBa;
-                }
-                else
-                {
-                    //A_under_B(surface_color, out, stx.rtx->under_channels);
-                    if (Ba < std::numeric_limits<float>::epsilon())
-                    {
-                        foreach(z, stx.rtx->under_channels)
-                            out[z] += surface_color[z];
-                    }
-                    else if (Ba < 1.0f)
-                    {
-                        foreach(z, stx.rtx->under_channels)
-                            out[z] += surface_color[z]*iBa;
-                    }
-                    else
-                    {
-                        // saturated B alpha - do nothing
-                    }
-                    out.cutoutAlpha() += Aa*iBa;
-                }
-
-                bool do_Z = true;
-                if (nAOVs > 0)
-                {
-                    //===========================================================
-                    //                        AOVs
-                    // TODO: implement aov merge handlers!
-                    //===========================================================
-                    for (uint32_t j=0; j < nAOVs; ++j)
-                    {
-                        const AOVLayer& aov = stx.rtx->aov_outputs[j];
-                        //
-                        if (aov.mask.contains(DD::Image::Chan_Z))
-                            do_Z = false; // This AOV writes Z
-                        //
-                        switch (aov.merge_mode) {
-                        case AOVLayer::AOV_MERGE_UNDER: {
-                            foreach(z, aov.mask)
-                            {
-                                if (z == DD::Image::Chan_Z && ::isinf(out[z]))
-                                    out[z] = surface_color[z];
-                                else
-                                    out[z] += surface_color[z]*iBa;
-                            }
-                            break;}
-
-                        case AOVLayer::AOV_MERGE_PREMULT_UNDER: {
-                            foreach(z, aov.mask)
-                            {
-                                if (z == DD::Image::Chan_Z && ::isinf(out[z]))
-                                    out[z] = surface_color[z]*Aa;
-                                else
-                                    out[z] += surface_color[z]*Aa*iBa;
-                            }
-                            break;}
-
-                        case AOVLayer::AOV_MERGE_PLUS:
-                            foreach(z, aov.mask)
-                            {
-                                if (z == DD::Image::Chan_Z && ::isinf(out[z]))
-                                    out[z] = surface_color[z];
-                                else
-                                    out[z] += surface_color[z];
-                            }
-                            break;
-
-                        case AOVLayer::AOV_MERGE_MIN:
-                            foreach(z, aov.mask)
-                                out[z] = std::min(out[z], surface_color[z]);
-                            break;
-
-                        case AOVLayer::AOV_MERGE_MID:
-                            foreach(z, aov.mask)
-                            {
-                                if (z == DD::Image::Chan_Z && ::isinf(out[z]))
-                                    out[z] = surface_color[z]; // don't max if Z is infinity
-                                else
-                                    out[z] = (surface_color[z] + out[z])*0.5f;
-                            }
-                            break;
-
-                        case AOVLayer::AOV_MERGE_MAX:
-                            foreach(z, aov.mask)
-                            {
-                                if (z == DD::Image::Chan_Z && ::isinf(out[z]))
-                                    out[z] = surface_color[z]; // don't max if Z is infinity
-                                else
-                                    out[z] = std::max(out[z], surface_color[z]);
-                            }
-                            break;
-                        }
-                    }
-                }
-                // Handle Z even if no AOV has:
-                if (do_Z && is_solid_surface)
-                    out.Z() = std::min(out.Z(), float(I.t));
-
-                // Now check surface transparency - if it's almost 1.0 we can stop:
-                if (out.alpha() >= (1.0f - std::numeric_limits<float>::epsilon()))
-                {
-                    out.alpha() = 1.0f;
-                    break;
-                }
-
-            } // diagnostic or surface shading
-
-        } // nSurfaces loop
-
-        // Update the final cutout status:
-        surface_is_cutout = (out[stx.cutout_channel] > 0.5f);
-
-    } // have surfaces
-
-
-    //-----------------------------------------------------------
-    // Intersect and ray march volumes
-    //
-    if (stx.atmosphere_shader)
+        std::cerr << "zpr::RayShader::ShaderDescription::find('" << plugin_name << "') ";
+        std::cerr << "error: plugin not found." << std::endl;
+        return NULL;  // plugin not found!
+    }
+    // Was there a dlerror() on load?
+    if (DD::Image::plugin_error())
     {
-        Volume::VolumeIntersectionList& vol_intersections = stx.thread_ctx->vol_intersections;
-        I_list.clear();
-        double vol_tmin, vol_tmax;
-        double vol_segment_min_size, vol_segment_max_size;
-        if (stx.atmosphere_shader->getVolumeIntersections(stx,
-                                                          vol_intersections,
-                                                          vol_tmin,
-                                                          vol_tmax,
-                                                          vol_segment_min_size,
-                                                          vol_segment_max_size))
-        {
-            //std::cout << "RayShader::getIllumination(): Rtx[" << stx.Rtx << "] atmo-shader=" << stx.atmosphere_shader;
-            //std::cout << "  nVolumeIntersections=" << vol_intersections.size() << std::endl;
-            bool do_march = true;
+        std::cerr << "zpr::RayShader::ShaderDescription::find('" << plugin_name << "') ";
+        std::cerr << "error: plugin not loaded, dlopen error '" << DD::Image::plugin_error() << "'" << std::endl;
+        return NULL;  // plugin not found!
+    }
 
-            // If final surface alpha is 1, clamp the volume's range against the surface render.  This
-            // unfortunately means that volumes between transparent surfaces are not rendered.
-            // It's a compromise for speed...
-            if (!stx.rtx->k_atmosphere_alpha_blending ||
-                (stx.rtx->k_atmosphere_alpha_blending && out.alpha() > 0.999f))
-            {
-                if (vol_tmin >= surface_Zf)
-                    do_march = false; // Skip if surface Z is closer than first volume
-                else
-                    vol_tmax = std::min(vol_tmax, std::max(vol_tmin, double(surface_Zf)));
-            }
+    // Plugin found and loaded, return the pointer that was added to the map:
+    dso_desc = DsoMap::find(dso_name);
+    if (!dso_desc)
+    {
+        // Error - the plugin should have been found! If not then the plugin
+        // likely does not have defined ShaderDescriptions matching 'plugin_name':
+        std::cerr << "zpr::RayShader::ShaderDescription::find('" << dso_name << "') ";
+        std::cerr << "error: plugin did not define a zpr::RayShader::ShaderDescription matching ";
+        std::cerr << "the plugin name - this is likely a coding error.";
+        if (dlerror())
+            std::cerr << " '" << dlerror() << "'";
+        std::cerr << std::endl;
+        return NULL;  // plugin not found!
+    }
 
-#if 0
-            // TODO: re-support camera (primary) ray blending with bg Z and alpha
-            // TODO: pass bg values in stx as a Pixel*?
-            if (stx.Rtx.type_mask & Fsr::RayContext::CAMERA)
-            {
-                if (m_have_bg_Z && k_bg_occlusion)
-                {
-                    // Clamp tmax to bg Z to speed up march, but only if we're not
-                    // alpha blending, and the alpha is < 1:
-                    if (!stx.rtx->k_atmosphere_alpha_blending ||
-                        (stx.rtx->k_atmosphere_alpha_blending && bg.alpha() > 0.999f))
-                    {
-                        if (vol_tmin >= bg.Z())
-                            do_march = false; // Skip if bg Z is closer than first volume
-                        else
-                            vol_tmax = std::min(vol_tmax, std::max(vol_tmin, double(bg.Z())));
-                    }
-                }
-            }
-#endif
-
-            // Finally check if cutout surface is in front of all volumes:
-            if (surface_is_cutout && surface_Zf <= vol_tmin)
-                do_march = false;
-
-            if (do_march)
-            {
-#if 0
-                if (stx.rtx->k_show_diagnostics == RenderContext::DIAG_VOLUMES)
-                {
-                    Raccum.red()   += float(vol_tmin);
-                    Raccum.green() += float(vol_tmax);
-                    Raccum.blue()  += float(vol_segment_min_size);
-                    Raccum.alpha() += float(vol_segment_max_size);
-                    // Take min Z:
-                    if (surface_Zf < accum_Z)
-                        accum_Z = surface_Zf;
-                    coverage += 1.0f;
-                    ++sample_count;
-                    continue;
-                }
-#endif
-
-                // Ray march through volumes:
-                volume_color.clearAllChannels();
-                if (stx.atmosphere_shader->volumeMarch(stx,
-                                                       vol_tmin,
-                                                       vol_tmax,
-                                                       vol_segment_min_size,
-                                                       vol_segment_max_size,
-                                                       surface_Zf,
-                                                       out.alpha(),
-                                                       vol_intersections,
-                                                       volume_color,
-                                                       NULL/*deep_out*/))
-                {
-                    // Add volume illumination to final:
-                    out.color()       += volume_color.color();
-                    out.alpha()       += volume_color.alpha();
-                    out.cutoutAlpha() += volume_color.cutoutAlpha();
-
-                    // Take min Z:
-                    if (volume_color.Z() < surface_Zf)
-                        surface_Zf = volume_color.Z();
-                }
-            }
-
-        } // nVolumes > 0
-
-    } // doVolumes
-
-    // Final cutout alpha remains in the Chan_Cutout_Alpha!  We don't move it
-    // to Chan_Alpha here so that we can do more cutout logic post illumination()
-    if (out.cutoutAlpha() >= (1.0f - std::numeric_limits<float>::epsilon()))
-        out.cutoutAlpha() = 1.0f;
+    return dso_desc;
 }
 
 
@@ -1113,6 +709,7 @@ RayShader::getIllumination(RayShaderContext&                stx,
 /*! Return the indirect diffuse illumination for surface point with normal N.
     Indirect diffuse means only rays that hit objects will contribute to the surface color.
 */
+/*static*/
 bool
 RayShader::getIndirectDiffuse(RayShaderContext& stx,
                               const Fsr::Vec3d& N,
@@ -1125,7 +722,7 @@ RayShader::getIndirectDiffuse(RayShaderContext& stx,
     out.clearAllChannels();
 
     // Check total & diffuse depth:
-    if (stx.Rtx.type_mask & Fsr::RayContext::DIFFUSE)
+    if (stx.Rtx.isCameraPath())
         ++stx.diffuse_depth;
     if (stx.diffuse_depth >= stx.rtx->ray_diffuse_max_depth)
         return false;
@@ -1164,7 +761,7 @@ RayShader::getIndirectDiffuse(RayShaderContext& stx,
                                  RenderContext::SIDES_BOTH/*sides_mode*/);
 
         Fsr::Pixel illum(out.channels);
-        RayShader::getIllumination(stx_new, illum, 0/*deep_out*/);
+        RayMaterial::getIllumination(stx_new, illum, 0/*deep_out*/);
         if (illum[stx.cutout_channel] <= 0.5f)
         {
             out += illum;
@@ -1183,6 +780,7 @@ RayShader::getIndirectDiffuse(RayShaderContext& stx,
 /*! Return the indirect specular illumination for surface point with normal N.
     Indirect specular means only reflected rays that hit objects will contribute to the surface color.
 */
+/*static*/
 bool
 RayShader::getIndirectGlossy(RayShaderContext& stx,
                              const Fsr::Vec3d& N,
@@ -1195,7 +793,7 @@ RayShader::getIndirectGlossy(RayShaderContext& stx,
     out.clearAllChannels();
 
     // Check total & glossy depth:
-    if (stx.Rtx.type_mask & Fsr::RayContext::GLOSSY)
+    if (stx.Rtx.isGlossyContributor())
         ++stx.glossy_depth;
     if (stx.glossy_depth >= stx.rtx->ray_glossy_max_depth)
         return false;
@@ -1241,7 +839,7 @@ RayShader::getIndirectGlossy(RayShaderContext& stx,
                                  RenderContext::SIDES_BOTH/*sides_mode*/);
 
         Fsr::Pixel illum(out.channels);
-        RayShader::getIllumination(stx_new, illum, 0/*deep_out*/);
+        RayMaterial::getIllumination(stx_new, illum, 0/*deep_out*/);
         if (illum[stx.cutout_channel] <= 0.5f)
         {
             out += illum;
@@ -1259,6 +857,7 @@ RayShader::getIndirectGlossy(RayShaderContext& stx,
 /*! Return the transmitted illumination for surface point with normal N.
     Transmission means only refracted rays that pass through objects will contribute to the surface color.
 */
+/*static*/
 bool
 RayShader::getTransmission(RayShaderContext& stx,
                            const Fsr::Vec3d& N,
@@ -1272,7 +871,7 @@ RayShader::getTransmission(RayShaderContext& stx,
     out.clearAllChannels();
 
     // Check total & glossy depth:
-    if (stx.Rtx.type_mask & Fsr::RayContext::GLOSSY)
+    if (stx.Rtx.isGlossyContributor())
         ++stx.refraction_depth;
     if (stx.refraction_depth >= stx.rtx->ray_refraction_max_depth)
         return false;
@@ -1318,7 +917,7 @@ RayShader::getTransmission(RayShaderContext& stx,
                                  RenderContext::SIDES_BOTH/*sides_mode*/);
 
         Fsr::Pixel illum(out.channels);
-        RayShader::getIllumination(stx_new, illum, 0/*deep_out*/);
+        RayMaterial::getIllumination(stx_new, illum, 0/*deep_out*/);
         if (illum[stx.cutout_channel] <= 0.5f)
         {
             out += illum;
@@ -1429,23 +1028,23 @@ RayShader::getOcclusion(RayShaderContext& stx,
             {
                 zpr::RenderPrimitive* rprim = static_cast<zpr::RenderPrimitive*>(Iocl.object);
 
-                // Only check visibility if the rprim's shader is a RayShader:
-                if (rprim->surface_ctx->surface_shader)
+                // Only check visibility if the rprim's material is a RayMaterial:
+                if (rprim->surface_ctx->raymaterial)
                 {
                     switch (occlusion_ray_type)
                     {
                     default:
                     case Fsr::RayContext::DIFFUSE:
-                        if (!rprim->surface_ctx->surface_shader->diffuse_visibility())
+                        if (!rprim->surface_ctx->raymaterial->getDiffuseVisibility())
                             vis = 0.0f;
                         break;
                     case Fsr::RayContext::REFLECTION:
                     case Fsr::RayContext::GLOSSY:
-                        if (!rprim->surface_ctx->surface_shader->specular_visibility())
+                        if (!rprim->surface_ctx->raymaterial->getSpecularVisibility())
                             vis = 0.0f;
                         break;
                     case Fsr::RayContext::TRANSMISSION:
-                        if (!rprim->surface_ctx->surface_shader->transmission_visibility())
+                        if (!rprim->surface_ctx->raymaterial->getTransmissionVisibility())
                             vis = 0.0f;
                         break;
                     }

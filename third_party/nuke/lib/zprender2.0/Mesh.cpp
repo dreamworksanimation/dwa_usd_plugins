@@ -28,7 +28,6 @@
 
 
 #include "Mesh.h"
-#include "RayShaderContext.h"
 #include "RenderContext.h"
 #include "ThreadContext.h"
 
@@ -443,14 +442,12 @@ Mesh::quadFaceIntersect(uint32_t             face,
         {
             if (Fsr::intersectTriangle(m_P_offset, p0, p1, p2, stx.Rtx, I.st, I.t))
             {
-                I.Rxst.set(0.0f, 0.0f);
-                I.Ryst.set(0.0f, 0.0f);
+                I.Rxst = I.Ryst = I.st;
                 return setQuadIntersection(face, 0/*subtri*/, motion_step, stx, p0, p1, p2, p3, I);
             }
             if (Fsr::intersectTriangle(m_P_offset, p0, p2, p3, stx.Rtx, I.st, I.t))
             {
-                I.Rxst.set(0.0f, 0.0f);
-                I.Ryst.set(0.0f, 0.0f);
+                I.Rxst = I.Ryst = I.st;
                 return setQuadIntersection(face, 1/*subtri*/, motion_step, stx, p0, p1, p2, p3, I);
             }
         }
@@ -481,14 +478,12 @@ Mesh::quadFaceIntersect(uint32_t             face,
         {
             if (Fsr::intersectTriangle(m_P_offset, p0, p1, p2, stx.Rtx, I.st, I.t))
             {
-                I.Rxst.set(0.0f, 0.0f);
-                I.Ryst.set(0.0f, 0.0f);
+                I.Rxst = I.Ryst = I.st;
                 return setMBQuadIntersection(face, 0/*subtri*/, motion_step, motion_step_t, stx, p0, p1, p2, p3, I);
             }
             if (Fsr::intersectTriangle(m_P_offset, p0, p2, p3, stx.Rtx, I.st, I.t))
             {
-                I.Rxst.set(0.0f, 0.0f);
-                I.Ryst.set(0.0f, 0.0f);
+                I.Rxst = I.Ryst = I.st;
                 return setMBQuadIntersection(face, 1/*subtri*/, motion_step, motion_step_t, stx, p0, p1, p2, p3, I);
             }
         }
@@ -546,8 +541,7 @@ Mesh::triFaceIntersect(uint32_t             face,
         {
             if (Fsr::intersectTriangle(m_P_offset, p0, p1, p2, stx.Rtx, I.st, I.t))
             {
-                I.Rxst.set(0.0f, 0.0f);
-                I.Ryst.set(0.0f, 0.0f);
+                I.Rxst = I.Ryst = I.st;
                 return setTriIntersection(face, 0/*subtri*/, motion_step, stx, p0, p1, p2, I);
             }
         }
@@ -575,8 +569,7 @@ Mesh::triFaceIntersect(uint32_t             face,
         {
             if (Fsr::intersectTriangle(m_P_offset, p0, p1, p2, stx.Rtx, I.st, I.t))
             {
-                I.Rxst.set(0.0f, 0.0f);
-                I.Ryst.set(0.0f, 0.0f);
+                I.Rxst = I.Ryst = I.st;
                 return setMBTriIntersection(face, 0/*subtri*/, motion_step, motion_step_t, stx, p0, p1, p2, I);
             }
         }
@@ -632,8 +625,7 @@ Mesh::polyFaceIntersect(uint32_t             face,
             {
                 if (Fsr::intersectTriangle(m_P_offset, p0, p1, p2, stx.Rtx, I.st, I.t))
                 {
-                    I.Rxst.set(0.0f, 0.0f);
-                    I.Ryst.set(0.0f, 0.0f);
+                    I.Rxst = I.Ryst = I.st;
                     return setTriIntersection(face, i/*subtri*/, motion_step, stx, p0, p1, p2, I);
                 }
             }
@@ -668,8 +660,7 @@ Mesh::polyFaceIntersect(uint32_t             face,
             {
                 if (Fsr::intersectTriangle(m_P_offset, p0, p1, p2, stx.Rtx, I.st, I.t))
                 {
-                    I.Rxst.set(0.0f, 0.0f);
-                    I.Ryst.set(0.0f, 0.0f);
+                    I.Rxst = I.Ryst = I.st;
                     return setMBTriIntersection(face, i/*subtri*/, motion_step, motion_step_t, stx, p0, p1, p2, I);
                 }
             }
@@ -1328,8 +1319,7 @@ Mesh::getFirstIntersection(RayShaderContext&    stx,
                         if (If.t < I.t)
                         {
                             I = If;
-                            I.Rxst.set(0.0f, 0.0f);
-                            I.Ryst.set(0.0f, 0.0f);
+                            I.Rxst = I.Ryst = I.st;
                             setTriIntersection(findex.face, findex.subtri, motion_step, stx, p0, p1, p2, I);
                         }
                     }
@@ -1483,8 +1473,7 @@ Mesh::getIntersections(RayShaderContext&        stx,
                     SurfaceIntersection I;
                     if (Fsr::intersectTriangle(m_P_offset, p0, p1, p2, stx.Rtx, I.st, I.t))
                     {
-                        I.Rxst.set(0.0f, 0.0f);
-                        I.Ryst.set(0.0f, 0.0f);
+                        I.Rxst = I.Ryst = I.st;
                         setTriIntersection(findex.face, findex.subtri, motion_step, stx, p0, p1, p2, I);
                         addIntersectionToList(I, I_list);
                         if (I.t < tmin)

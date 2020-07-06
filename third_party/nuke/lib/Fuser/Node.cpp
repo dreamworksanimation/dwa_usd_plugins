@@ -189,13 +189,71 @@ bool Node::debug3()       const { return (debug() == NodeContext::DEBUG_3  ); }
 //-----------------------------------------------------------------------------
 
 
-/*! Add a child node, this node take ownership of pointer.
+/*! Add a child node, this node takes ownership of pointer.
+    If child node already exists either by pointer match or
+    name match the index to it is returned.
 */
 unsigned
 Node::addChild(Node* node)
 {
+    // Try to match node by pointer and name:
+    const std::string name(node->getName());
+    const size_t nChildren = m_children.size();
+    for (size_t i=0; i < nChildren; ++i)
+    {
+        Node* child = m_children[i];
+        if (node == child || child->getName() == name)
+            return (unsigned)i;
+
+    }
+    // Not found, add it:
     m_children.push_back(node);
     return (unsigned)(m_children.size()-1);
+}
+
+
+/*! Returns -1 if not in child list.
+*/
+int
+Node::getChild(Node* node) const
+{
+    const size_t nChildren = m_children.size();
+    for (size_t i=0; i < nChildren; ++i)
+        if (m_children[i] == node)
+            return (int)i;
+    return -1;
+}
+
+
+/*! Returns NULL if named node not in child list.
+*/
+Node*
+Node::getChildByName(const char* child_name) const
+{
+    if (!child_name || !child_name[0])
+        return NULL;
+    const std::string name(child_name);
+    const size_t nChildren = m_children.size();
+    for (size_t i=0; i < nChildren; ++i)
+        if (m_children[i]->getName() == name)
+            return m_children[i];
+    return NULL;
+}
+
+
+/*!
+*/
+Node*
+Node::getChildByPath(const char* child_path) const
+{
+    if (!child_path || !child_path[0])
+        return NULL;
+    const std::string path(child_path);
+    const size_t nChildren = m_children.size();
+    for (size_t i=0; i < nChildren; ++i)
+        if (m_children[i]->getPath() == path)
+            return m_children[i];
+    return NULL;
 }
 
 

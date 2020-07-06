@@ -27,7 +27,7 @@
 /// @author Jonathan Egstad
 
 
-#include <zprender/SurfaceShaderOp.h>
+#include <zprender/SurfaceMaterialOp.h>
 
 #include "DDImage/VertexContext.h"
 #include "DDImage/ViewerContext.h"
@@ -42,7 +42,7 @@ using namespace DD::Image;
 namespace zpr {
 
 
-class zpSurfaceOptions : public SurfaceShaderOp
+class zpSurfaceOptions : public SurfaceMaterialOp
 {
   public:
 
@@ -57,9 +57,17 @@ class zpSurfaceOptions : public SurfaceShaderOp
 
 
     zpSurfaceOptions(::Node* node) :
-        SurfaceShaderOp(node)
+        SurfaceMaterialOp(node)
     {
         //
+    }
+
+
+    /*virtual*/
+    RayShader* _createOutputSurfaceShader(const RenderContext&     rtx,
+                                          std::vector<RayShader*>& shaders)
+    {
+        return NULL;
     }
 
 
@@ -67,23 +75,14 @@ class zpSurfaceOptions : public SurfaceShaderOp
     void knobs(Knob_Callback f)
     {
         //---------------------------------------------------------------------------------
-        // This adds the 'zpSurfaceShaderOp' knob that's used to identify a SurfaceShaderOp
+        // This adds the 'zpSurfaceMaterialOp' knob that's used to identify a SurfaceMaterialOp
         // to other plugins (because dynamic_cast-ing fails).  Atm if this doesn't
         // exist then the _evaluate*() methods will not be called since the node
         // will not be recognized as a RayShader type:
-        addSurfaceShaderOpIdKnob(f);
+        addSurfaceMaterialOpIdKnob(f);
         //---------------------------------------------------------------------------------
         // The top line of ray controls:
-        RayShader::addRayControlKnobs(f);
-    }
-
-    /*! The ray-tracing shader call.
-    */
-    /*virtual*/
-    void _evaluateShading(RayShaderContext& stx,
-                          Fsr::Pixel&       out)
-    {
-        // do nothing
+        addRayControlKnobs(f);
     }
 
 };

@@ -29,9 +29,6 @@
 
 #include "zpRender.h"
 
-#include "zpSurfaceHandlers.h"
-#include "zpLightVolumeHandler.h"
-
 #include <zprender/Bvh.h>
 #include <zprender/ThreadContext.h>
 #include <zprender/Scene.h>
@@ -41,6 +38,7 @@
 #include <zprender/RayShaderContext.h>
 #include <zprender/RayPerspectiveCamera.h>
 #include <zprender/RaySphericalCamera.h>
+#include <zprender/RayCylindricalCamera.h>
 //#include <zprender/DeepPixelHandler.h>
 
 
@@ -67,16 +65,6 @@
 using namespace DD::Image;
 
 
-#include <DDImage/DownRez.h>
-static DD::Image::Op* downrez_build(::Node* node)
-{
-    DD::Image::DownRez* op = new DD::Image::DownRez(node);
-    op->factor(2);
-    return op;
-}
-static const DD::Image::Op::Description downrez_description("DownRez", downrez_build);
-
-
 namespace zpr {
 
 //-------------------------------------------------------------------------------------
@@ -101,22 +89,22 @@ static DD::Image::CameraOp default_camera(NULL/*Node*/);
 //----------------------------------------------------------------------------
 // Surface Handlers:
 //----------------------------------------------------------------------------
-static DDImagePolysoupHandler       fn_polysoup_surf_handler;       // FN_POLYSOUP_PRIM
-static DDImageMeshHandler           fn_mesh_surf_handler;           // FN_MESH_PRIM
-static DDImagePolyMeshHandler       fn_polymesh_surf_handler;       // FN_POLYMESH_PRIM
-static DDImagePointHandler          fn_point_surf_handler;          // FN_POINT_PRIM
-static DDImageParticleSpriteHandler fn_particle_sprite_surf_handler;// FN_PARTICLE_SPRITE_PRIM
+static DDImagePolysoupHandler       fn_polysoup_handler;        // FN_POLYSOUP_PRIM
+static DDImageMeshHandler           fn_mesh_handler;            // FN_MESH_PRIM
+static DDImagePolyMeshHandler       fn_polymesh_handler;        // FN_POLYMESH_PRIM
+static DDImagePointHandler          fn_point_handler;           // FN_POINT_PRIM
+static DDImageParticleSpriteHandler fn_particle_sprite_handler; // FN_PARTICLE_SPRITE_PRIM
 //
-static FsrNodePrimitiveHandler      fuser_nodeprim_handler;         // FUSER_NODEPRIM
-static FsrMeshHandler               fuser_meshprim_handler;         // FUSER_MESHPRIM
-static FsrPointsHandler             fuser_pointprim_handler;        // FUSER_POINTPRIM
+static FsrNodePrimitiveHandler      fuser_nodeprim_handler;     // FUSER_NODEPRIM
+static FsrMeshHandler               fuser_meshprim_handler;     // FUSER_MESHPRIM
+static FsrPointsHandler             fuser_pointprim_handler;    // FUSER_POINTPRIM
 
 
 //----------------------------------------------------------------------------
 // Light Volume Handlers:
 //----------------------------------------------------------------------------
-static ConeHandler      lightcone_surf_handler; // LIGHTCONE_PRIM
-static SphereHandler  lightsphere_surf_handler; // LIGHTSPHERE_PRIM
+static ConeHandler      lightcone_handler;  // LIGHTCONE_PRIM
+static SphereHandler  lightsphere_handler;  // LIGHTSPHERE_PRIM
 
 
 //----------------------------------------------------------------------------
@@ -126,6 +114,8 @@ static SphereHandler  lightsphere_surf_handler; // LIGHTSPHERE_PRIM
 static const char* const ray_bounces_list[]   = { "0", "1", "2", "3", "4", "5", 0 };
 static const char* const global_xform_modes[] = { "off", "cam-open", "manual", 0 };
 //static const char* const shutter_modes[]      = { "stochastic", "slice", "offset", 0 };
+static const char* const lighting_enable_modes[] = { "auto", "on", "off", 0 };
+
 
 static const char* aov_unpremult_modes[] =
 {
@@ -141,7 +131,7 @@ static const char* projection_modes[] =
     //"orthographic",
     //"uv",
     "spherical",
-    //"cylindrical",
+    "cylindrical",
     "render camera",
     0
 };
@@ -154,6 +144,7 @@ static const char* projection_modes[] =
 */
 zpRender::zpRender(::Node* node) :
     DD::Image::Render(node, true/*enable_mip_filter*/),
+    rtx(this),
     k_texture_filter_preview(DD::Image::Filter::Impulse, true/*enableMipType*/),
     m_black(DD::Image::Mask_RGBA)
 {
@@ -233,18 +224,18 @@ zpRender::zpRender(::Node* node) :
        in RenderContext.h so we don't have to have a bunch of if-elses to call a handler.
     */
     // SURFACE HANDLERS:
-    rtx.surface_handler[FN_POLYSOUP_PRIM       ] =        &fn_polysoup_surf_handler;
-    rtx.surface_handler[FN_MESH_PRIM           ] =            &fn_mesh_surf_handler;
-    rtx.surface_handler[FN_POLYMESH_PRIM       ] =        &fn_polymesh_surf_handler;
-    rtx.surface_handler[FN_POINT_PRIM          ] =           &fn_point_surf_handler;
-    rtx.surface_handler[FN_PARTICLE_SPRITE_PRIM] = &fn_particle_sprite_surf_handler;
+    rtx.surface_handler[FN_POLYSOUP_PRIM       ] =        &fn_polysoup_handler;
+    rtx.surface_handler[FN_MESH_PRIM           ] =            &fn_mesh_handler;
+    rtx.surface_handler[FN_POLYMESH_PRIM       ] =        &fn_polymesh_handler;
+    rtx.surface_handler[FN_POINT_PRIM          ] =           &fn_point_handler;
+    rtx.surface_handler[FN_PARTICLE_SPRITE_PRIM] = &fn_particle_sprite_handler;
     //
     rtx.surface_handler[FUSER_NODEPRIM  ] =  &fuser_nodeprim_handler;
     rtx.surface_handler[FUSER_MESHPRIM  ] =  &fuser_meshprim_handler;
     rtx.surface_handler[FUSER_POINTPRIM ] = &fuser_pointprim_handler;
     //
-    rtx.surface_handler[LIGHTSPHERE_PRIM  ] = &lightsphere_surf_handler;
-    rtx.surface_handler[LIGHTCONE_PRIM    ] =   &lightcone_surf_handler;
+    rtx.surface_handler[LIGHTSPHERE_PRIM  ] = &lightsphere_handler;
+    rtx.surface_handler[LIGHTCONE_PRIM    ] =   &lightcone_handler;
     /*                 [LIGHTCYLINDER_PRIM] set to null handler in RenderContext ctor */
     /*                 [LIGHTCARD_PRIM    ] set to null handler in RenderContext ctor */
 
@@ -276,9 +267,11 @@ zpRender::zpRender(::Node* node) :
     rtx.k_show_diagnostics       = RenderContext::DIAG_OFF;
     rtx.k_diagnostics_sample     = 0;
 
-    rtx.k_direct_lighting_enabled    = true;
-    rtx.k_indirect_lighting_enabled  = true;
-    rtx.k_atmospherics_enabled       = false;
+    k_use_direct_lighting            = true;
+    k_use_indirect_lighting          = true;
+    k_use_atmospheric_lighting       = false;
+    k_autolighting_mode              = LIGHTING_ENABLE_AUTO;
+
     rtx.k_atmosphere_alpha_blending  = true;
     rtx.k_transparency_enabled       = true;
     rtx.k_alpha_threshold            = 0.0001f;
@@ -961,7 +954,9 @@ zpRender::build_handles(DD::Image::ViewerContext* ctx)
         ctx->transform_mode() == DD::Image::VIEWER_PERSP)
     {
         DD::Image::Render::validate(false);
+#ifdef ENABLE_DEEP
         DD::Image::DeepOp::validate(false);
+#endif
 
         ctx->addCamera(getInputCameraOpForSampleAndView(0/*sample*/,
                                                         rtx.k_hero_view/*(outputContext().view()-rtx.render_views[0])*/));
@@ -1109,13 +1104,15 @@ zpRender::knobs(DD::Image::Knob_Callback f)
     //Enumeration_knob(f, &k_shutter_mode, shutter_modes, "shutter_mode", "mode");
     //-------------------------------------------------------------------------------
     Divider(f);
-    Bool_knob(f, &rtx.k_direct_lighting_enabled, "lighting_enabled", "direct lighting");
+    Enumeration_knob(f, &k_autolighting_mode, lighting_enable_modes, "lighting_enable_mode", "lighting");
+        Tooltip(f, "Enable lighting when lights are present in scene");
+    Bool_knob(f, &k_use_direct_lighting, "lighting_enabled", "direct lighting");
         Tooltip(f, "Turn on lights.  This also is a prerequisite for atmospherics.");
-    Bool_knob(f, &rtx.k_indirect_lighting_enabled, "bounce_lighting_enabled", "bounce lighting");
+    Bool_knob(f, &k_use_indirect_lighting, "bounce_lighting_enabled", "bounce lighting");
         Tooltip(f, "Enable indirect lighting.");
     Newline(f);
 
-    Bool_knob(f, &rtx.k_atmospherics_enabled, "atmospherics_enabled", "atmospherics");
+    Bool_knob(f, &k_use_atmospheric_lighting, "atmospherics_enabled", "atmospherics");
         Tooltip(f, "Enable atmospherics.  If a light has the optional 'illuminate atmosphere' switch "
                   "this is respected - if not the light automatically affects the atmosphere.\n"
                   "Not all light type are supported - here's the current list:\n"
@@ -1633,7 +1630,7 @@ zpRender::_validate(bool for_real)
 #if DEBUG
     assert(rtx.num_shutter_steps >= 0);
 #endif
-    const uint32_t nShutterSamples = (rtx.num_shutter_steps + 1);
+    const uint32_t nShutterSamples = rtx.numShutterSamples();
     //std::cout << "  nShutterSamples=" << nShutterSamples << std::endl;
 
     DD::Image::Render::input_scenes  = nShutterSamples;
@@ -1710,7 +1707,7 @@ zpRender::_validate(bool for_real)
         }
 
         // Creating the scene also assigns its motion sample and absolute frame number:
-        zpr::Scene* input_scene = new zpr::Scene(this, &rtx, shutter_sample, scene_frame_time/*frame*/);
+        zpr::Scene* input_scene = new zpr::Scene(shutter_sample, scene_frame_time/*frame*/);
         rtx.input_scenes[j] = input_scene;
 
         // Fill in the scene ref that we will sort:
@@ -1799,33 +1796,10 @@ zpRender::_validate(bool for_real)
 
     // Build the render state hash:
     DD::Image::Hash new_hash;
-    new_hash.reset();
-
-    // Make it unique to this Render op instance:
-    // TODO: shouldn't we be hashing all the shutter sample cameras...?
-    new_hash.append(DD::Image::Op::firstOp(), sizeof(void*));
-    if (rtx.k_camera_mode == RenderContext::CAMERA_COMBINED)
     {
-        // Append all the render views:
-        for (uint32_t i=0; i < rtx.render_views.size(); ++i)
-        {
-            //new_hash.append(rtx.render_views[i]);
-            DD::Image::CameraOp* cam = getInputCameraOpForSampleAndView(0, rtx.render_views[i]);
-            if (cam)
-            {
-                cam->validate(for_real);
-                new_hash.append(cam->hash());
-            }
-        }
-    }
-    else
-    {
-        DD::Image::CameraOp* cam = getInputCameraOpForSampleAndView(0, (rtx.render_view-rtx.render_views[0]));
-        if (cam)
-        {
-            cam->validate(for_real);
-            new_hash.append(cam->hash());
-        }
+        // Make hash unique to this Render op instance:
+        Op* render_op = DD::Image::Op::firstOp();
+        new_hash.append(&render_op, sizeof(void*));
     }
     Render::format().append(new_hash);
     new_hash.append(rtx.render_frame);
@@ -1842,12 +1816,7 @@ zpRender::_validate(bool for_real)
     new_hash.append(rtx.k_spatial_jitter_threshold);
     new_hash.append(rtx.num_shutter_steps);
 
-
-    // Initialize the scenes, build the geometry and define the
-    // output bounding boxes.
-    DD::Image::Render::world_bbox.clear();
-    DD::Image::Render::screen_bbox.clear();
-    rtx.scene_channels = Mask_None;
+    int scene_proj_mode = DD::Image::CameraOp::LENS_PERSPECTIVE; // default
 
     // Initialize scenes in motion-time order:
     for (uint32_t j=0; j < nShutterSamples; ++j)
@@ -1876,45 +1845,126 @@ zpRender::_validate(bool for_real)
         std::cout << ", geo=" << geo << ", input_scene_mb_scene=" << input_scene->mb_scene();
 #endif
 
+        // Build the input GeometryList:
         if (geo)
         {
-            // Build the geometry:
             geo->validate(for_real);
             geo->build_scene(*input_scene);
 
             new_hash.append(geo->Op::hash());
         }
 
+        input_scene->setFormat(rtx.render_format);
+
+        input_scene->camera = getInputCameraOpForSampleAndView(input_sample, (rtx.render_view - rtx.render_views[0]));
+
 #ifdef DEBUG_STARTUP
         std::cout << ", geoinfos[";
         const uint32_t nObjects = input_scene->objects();
         for (uint32_t i=0; i < nObjects; ++i)
-           std::cout << " " << &input_scene->object(i);
+            std::cout << " " << &input_scene->object(i);
         std::cout << " ]" << std::endl;
-#endif
-
-        // Set some scene rendering parameters:
-        input_scene->setFormat(rtx.render_format);
-        input_scene->camera = getInputCameraOpForSampleAndView(input_sample, (rtx.render_view - rtx.render_views[0]));
-#ifdef DEBUG_STARTUP
         std::cout << "  " << j << " camera(" << input_scene->camera << ")";
         std::cout << " for view " << (rtx.render_view - rtx.render_views[0]);
         std::cout << ", matrix=" << input_scene->camera->matrix() << std::endl;
 #endif
 
-        if (projection_mode_ == DD::Image::CameraOp::LENS_RENDER_CAMERA && input_scene->camera)
-            input_scene->setProjectionMode(input_scene->camera->projection_mode());
+        //------------------------------------------------------------
+
+        // Get render and scene projection mode at shutter open scene:
+        if (j == 0)
+        {
+            if (rtx.k_projection_mode == PROJECTION_RENDER_CAMERA)
+            {
+                // Get projection from scene camera:
+                if (input_scene->camera && input_scene->camera->projection_mode() < DD::Image::CameraOp::LENS_RENDER_CAMERA)
+                {
+                    scene_proj_mode = input_scene->camera->projection_mode(); // camera sets projection mode
+
+                    // Map DD::Image::CameraOp camera projection mode to render projection mode:
+                    switch (scene_proj_mode)
+                    {
+                        default:
+                        case DD::Image::CameraOp::LENS_PERSPECTIVE:
+                            rtx.render_projection = RenderContext::CAMERA_PROJECTION_PERSPECTIVE; break;
+                        //case DD::Image::CameraOp::LENS_ORTHOGRAPHIC:
+                        //    rtx.render_projection = RenderContext::CAMERA_PROJECTION_ORTHOGRAPHIC; break;
+                        //case DD::Image::CameraOp::LENS_UV:
+                        //    rtx.render_projection = RenderContext::CAMERA_PROJECTION_UV; break;
+                        case DD::Image::CameraOp::LENS_SPHERICAL:
+                            rtx.render_projection = RenderContext::CAMERA_PROJECTION_SPHERICAL; break;
+                    }
+                }
+            }
+            else
+            {
+                // zpRender sets projection modes directly:
+                switch (rtx.k_projection_mode)
+                {
+                    default:
+                    case PROJECTION_PERSPECTIVE:
+                        scene_proj_mode = DD::Image::CameraOp::LENS_PERSPECTIVE;
+                        rtx.render_projection = RenderContext::CAMERA_PROJECTION_PERSPECTIVE;
+                        break;
+                    //case PROJECTION_ORTHOGRAPHIC:
+                    //    scene_proj_mode = DD::Image::CameraOp::LENS_ORTHOGRAPHIC;
+                    //    rtx.render_projection = RenderContext::CAMERA_PROJECTION_ORTHOGRAPHIC;
+                    //    break;
+                    //case PROJECTION_UV:
+                    //    scene_proj_mode = DD::Image::CameraOp::LENS_UV;
+                    //    rtx.render_projection = RenderContext::CAMERA_PROJECTION_UV;
+                    //    break;
+                    case PROJECTION_SPHERICAL:
+                        scene_proj_mode = DD::Image::CameraOp::LENS_SPHERICAL;
+                        rtx.render_projection = RenderContext::CAMERA_PROJECTION_SPHERICAL;
+                        break;
+                    //case PROJECTION_CYLINDRICAL:
+                    //    scene_proj_mode = DD::Image::CameraOp::LENS_USER_CAMERA;
+                    //    rtx.render_projection = RenderContext::CAMERA_PROJECTION_CYLINDRICAL;
+                    //    break;
+                }
+            }
+        }
+        input_scene->setProjectionMode(scene_proj_mode);
+
+        //------------------------------------------------------------
+
+        // Include all the CameraOps in the hash, including the split ones:
+        if (rtx.k_camera_mode == RenderContext::CAMERA_COMBINED)
+        {
+            // Append all the render views:
+            for (uint32_t i=0; i < rtx.render_views.size(); ++i)
+            {
+                //new_hash.append(rtx.render_views[i]);
+                DD::Image::CameraOp* cam = getInputCameraOpForSampleAndView(j, rtx.render_views[i]);
+                if (input_scene->camera)
+                {
+                    input_scene->camera->validate(for_real);
+                    new_hash.append(cam->hash());
+                }
+            }
+        }
         else
-            input_scene->setProjectionMode(projection_mode_);
+        {
+            DD::Image::CameraOp* cam = getInputCameraOpForSampleAndView(j, (rtx.render_view-rtx.render_views[0]));
+            if (cam)
+            {
+                cam->validate(for_real);
+                new_hash.append(cam->hash());
+            }
+        }
+
+        //------------------------------------------------------------
 
         if (input_scene->camera)
-            input_scene->lens_func = input_scene->camera->lensNfunction(input_scene->projection_mode());
+            input_scene->lens_func = input_scene->camera->lensNfunction(scene_proj_mode);
         else
             input_scene->lens_func = default_camera.lensNfunction(DD::Image::CameraOp::LENS_PERSPECTIVE);
 
         // TODO: don't need max_tessellation anymore...
         input_scene->setMaxTessellation(std::max(0, max_tessellation_));
 
+        // Set texture filter on Scene for legacy shading system:
         if (!rtx.k_preview_mode)
         {
             if (texture_filter_.type() == Filter::Impulse)
@@ -1943,120 +1993,133 @@ zpRender::_validate(bool for_real)
 #else
         input_scene->transforms()->set_camera_matrix(camera_matrix(input_sample/*sample*/));
 #endif
-        input_scene->transforms()->set_object_matrix(DD::Image::Matrix4::identity());
-#if 0
-std::cout << "-------------------------------------------------------------" << std::endl;
-std::cout << "w2c" << input_scene->transforms()->matrix(WORLD_TO_EYE);
-std::cout << "  [" << w2c.a00 << " " << w2c.a10 << " " << w2c.a20 << " " << w2c.a30 << "]" << std::endl;
-std::cout << "  [" << w2c.a01 << " " << w2c.a11 << " " << w2c.a21 << " " << w2c.a31 << "]" << std::endl;
-std::cout << "  [" << w2c.a02 << " " << w2c.a12 << " " << w2c.a22 << " " << w2c.a32 << "]" << std::endl;
-std::cout << "  [" << w2c.a03 << " " << w2c.a13 << " " << w2c.a23 << " " << w2c.a33 << "]" << std::endl;
-std::cout << "c2s" << input_scene->transforms()->matrix(EYE_TO_CLIP);
-std::cout << "  [" << c2s.a00 << " " << c2s.a10 << " " << c2s.a20 << " " << c2s.a30 << "]" << std::endl;
-std::cout << "  [" << c2s.a01 << " " << c2s.a11 << " " << c2s.a21 << " " << c2s.a31 << "]" << std::endl;
-std::cout << "  [" << c2s.a02 << " " << c2s.a12 << " " << c2s.a22 << " " << c2s.a32 << "]" << std::endl;
-std::cout << "  [" << c2s.a03 << " " << c2s.a13 << " " << c2s.a23 << " " << c2s.a33 << "]" << std::endl;
-std::cout << "w2s" << input_scene->transforms()->matrix(WORLD_TO_CLIP);
-std::cout << "  [" << w2s.a00 << " " << w2s.a10 << " " << w2s.a20 << " " << w2s.a30 << "]" << std::endl;
-std::cout << "  [" << w2s.a01 << " " << w2s.a11 << " " << w2s.a21 << " " << w2s.a31 << "]" << std::endl;
-std::cout << "  [" << w2s.a02 << " " << w2s.a12 << " " << w2s.a22 << " " << w2s.a32 << "]" << std::endl;
-std::cout << "  [" << w2s.a03 << " " << w2s.a13 << " " << w2s.a23 << " " << w2s.a33 << "]" << std::endl;
-#endif
 
-        // This call finds the screen bounding-box and validates
-        // all the object materials:
-        // TODO: The hider should do the bbox projection into screen-space
-        input_scene->validate(input_sample);
-        //input_scene->print_info("scene");
+        input_scene->transforms()->set_object_matrix(DD::Image::Matrix4::identity());
 
         // Update the scene ref's cameras:
         sref.camera      = input_scene->camera; // could be any of the views
         sref.hero_camera = getInputCameraOpForSampleAndView(rtx.shutter_scenerefs[0].op_input_index,
                                                             (rtx.k_hero_view - rtx.render_views[0])/*view*/);
 
-        // Merge the scene's bbox:
-        DD::Image::Render::world_bbox.expand(*input_scene);
-
-        rtx.scene_channels += input_scene->channels();
     }
 
+    // This call finds the screen bounding-box and validates all the object material Iops.
+    // The second half to this is done in _request() which calls doTextureRequests().
+    rtx.validateObjects(rtx.shutter_scenerefs[0].scene,
+                        for_real);
+
     // Add other channels we need for z and alpha compositing:
-    rtx.scene_channels += DD::Image::Mask_Z;        // Always need Z by default from shaders
-    rtx.scene_channels += DD::Image::Mask_Alpha;    // Always need transparency during shading
+    rtx.material_channels += DD::Image::Mask_Z;        // Always need Z by default from shaders
+    rtx.material_channels += DD::Image::Mask_Alpha;    // Always need transparency during shading
+#ifdef DEBUG_STARTUP
+    std::cout << "  rtx.texture_channels=" << rtx.texture_channels << std::endl;
+    std::cout << "  rtx.material_channels=" << rtx.material_channels << std::endl;
+#endif
+
+    // Pad the render region all'round so there's one pixel of black surrounding
+    // the scene, plus add'l expansion for filter size:
+    if (!rtx.render_region.isEmpty())
+    {
+        const int x_pad = (int)ceilf(fabsf(rtx.k_pixel_filter_size[0])) + 1;
+        const int y_pad = (int)ceilf(fabsf(rtx.k_pixel_filter_size[1])) + 1;
+        rtx.render_region.pad(x_pad, y_pad);
+    }
+    else
+    {
+        rtx.render_region.set(0,0,0,0);
+    }
+#ifdef DEBUG_STARTUP
+    std::cout << "  rtx.render_bbox" << rtx.render_bbox << std::endl;
+    std::cout << "  rtx.render_region" << rtx.render_region << std::endl;
+#endif
+
+    // Save final RenderContext validata values into zpRender:
+    DD::Image::Render::world_bbox       = rtx.render_bbox.asDDImage();
+    DD::Image::Render::screen_bbox      = rtx.render_region.asDDImage();
+    DD::Image::Render::projection_mode_ = scene_proj_mode; // likely not required
+
+
+    // Set the validate results on all input scenes:
+    for (uint32_t j=0; j < nShutterSamples; ++j)
+    {
+        // Bail quickly on user abort:
+        if (DD::Image::Op::aborted())
+            return;
+
+        zpr::Scene* input_scene = rtx.shutter_scenerefs[j].scene;
+
+        input_scene->setBbox(rtx.render_bbox.asDDImage());
+        input_scene->setScreenBbox(rtx.render_region.asDDImage());
+        input_scene->setChannels(rtx.material_channels);
+
+        // TODO: do we still need to set these per-object transforms?
+        //input_scene->clearObjectTransforms();
+        //input_scene->reserveObjectTransforms(uint32_t n);
+        //input_scene->setObjectTransforms(int i, DD::Image::MatrixArray* m);
+    }
+
+
+    // Build changed mask:
+    /*
+        GeometryFlag    = 0x00000001,
+        MaterialsFlag   = 0x00000002,
+        LightsFlag      = 0x00000004,
+        CameraFlag      = 0x00000008,
+    */
+#ifdef DEBUG_STARTUP
+    std::cout << "  rtx.geometry_hash(0x01)=0x" << std::hex << rtx.geometry_hash.value() << std::dec << std::endl;
+    std::cout << "  rtx.material_hash(0x02)=0x" << std::hex << rtx.material_hash.value() << std::dec << std::endl;
+    std::cout << "  rtx.lighting_hash(0x04)=0x" << std::hex << rtx.lighting_hash.value() << std::dec << std::endl;
+    std::cout << "  rtx.camera_hash(0x08)  =0x" << std::hex << rtx.camera_hash.value() << std::dec << std::endl;
+#endif
+    m_changed_mask = 0x0;
+    if (rtx.geometry_hash != m_geometry_hash)
+    {
+        m_changed_mask |= zpr::GeometryFlag;
+        m_geometry_hash = rtx.geometry_hash;
+        new_hash.append(rtx.geometry_hash);
+    }
+    if (rtx.material_hash != m_material_hash)
+    {
+        m_changed_mask |= zpr::MaterialsFlag;
+        m_material_hash = rtx.material_hash;
+        new_hash.append(rtx.material_hash);
+    }
+    if (rtx.lighting_hash != m_lighting_hash)
+    {
+        m_changed_mask |= zpr::LightsFlag;
+        m_lighting_hash = rtx.lighting_hash;
+        new_hash.append(rtx.lighting_hash);
+    }
+    if (rtx.camera_hash != m_camera_hash)
+    {
+        m_changed_mask |= zpr::CameraFlag;
+        m_camera_hash = rtx.camera_hash;
+        new_hash.append(rtx.camera_hash);
+    }
+#ifdef DEBUG_STARTUP
+    std::cout << "    m_changed_mask=0x" << std::hex << m_changed_mask << std::dec << std::endl;
+#endif
 
     //
     if (new_hash != rtx.hash)
     {
-        // This indicates that no objects have been generated yet.
-        // Each engine thread increments this as it processes an 
-        // object:
+        if (m_changed_mask & zpr::GeometryFlag)
+        {
+            // This indicates that no object bvhs have been generated yet:
+            rtx.objects_bvh_initialized = false;
+            rtx.lights_bvh_initialized  = false;
+        }
+
+        // Force generate_render_primitives() to get called:
         rtx.objects_initialized = false;
+
         rtx.hash = new_hash;
         //std::cout << "render hash changed to 0x" << std::hex << new_hash.value() << std::dec << std::endl;
     }
 
-    // Generate the screen bbox *AFTER* all the scenes are validated:
-    //
-    // TODO: The RenderContext should do the bbox projection into screen-space!!
-    //
-    // This is the maximum 2D bbox we can allow, otherwise some weird numerical
-    // problems occur:
-    static DD::Image::Box max_format_bbox(-1000000, -1000000, 1000000, 1000000);
-    DD::Image::Render::screen_bbox.clear();
 
-#if 1
-    if (projection_mode_ == DD::Image::CameraOp::LENS_PERSPECTIVE ||
-        projection_mode_ == DD::Image::CameraOp::LENS_ORTHOGRAPHIC)
-    {
-        for (uint32_t j=0; j < nShutterSamples; ++j)
-        {
-            const ShutterSceneRef& sref = rtx.shutter_scenerefs[j];
-            zpr::Scene* input_scene = sref.scene;
-            assert(input_scene); // Shouldn't happen...
-            //std::cout << "     " << i << ": bbox[" << input_scene->x() << " " << input_scene->y() << " " << input_scene->n() << " " << input_scene->r() << " " << input_scene->t() << " " << input_scene->f() << "]" << std::endl;
-
-            // Skip empty scene bboxes:
-            if (input_scene->DD::Image::Box3::empty())
-                continue;
-
-            // Check if camera is inside the scene's bbox, because we
-            // can't project a bbox that's surrounding the camera, so
-            // set the projection size to the maximum:
-            if (input_scene->DD::Image::Box3::inside(input_scene->cam_vectors.p))
-            {
-                // Camera inside Scene bbox, set to maximum projection:
-                DD::Image::Render::screen_bbox = max_format_bbox;
-                //std::cout << "       inside bbox, can't project, use max format" << std::endl;
-            }
-            else
-            {
-                // Project the scene's bbox into screen space:
-                DD::Image::Box proj_bbox;
-                input_scene->DD::Image::Box3::project(input_scene->matrix(WORLD_TO_SCREEN), proj_bbox);
-                // Clamp projected bbox to max format values:
-                proj_bbox.intersect(max_format_bbox);
-
-                DD::Image::Render::screen_bbox.merge(proj_bbox);
-                //std::cout << "       proj_bbox[" << proj_bbox.x() << " " << proj_bbox.y() << " " << proj_bbox.r() << " " << proj_bbox.t() << "]" << std::endl;
-            }
-        }
-    }
-    else
-    {
-        // Non-linear projection mode, set to maximum projection:
-        DD::Image::Render::screen_bbox = max_format_bbox;
-    }
-#else
-    DD::Image::Render::screen_bbox.merge(input_scene->screen_bbox());
-#endif
-    //std::cout << "Render::screen_bbox[" << screen_bbox.x() << " " << screen_bbox.y() << " " << screen_bbox.r() << " " << screen_bbox.t() << "]" << std::endl;
-
-    // Pad the bbox all'round so there's one pixel of black surrounding the scene,
-    // plus add'l expansion for filter size:
-    const int x_pad = (int)ceilf(fabsf(rtx.k_pixel_filter_size[0])) + 1;
-    const int y_pad = (int)ceilf(fabsf(rtx.k_pixel_filter_size[1])) + 1;
-    DD::Image::Render::screen_bbox.pad(-x_pad, -y_pad, x_pad, y_pad);
-
+    // Derive final Iop bbox, which includes the bg pixels bbox:
     const int overscanX = std::max(0, (int)DD::Image::Render::overscanX_);
     const int overscanY = std::max(0, (int)DD::Image::Render::overscanY_);
 
@@ -2086,14 +2149,15 @@ std::cout << "  [" << w2s.a03 << " " << w2s.a13 << " " << w2s.a23 << " " << w2s.
             info_.Box::set(overscan_bbox);
             break;
     }
+    //std::cout << "Render::output_bbox" << Fsr::Box2i(info_) << std::endl;
 
 
     m_have_bg_Z = (input0().channels() & DD::Image::Mask_Z);
 
     // Channels we're going to fill in:
     rtx.render_channels = input0().channels();
-    rtx.render_channels += rtx.scene_channels;
-    if (rtx.k_atmospherics_enabled)
+    rtx.render_channels += rtx.material_channels;
+    if (rtx.atmospheric_lighting_enabled)
        rtx.render_channels += DD::Image::Mask_RGBA;
     rtx.render_channels += DD::Image::Mask_Z;  // always output Z
     rtx.render_channels += k_coverage_chan;
@@ -2108,10 +2172,6 @@ std::cout << "  [" << w2s.a03 << " " << w2s.a13 << " " << w2s.a23 << " " << w2s.
        //std::cout << "---------------------------------------" << std::endl;
        //std::cout << "  for_real:" << std::endl;
 
-//TODO: is this neccessary..?  This forces everything to rebuild on every change,
-// but that may not be neccessary - perhaps only the buckets need to be and not the
-// objects...:
-rtx.objects_initialized = false;
         sample_side_count = getRaySampleSideCount(m_ray_diffuse_samples);
         rtx.ray_diffuse_samples = sample_side_count*sample_side_count;
         sample_side_count = getRaySampleSideCount(m_ray_glossy_samples);
@@ -2261,19 +2321,69 @@ rtx.objects_initialized = false;
             rtx.color_channels += ch;
         }
 #ifdef DEBUG_STARTUP
-        std::cout << "    render_channels=" << rtx.render_channels << ", aov_channels=" << rtx.aov_channels << std::endl;
-        std::cout << "    color_channels=" << rtx.color_channels << ", vector_channels=" << rtx.vector_channels << std::endl;
+        std::cout << "    render_channels=" << rtx.render_channels << std::endl;
+        std::cout << "   texture_channels=" << rtx.texture_channels << std::endl;
+        std::cout << "  material_channels=" << rtx.material_channels << std::endl;
+        std::cout << "    shadow_channels=" << rtx.shadow_channels << std::endl;
+        std::cout << "     color_channels=" << rtx.color_channels << std::endl;
+        std::cout << "    vector_channels=" << rtx.vector_channels << std::endl;
+        std::cout << "       aov_channels=" << rtx.aov_channels << std::endl;
+        std::cout << "     under_channels=" << rtx.under_channels << std::endl;
 #endif
         
 
         //============================================================
         // Setup Volume Render Parameters:
         //============================================================
-        if (rtx.k_atmospherics_enabled)
+        if (rtx.atmospheric_lighting_enabled)
             k_ambient_volume.validate(for_real);
+
+
+        //============================================================
+        // Setup Lighting Parameters:
+        //============================================================
+        if (k_autolighting_mode == LIGHTING_ENABLE_AUTO)
+        {
+            zpr::Scene* scene0 = rtx.shutter_scenerefs[0].scene;
+            uint32_t nLights  = (uint32_t)scene0->lights.size();
+            uint32_t nEnabledLights = 0;
+            for (uint32_t lt_index=0; lt_index < nLights; ++lt_index)
+            {
+                DD::Image::LightContext* ltx = scene0->lights[lt_index];
+                assert(ltx); // Shouldn't happen...
+                if (!ltx->light()->node_disabled())
+                    ++nEnabledLights;
+            }
+            if (nEnabledLights > 0)
+            {
+                rtx.direct_lighting_enabled      = k_use_direct_lighting;
+                rtx.indirect_lighting_enabled    = k_use_indirect_lighting;
+                rtx.atmospheric_lighting_enabled = k_use_atmospheric_lighting;
+            }
+            else
+            {
+                rtx.direct_lighting_enabled      = false;
+                rtx.indirect_lighting_enabled    = false;
+                rtx.atmospheric_lighting_enabled = false;
+            }
+        }
+        else if (k_autolighting_mode == LIGHTING_ENABLED)
+        {
+            rtx.direct_lighting_enabled      = k_use_direct_lighting;
+            rtx.indirect_lighting_enabled    = k_use_indirect_lighting;
+            rtx.atmospheric_lighting_enabled = k_use_atmospheric_lighting;
+        }
+        else
+        {
+            rtx.direct_lighting_enabled      = false;
+            rtx.indirect_lighting_enabled    = false;
+            rtx.atmospheric_lighting_enabled = false;
+        }
 
     } // for_real = true
 
+
+    // We output these channels:
     info_.turn_on(rtx.render_channels);
 
     info_.ydirection(1);
@@ -2282,9 +2392,10 @@ rtx.objects_initialized = false;
     slowness(10);
     //std::cout << "---------------------------------------" << std::endl;
 
-    // Zero second delay for close() so that garbage collection happens quick:
-    //DD::Image::Op::callCloseAfter(0.0/*seconds*/);
+    // No delay for close() so we can clean up fast:
+    DD::Image::Op::callCloseAfter(0.0/*seconds*/);
 
+#ifdef ENABLE_DEEP
     //------------------------------------------------------------------
     // Set deep output params:
     DD::Image::ChannelSet deep_channels = info_.channels();
@@ -2298,6 +2409,7 @@ rtx.objects_initialized = false;
     }
     _deepInfo = DD::Image::DeepInfo(info_.formats(), info_, deep_channels);
     //------------------------------------------------------------------
+#endif
 
     AxisManipulator::updateManipulatorMenu();
 
@@ -2314,7 +2426,9 @@ zpRender::_request(int x, int y, int r, int t,
 {
 #ifdef DEBUG_STARTUP
     std::cout << "zpRender::_request(" << this << "): " << x << ", " << y << ", " << r << ", " << t;
-    std::cout << ", channels=" << output_channels << ", count=" << count << std::endl;
+    std::cout << ", channels=" << output_channels << ", count=" << count;
+    std::cout << ", changed_mask=0x" << std::hex << m_changed_mask << std::dec;
+    std::cout << std::endl;
 #endif
 
     // These are the channels we get from our background input:
@@ -2334,18 +2448,40 @@ zpRender::_request(int x, int y, int r, int t,
     request_channels += input0().channels();
     input0().request(x, y, r, t, request_channels, count);
 
-    // This should be a combined mask from all lights in the scene...:
-    DD::Image::ChannelSet light_channels(DD::Image::Mask_RGB);
-    light_channels += DD::Image::Mask_Alpha;    // always need transparency - unless we have a switch...
-
 #ifdef DEBUG_STARTUP
     std::cout << std::hex;
     std::cout << "  bg_get_channels=" << bg_get_channels.value();
     std::cout << ", request_channels=" << request_channels.value();
-    std::cout << ", scene_channels=" << rtx.scene_channels.value();
+    std::cout << ", material_channels=" << rtx.material_channels.value();
     std::cout << ", light_channels=" << light_channels.value();
     std::cout << std::dec << std::endl;
 #endif
+
+    // *************************************************************************
+    //                      **** IMPORTANT ***
+    //    If rtx.doTextureRequests() is not called on *every* zpRender::_request()
+    //    then Nuke will go into an infinite loop and repeatedly call 
+    //    zpRender::_request() forever.
+    //
+    // *************************************************************************
+    // This replaces scene->request():
+    DD::Image::ChannelSet get_material_channels(rtx.material_channels);
+    get_material_channels &= output_channels;
+    rtx.doTextureRequests(get_material_channels, count);
+
+    //==============================================================
+    // Update the map of active TextureSamplers:
+    // TODO: I'm not sure exactly why this needs to be in request,
+    //  but when request is repeatedly called we don't want to
+    //  destroy the map repeatedly
+    //==============================================================
+
+    rtx.requestTextureSamplers();
+
+
+    // This should be a combined mask from all lights in the scene...:
+    DD::Image::ChannelSet light_channels(DD::Image::Mask_RGB);
+    light_channels += DD::Image::Mask_Alpha;    // always need transparency - unless we have a switch...
 
     doLightRequests(light_channels, count);
 }
@@ -2367,66 +2503,7 @@ zpRender::engine(int y, int x, int r,
 }
 
 
-/*! DeepOp deep tile engine.
-    Redirects to the tracerEngine() method.
-*/
-/*virtual*/
-bool
-zpRender::doDeepEngine(DD::Image::Box               bbox,
-                       const DD::Image::ChannelSet& out_channels,
-                       DD::Image::DeepOutputPlane&  deep_out_plane)
-{
-#if 0//def DEBUG_ENGINE
-    std::cout << "zpRender::doDeepEngine(" << bbox.x() << " " << bbox.y() << " " << bbox.r() << " " << bbox.t() << "): out_channels=" << out_channels << std::endl;
-#endif
-
-    /*
-      DeepOutputPlane(DD::Image::ChannelSet channels,
-                      DD::Image::Box box,
-                      DeepPixel::Ordering ordering = DeepPixel::eUnordered)
-        : DeepPlane(channels, box, ordering)
-    */
-#if 1
-    DD::Image::Row dummy_row(bbox.x(), bbox.r());
-    return tracerEngine(bbox.y(), bbox.t(), bbox.x(), bbox.r(), out_channels, dummy_row, &deep_out_plane);
-#else
-    uint32_t count = 0;
-    deep_out_plane = DD::Image::DeepOutputPlane(out_channels, bbox/*, DeepPixel::eZAscending*/);
-    for (int yy=bbox.y(); yy < bbox.t(); ++yy)
-    {
-        for (int xx=bbox.x(); xx < bbox.r(); ++xx)
-        {
-            deep_out_plane.addHole(DD::Image::DeepOutPixel());
-            ++count;
-        }
-    }
-    std::cout << "  count=" << count << std::endl;
-    return true;
-#endif
-}
-
-
-/*! */
-/*virtual*/
-void
-zpRender::_close()
-{
-    //std::cout << "zpRender::_close()" << std::endl;
-    /* TODO: Should we delete the ObjectContext's here...?  If we do we'll just
-       have to reconstruct the bvhs for any geoinfo that haven't changed.  Perhaps
-       we can set the close delay to be 5-10secs...?
-    */
-    // This crashes the renderer since the engine relies on the allocations...
-    //rtx.destroyAllocations(true/*force*/);
-}
-
-
-//----------------------------------------------------------------------------
-//----------------------------------------------------------------------------
-// DeepOp methods::
-//----------------------------------------------------------------------------
-
-
+#ifdef ENABLE_DEEP
 /*!
 */
 /*virtual*/ 
@@ -2469,7 +2546,7 @@ zpRender::getDeepRequests(DD::Image::Box                       bbox,
     std::cout << std::hex;
     std::cout << "  bg_input_channels=" << bg_input_channels.value();
     std::cout << ", request_channels=" << request_channels.value();
-    std::cout << ", scene_channels=" << rtx.scene_channels.value();
+    std::cout << ", material_channels=" << rtx.material_channels.value();
     std::cout << ", light_channels=" << light_channels.value();
     std::cout << std::dec << std::endl;
 #endif
@@ -2478,6 +2555,64 @@ zpRender::getDeepRequests(DD::Image::Box                       bbox,
     doLightRequests(light_channels, count);
 
     reqData.push_back(DD::Image::RequestData(DD::Image::Iop::input(0), bbox, request_channels, count));
+}
+
+/*! DeepOp deep tile engine.
+    Redirects to the tracerEngine() method.
+*/
+/*virtual*/
+bool
+zpRender::doDeepEngine(DD::Image::Box               bbox,
+                       const DD::Image::ChannelSet& out_channels,
+                       DD::Image::DeepOutputPlane&  deep_out_plane)
+{
+#if 0//def DEBUG_ENGINE
+    std::cout << "zpRender::doDeepEngine(" << bbox.x() << " " << bbox.y() << " " << bbox.r() << " " << bbox.t() << "): out_channels=" << out_channels << std::endl;
+#endif
+
+    /*
+      DeepOutputPlane(DD::Image::ChannelSet channels,
+                      DD::Image::Box box,
+                      DeepPixel::Ordering ordering = DeepPixel::eUnordered)
+        : DeepPlane(channels, box, ordering)
+    */
+#if 1
+    DD::Image::Row dummy_row(bbox.x(), bbox.r());
+    return tracerEngine(bbox.y(), bbox.t(), bbox.x(), bbox.r(), out_channels, dummy_row, &deep_out_plane);
+#else
+    uint32_t count = 0;
+    deep_out_plane = DD::Image::DeepOutputPlane(out_channels, bbox/*, DeepPixel::eZAscending*/);
+    for (int yy=bbox.y(); yy < bbox.t(); ++yy)
+    {
+        for (int xx=bbox.x(); xx < bbox.r(); ++xx)
+        {
+            deep_out_plane.addHole(DD::Image::DeepOutPixel());
+            ++count;
+        }
+    }
+    std::cout << "  count=" << count << std::endl;
+    return true;
+#endif
+}
+#endif
+
+
+/*! */
+/*virtual*/
+void
+zpRender::_close()
+{
+    //std::cout << "zpRender::_close()" << std::endl;
+    /* TODO: Should we delete the ObjectContext's here...?  If we do we'll just
+       have to reconstruct the bvhs for any geoinfo that haven't changed.  Perhaps
+       we can set the close delay to be 5-10secs...?
+    */
+    // This crashes the renderer since the engine relies on the allocations...
+    //rtx.destroyAllocations(true/*force*/);
+    //rtx.destroyObjectBVHs(true/*force*/);
+    //rtx.destroyLightBVHs(true/*force*/);
+
+    rtx.destroyTextureSamplers();
 }
 
 
@@ -2495,11 +2630,6 @@ zpRender::doLightRequests(const ChannelSet& light_channels,
     {
         zpr::Scene* scene = rtx.input_scenes[n];
         assert(scene); // Shouldn't happen...
-
-        // Only do request on frame0 scene:
-        // TODO: enable this when shutter dist gets fixed
-        //if (n == 0)
-            scene->request(rtx.scene_channels, count);
 
         const size_t nLights = scene->lights.size();
         for (size_t i=0; i < nLights; ++i)
@@ -2544,15 +2674,14 @@ bool
 zpRender::generate_render_primitives()
 {
     ++rtx.render_version;
-#ifdef DEBUG_STARTUP
+#if 0//def DEBUG_STARTUP
     std::cout << "zpRender(" << this << ")::generate_render_primitives(version " << rtx.render_version << ")" << std::endl;
 #endif
 
     assert(rtx.input_scenes.size() > 0 && rtx.input_scenes[0] != 0); // shouldn't happen...
 
-//TODO: This shouldn't be required...we should only delete the objects that change between sessions:
-// Delete any existing info:
-rtx.destroyAllocations(false/*force*/);
+    // Delete any existing info:
+    rtx.destroyAllocations(false/*force*/);
 
     // Initialize the thread map & list:
     rtx.thread_list.reserve(DD::Image::Thread::numThreads);
@@ -2682,9 +2811,9 @@ rtx.destroyAllocations(false/*force*/);
                     rtx.hero_ray_cameras[i] = new zpr::RaySphericalCamera();
                 break;
 
-            //case PROJECTION_CYLINDRICAL:
-            //    rtx.ray_cameras[i] = new zpr::RayCylindricalCamera();
-            //    break;
+            case PROJECTION_CYLINDRICAL:
+                rtx.ray_cameras[i] = new zpr::RayCylindricalCamera();
+                break;
 
         }
 #if DEBUG
@@ -2720,9 +2849,6 @@ rtx.destroyAllocations(false/*force*/);
             //Fsr::Vec3d heroV = -rtx.hero_ray_cameras[i].cam0.matrix.getZAxis();
             //std::cout << " heroV" << heroV << std::endl;
         }
-
-        // Reset the scene's changed mask:
-        input_scene->clearChangedMask();
 
         const uint32_t nObjects = input_scene->objects();
         input_scene->object_transforms_list().clear();
@@ -2771,192 +2897,249 @@ rtx.destroyAllocations(false/*force*/);
     uint32_t nObjects = (uint32_t)scene0->objects();
     uint32_t nLights  = (uint32_t)scene0->lights.size();
 
-
-    // These lists are passed to the BVHs to build them:
-    std::vector<zpr::ObjectContextRef> objref_list;
-    std::vector<zpr::ObjectContextRef> ltvref_list;
-    objref_list.reserve(nObjects);
-    ltvref_list.reserve(nLights);
-
-
-    //==============================================================
-    // Geometry Objects:
-    //==============================================================
-
-    // Map of objects we're keeping:
-    std::map<uint64_t, GeoInfoContext*> keep_map;
-
-    for (uint32_t obj_index=0; obj_index < nObjects; ++obj_index)
+    //if (!rtx.objects_bvh_initialized)
     {
-        // Bail quickly on user-interrupt:
-        if (DD::Image::Op::aborted())
+        // These lists are passed to the BVHs to build them:
+        std::vector<zpr::ObjectContextRef> objref_list;
+        objref_list.reserve(nObjects);
+
+        rtx.destroyObjectBVHs(true/*force*/);
+
+        //==============================================================
+        // Geometry Objects:
+        //==============================================================
+
+        // Map of objects we're keeping:
+        std::map<uint64_t, GeoInfoContext*> keep_map;
+
+        for (uint32_t obj_index=0; obj_index < nObjects; ++obj_index)
         {
+            // Bail quickly on user-interrupt:
+            if (DD::Image::Op::aborted())
+            {
 #ifdef DEBUG_ABORTED
-            std::cout << "    ******** generate_render_primitives(): engine aborted ********" << std::endl;         
+                std::cout << "    ******** generate_render_primitives(): engine aborted ********" << std::endl;         
 #endif
-            return false;
-        }
-
-        // Build a GeoInfoContext:
-        GeoInfoContext* gptx = new GeoInfoContext();
-        gptx->motion_objects.reserve(nShutterSamples);
-        gptx->motion_times.reserve(nShutterSamples);
-        gptx->motion_geoinfos.reserve(nShutterSamples);
-
-        // Get the GeoInfo motion samples. If the GeoInfo's don't all match
-        // the first sample (sample 0) then the sample will be skipped.
-        // Store motion sample 0:
-        GeoInfoContext::Sample& gtx0 = gptx->addGeoInfoSample(scene0, obj_index);
-        // Replace the local-to-world xform to include the global xform:
-        gtx0.l2w = rtx.global_xform;
-        gtx0.l2w *= gtx0.info->matrix;
-        gtx0.w2l = gtx0.l2w.inverse();
-
-        gptx->enabled_lights.clear();
-
-        gptx->hash.reset();
-        gptx->hash.append(gtx0.info->out_id());
-        gptx->hash.append(gtx0.info->vertices());
-        if (gtx0.info->point_array())
-            gptx->hash.append(gtx0.info->point_array(), sizeof(void*));
-
-        // AttribContextList attributes;
-        if (gtx0.info->material)
-            gptx->hash.append(gtx0.info->material, sizeof(void*));
-
-        Fsr::Box3d bbox0(gtx0.info->bbox());
-        // Do the primitives inside the GeoInfo expand the bbox further than the
-        // point values imply? This is material displacement, that's done below.
-        // Example is a PointCloud with point radii that expand the points into
-        // spheres or discs.
-        //
-        const DD::Image::Primitive** prim_array = gtx0.info->primitive_array();
-        if (prim_array)
-        {
-            gptx->hash.append(gtx0.info->primitive_array(), sizeof(void*));
-
-            const uint32_t nPrims = gtx0.info->primitives();
-            for (uint32_t j=0; j < nPrims; ++j)
-            {
-                const DD::Image::Primitive* prim = *prim_array++;
-                if (prim->getPrimitiveType() > DD::Image::ePrimitiveTypeCount ||
-                    prim->getPrimitiveType() == DD::Image::eParticlesSprite)
-                    bbox0.expand(prim->get_bbox(gtx0.info));
+                return false;
             }
-        }
 
-        // Determine displacement for this object:
-        if (gtx0.info->material)
-        {
-            // Apply in local-space:
-            const float displace = gtx0.info->material->displacement_bound();
-            if (displace > std::numeric_limits<float>::epsilon())
-                bbox0.pad(Fsr::Vec3f(displace, displace, displace));
-        }
+            // Build a GeoInfoContext:
+            GeoInfoContext* gptx = new GeoInfoContext();
+            gptx->motion_objects.reserve(nShutterSamples);
+            gptx->motion_times.reserve(nShutterSamples);
+            gptx->motion_geoinfos.reserve(nShutterSamples);
 
-        gptx->bbox = gtx0.l2w.transform(bbox0);
-        //std::cout << "[" << obj_index << "]: hash=0x" << std::hex << gptx->hash.value() << std::dec;
-        //std::cout << ", prim=" << gtx0.info->primitive_array()[0];
-        //std::cout << ", bbox" << gptx->bbox;
-        //std::cout << std::endl;
+            // Get the GeoInfo motion samples. If the GeoInfo's don't all match
+            // the first sample (sample 0) then the sample will be skipped.
+            // Store motion sample 0:
+            GeoInfoContext::Sample& gtx0 = gptx->addGeoInfoSample(scene0, obj_index);
+            // Replace the local-to-world xform to include the global xform:
+            gtx0.l2w = rtx.global_xform;
+            gtx0.l2w *= gtx0.info->matrix;
+            gtx0.w2l = gtx0.l2w.inverse();
 
-        // Match the motion-blurred GeoInfo's together:
-        uint32_t nMotionSamples = 1;
-        if (rtx.isMotionBlurEnabled())
-        {
-            // Build motion sample list:
-            DD::Image::GeoInfo* current_info = gtx0.info;
-            zpr::Scene* this_scene = scene0;
-            zpr::Scene* next_scene = (zpr::Scene*)this_scene->mb_scene();
-            while (1)
+            gptx->enabled_lights.clear();
+
+            gptx->hash.reset();
+            gptx->hash.append(gtx0.info->out_id());
+            gptx->hash.append(gtx0.info->vertices());
+            if (gtx0.info->point_array())
+                gptx->hash.append(gtx0.info->point_array(), sizeof(void*));
+
+            // AttribContextList attributes;
+            if (gtx0.info->material)
+                gptx->hash.append(gtx0.info->material, sizeof(void*));
+
+            Fsr::Box3d bbox0(gtx0.info->bbox());
+            // Do the primitives inside the GeoInfo expand the bbox further than the
+            // point values imply? This is material displacement, that's done below.
+            // Example is a PointCloud with point radii that expand the points into
+            // spheres or discs.
+            //
+            const DD::Image::Primitive** prim_array = gtx0.info->primitive_array();
+            if (prim_array)
             {
-                //std::cout << "  this_scene(" << this_scene << "), next_scene(" << next_scene << ")" << std::endl;
-                if (current_info == NULL || next_scene == NULL)
-                    break;
+                gptx->hash.append(gtx0.info->primitive_array(), sizeof(void*));
 
-                //std::cout << "    checking motion object 0x" << current_info->out_id() << " ptr=" << current_info << std::endl;
-                // Find matching object id in motionblur scene object map:
-                const int next_obj_index = next_scene->findObject(current_info->out_id().value());
-                if (next_obj_index < 0)
-                    break; // not found
-                //std::cout << "      match in scene " << next_scene << std::endl;
-
-                DD::Image::GeoInfo* next_info = &next_scene->object(next_obj_index);
-                assert(next_info); // shouldn't happen...
-
-                // Make sure primitives and attribute references are up-to-date:
-                GeoInfoContext::Sample& gtx = gptx->addGeoInfoSample(next_scene, next_obj_index);
-                // Replace the local-to-world xform to include the global xform:
-                gtx.l2w = rtx.global_xform;
-                gtx.l2w *= gtx.info->matrix;
-                gtx.w2l = gtx.l2w.inverse();
-
-                gptx->hash.append(gtx.info->out_id());
-                gptx->hash.append(gtx.info->vertices());
-                if (gtx.info->point_array())
-                    gptx->hash.append(gtx.info->point_array(), sizeof(void*));
-                //AttribContextList attributes;
-                if (gtx.info->material)
-                    gptx->hash.append(gtx.info->material, sizeof(void*));
-
-                //if (Fsr::getObjectString(*current_info, "name")=="string1")
-                //{
-                //std::cout << "'string1'[0]=" << obj_index << ", bbox=" << gtx0.info->bbox() << ", l2w=" << gtx0.l2w;
-                //std::cout << std::endl;
-                //std::cout << "'" << Fsr::getObjectString(*next_info, "name") << "'[" << shutter_sample << "]=" << next_obj_index << ", bbox=" << gtx.info->bbox() << ", l2w=" << gtx.l2w;
-                //std::cout << std::endl;
-                //}
-
-                Fsr::Box3d bbox(gtx.info->bbox());
-                // Do the primitives inside the GeoInfo expand the bbox further than the
-                // point values imply? This is material displacement, that's done below.
-                // Example is a PointCloud with point radii that expand the points into
-                // spheres or discs.
-                //
-                const DD::Image::Primitive** prim_array = gtx.info->primitive_array();
-                if (prim_array)
+                const uint32_t nPrims = gtx0.info->primitives();
+                for (uint32_t j=0; j < nPrims; ++j)
                 {
-                    gptx->hash.append(gtx.info->primitive_array(), sizeof(void*));
-
-                    const uint32_t nPrims = gtx.info->primitives();
-                    for (uint32_t j=0; j < nPrims; ++j)
-                    {
-                        const DD::Image::Primitive* prim = *prim_array++;
-                        if (prim->getPrimitiveType() > DD::Image::ePrimitiveTypeCount ||
-                            prim->getPrimitiveType() == DD::Image::eParticlesSprite)
-                            bbox.expand(prim->get_bbox(gtx.info));
-                    }
+                    const DD::Image::Primitive* prim = *prim_array++;
+                    if (prim->getPrimitiveType() > DD::Image::ePrimitiveTypeCount ||
+                        prim->getPrimitiveType() == DD::Image::eParticlesSprite)
+                        bbox0.expand(prim->get_bbox(gtx0.info));
                 }
-
-                gptx->bbox.expand(gtx.l2w.transform(bbox));
-                //std::cout << "[" << obj_index << "]: hash=0x" << std::hex << gptx->hash.value() << std::dec;
-                //std::cout << ", prim=" << gtx.info->primitive_array()[0];
-                //std::cout << ", bbox" << gptx->bbox;
-                //std::cout << std::endl;
-
-                current_info = next_info;
-                this_scene = next_scene;
-                next_scene = (zpr::Scene*)this_scene->mb_scene();
-
-                ++nMotionSamples;
             }
-        }
-        gptx->hash.append(nMotionSamples); // make sure motion_sample count is taken into account
-//gptx->bbox.append(gptx->hash);
-        // Force it to change every render pass:
-        gptx->hash.append(rtx.render_version);
 
-        // Build the list of enabled lights for this object:
-        if (rtx.k_direct_lighting_enabled)
-        {
-            std::set<uint32_t> light_mask_enabled;
-            if (Fsr::hasObjectAttrib(*gtx0.info, "light_mask"))
+            // Determine displacement for this object:
+            if (gtx0.info->material)
             {
-                std::string light_mask = Fsr::getObjectString(*gtx0.info, "light_mask");
-                //std::cout << "light_mask('" << light_mask << "'):" << std::endl;
-                // Special-case the default '*' value:
-                if (light_mask == "*")
+                // Apply in local-space:
+                const float displace = gtx0.info->material->displacement_bound();
+                if (displace > std::numeric_limits<float>::epsilon())
+                    bbox0.pad(Fsr::Vec3f(displace, displace, displace));
+            }
+
+            gptx->bbox = gtx0.l2w.transform(bbox0);
+            //std::cout << "[" << obj_index << "]: hash=0x" << std::hex << gptx->hash.value() << std::dec;
+            //std::cout << ", prim=" << gtx0.info->primitive_array()[0];
+            //std::cout << ", bbox" << gptx->bbox;
+            //std::cout << std::endl;
+
+            // Match the motion-blurred GeoInfo's together:
+            uint32_t nMotionSamples = 1;
+            if (rtx.isMotionBlurEnabled())
+            {
+                // Build motion sample list:
+                DD::Image::GeoInfo* current_info = gtx0.info;
+                zpr::Scene* this_scene = scene0;
+                zpr::Scene* next_scene = (zpr::Scene*)this_scene->mb_scene();
+                while (1)
                 {
+                    //std::cout << "  this_scene(" << this_scene << "), next_scene(" << next_scene << ")" << std::endl;
+                    if (current_info == NULL || next_scene == NULL)
+                        break;
+
+                    //std::cout << "    checking motion object 0x" << current_info->out_id() << " ptr=" << current_info << std::endl;
+                    // Find matching object id in motionblur scene object map:
+                    const int next_obj_index = next_scene->findObject(current_info->out_id().value());
+                    if (next_obj_index < 0)
+                        break; // not found
+                    //std::cout << "      match in scene " << next_scene << std::endl;
+
+                    DD::Image::GeoInfo* next_info = &next_scene->object(next_obj_index);
+                    assert(next_info); // shouldn't happen...
+
+                    // Make sure primitives and attribute references are up-to-date:
+                    GeoInfoContext::Sample& gtx = gptx->addGeoInfoSample(next_scene, next_obj_index);
+                    // Replace the local-to-world xform to include the global xform:
+                    gtx.l2w = rtx.global_xform;
+                    gtx.l2w *= gtx.info->matrix;
+                    gtx.w2l = gtx.l2w.inverse();
+
+                    gptx->hash.append(gtx.info->out_id());
+                    gptx->hash.append(gtx.info->vertices());
+                    if (gtx.info->point_array())
+                        gptx->hash.append(gtx.info->point_array(), sizeof(void*));
+                    //AttribContextList attributes;
+                    if (gtx.info->material)
+                        gptx->hash.append(gtx.info->material, sizeof(void*));
+
+                    //if (Fsr::getObjectString(*current_info, "name")=="string1")
+                    //{
+                    //std::cout << "'string1'[0]=" << obj_index << ", bbox=" << gtx0.info->bbox() << ", l2w=" << gtx0.l2w;
+                    //std::cout << std::endl;
+                    //std::cout << "'" << Fsr::getObjectString(*next_info, "name") << "'[" << shutter_sample << "]=" << next_obj_index << ", bbox=" << gtx.info->bbox() << ", l2w=" << gtx.l2w;
+                    //std::cout << std::endl;
+                    //}
+
+                    Fsr::Box3d bbox(gtx.info->bbox());
+                    // Do the primitives inside the GeoInfo expand the bbox further than the
+                    // point values imply? This is material displacement, that's done below.
+                    // Example is a PointCloud with point radii that expand the points into
+                    // spheres or discs.
+                    //
+                    const DD::Image::Primitive** prim_array = gtx.info->primitive_array();
+                    if (prim_array)
+                    {
+                        gptx->hash.append(gtx.info->primitive_array(), sizeof(void*));
+
+                        const uint32_t nPrims = gtx.info->primitives();
+                        for (uint32_t j=0; j < nPrims; ++j)
+                        {
+                            const DD::Image::Primitive* prim = *prim_array++;
+                            if (prim->getPrimitiveType() > DD::Image::ePrimitiveTypeCount ||
+                                prim->getPrimitiveType() == DD::Image::eParticlesSprite)
+                                bbox.expand(prim->get_bbox(gtx.info));
+                        }
+                    }
+
+                    gptx->bbox.expand(gtx.l2w.transform(bbox));
+                    //std::cout << "[" << obj_index << "]: hash=0x" << std::hex << gptx->hash.value() << std::dec;
+                    //std::cout << ", prim=" << gtx.info->primitive_array()[0];
+                    //std::cout << ", bbox" << gptx->bbox;
+                    //std::cout << std::endl;
+
+                    current_info = next_info;
+                    this_scene = next_scene;
+                    next_scene = (zpr::Scene*)this_scene->mb_scene();
+
+                    ++nMotionSamples;
+                }
+            }
+            gptx->hash.append(nMotionSamples); // make sure motion_sample count is taken into account
+//gptx->bbox.append(gptx->hash);
+            // Force it to change every render pass:
+            gptx->hash.append(rtx.render_version);
+
+            // Build the list of enabled lights for this object:
+            if (rtx.direct_lighting_enabled)
+            {
+                std::set<uint32_t> light_mask_enabled;
+                if (Fsr::hasObjectAttrib(*gtx0.info, "light_mask"))
+                {
+                    std::string light_mask = Fsr::getObjectString(*gtx0.info, "light_mask");
+                    //std::cout << "light_mask('" << light_mask << "'):" << std::endl;
+                    // Special-case the default '*' value:
+                    if (light_mask == "*")
+                    {
+                        for (uint32_t lt=0; lt < nLights; ++lt)
+                        {
+                            DD::Image::LightContext* ltx = scene0->lights[lt];
+                            assert(ltx); // Shouldn't happen...
+                            if (ltx->light()->node_disabled())
+                                continue;
+                            light_mask_enabled.insert(lt);
+                        }
+                    }
+                    else if (light_mask.empty())
+                    {
+                        // do nothing
+                    }
+                    else
+                    {
+                        // Tokenize the light_mask string:
+                        std::vector<std::string> masks;
+                        Fsr::stringSplit(light_mask, ", \t\n", masks);
+                        if (masks.size() > 0)
+                        {
+                            for (uint32_t lt=0; lt < nLights; ++lt)
+                            {
+                                DD::Image::LightContext* ltx = scene0->lights[lt];
+                                assert(ltx); // Shouldn't happen...
+                                if (ltx->light()->node_disabled())
+                                    continue;
+                                //std::cout << "  checking light '" << ltx->light()->node_name() << "'" << std::endl;
+
+                                // Check for identifer knob first, otherwise default to node name:
+                                std::string light_id;
+                                DD::Image::Knob* k = ltx->light()->knob("light_identifier");
+                                if (k)
+                                    light_id = k->get_text();
+                                if (light_id.empty())
+                                    light_id = ltx->light()->node_name(); // No id, default to node name
+                                if (light_id.empty())
+                                    continue; // shouldn't happen...
+
+                                // Check against each mask:
+                                for (uint32_t i=0; i < masks.size(); ++i)
+                                {
+                                    const std::string& mask = masks[i];
+                                    if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, light_id.c_str()))
+                                        light_mask_enabled.erase(lt);
+                                    else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, light_id.c_str()))
+                                        light_mask_enabled.insert(lt);
+                                    else if (Fsr::globMatch(mask, light_id))
+                                        light_mask_enabled.insert(lt);
+                                }
+                            }
+                        }
+                    }
+
+                }
+                else
+                {
+                    // No light mask, add all lights:
                     for (uint32_t lt=0; lt < nLights; ++lt)
                     {
                         DD::Image::LightContext* ltx = scene0->lights[lt];
@@ -2966,319 +3149,286 @@ rtx.destroyAllocations(false/*force*/);
                         light_mask_enabled.insert(lt);
                     }
                 }
-                else if (light_mask.empty())
+
+                // Now check the object mask in each enabled light the object name:
+                std::string obj_name;
+                if (Fsr::hasObjectAttrib(*gtx0.info, "scene_path"))
+                    obj_name = Fsr::getObjectString(*gtx0.info, "scene_path");
+                else if (Fsr::hasObjectAttrib(*gtx0.info, "name"))
+                    obj_name = Fsr::getObjectString(*gtx0.info, "name");
+                if (!obj_name.empty())
                 {
-                    // do nothing
-                }
-                else
-                {
-                    // Tokenize the light_mask string:
-                    std::vector<std::string> masks;
-                    Fsr::stringSplit(light_mask, ", \t\n", masks);
-                    if (masks.size() > 0)
+                    //std::cout << "object name='" << obj_name << "'" << std::endl;
+                    for (std::set<uint32_t>::const_iterator it=light_mask_enabled.begin();
+                          it != light_mask_enabled.end(); ++it)
                     {
-                        for (uint32_t lt=0; lt < nLights; ++lt)
+                        DD::Image::LightContext* ltx = scene0->lights[*it];
+                        assert(ltx); // Shouldn't happen...
+                        //std::cout << "  checking light object mask '" << ltx->light()->node_name() << "'" << std::endl;
+
+                        // Check for identifer knob first, otherwise default to node name:
+                        std::string object_mask;
+                        DD::Image::Knob* k = ltx->light()->knob("object_mask");
+                        if (!k)
                         {
-                            DD::Image::LightContext* ltx = scene0->lights[lt];
-                            assert(ltx); // Shouldn't happen...
-                            if (ltx->light()->node_disabled())
-                                continue;
-                            //std::cout << "  checking light '" << ltx->light()->node_name() << "'" << std::endl;
+                            // If light doesn't have an object mask control always enable it:
+                            gptx->enabled_lights.insert(*it);
+                            continue;
+                        }
+                        object_mask = k->get_text();
+                        //std::cout << "    object_mask='" << object_mask << "'" << std::endl;
+                        if (object_mask.empty())
+                            continue;
 
-                            // Check for identifer knob first, otherwise default to node name:
-                            std::string light_id;
-                            DD::Image::Knob* k = ltx->light()->knob("light_identifier");
-                            if (k)
-                                light_id = k->get_text();
-                            if (light_id.empty())
-                                light_id = ltx->light()->node_name(); // No id, default to node name
-                            if (light_id.empty())
-                                continue; // shouldn't happen...
-
-                            // Check against each mask:
-                            for (uint32_t i=0; i < masks.size(); ++i)
+                        // Tokenize the light_mask string:
+                        std::vector<std::string> masks;
+                        Fsr::stringSplit(object_mask, ", \t\n", masks);
+                        if (masks.size() == 0)
+                            continue;
+                        // Check enabled lights against each mask:
+                        for (uint32_t i=0; i < masks.size(); ++i)
+                        {
+                            const std::string& mask = masks[i];
+                            //std::cout << "  light '" << ltx->light()->node_name() << "': obj_mask='" << mask << "'" << std::endl;
+                            if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, obj_name.c_str()))
                             {
-                                const std::string& mask = masks[i];
-                                if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, light_id.c_str()))
-                                    light_mask_enabled.erase(lt);
-                                else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, light_id.c_str()))
-                                    light_mask_enabled.insert(lt);
-                                else if (Fsr::globMatch(mask, light_id))
-                                    light_mask_enabled.insert(lt);
+                                gptx->enabled_lights.erase(*it);
+                            }
+                            else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, obj_name.c_str()))
+                            {
+                                gptx->enabled_lights.insert(*it);
+                            }
+                            else if (Fsr::globMatch(mask, obj_name))
+                            {
+                                gptx->enabled_lights.insert(*it);
                             }
                         }
                     }
                 }
-
-            }
-            else
-            {
-                // No light mask, add all lights:
-                for (uint32_t lt=0; lt < nLights; ++lt)
+                else
                 {
-                    DD::Image::LightContext* ltx = scene0->lights[lt];
-                    assert(ltx); // Shouldn't happen...
-                    if (ltx->light()->node_disabled())
-                        continue;
-                    light_mask_enabled.insert(lt);
+                    //std::cout << "no object name, enable all lights" << std::endl;
+                    // No object mask, add all lights:
+                    gptx->enabled_lights = light_mask_enabled;
                 }
             }
-
-            // Now check the object mask in each enabled light the object name:
-            std::string obj_name;
-            if (Fsr::hasObjectAttrib(*gtx0.info, "scene_path"))
-                obj_name = Fsr::getObjectString(*gtx0.info, "scene_path");
-            else if (Fsr::hasObjectAttrib(*gtx0.info, "name"))
-                obj_name = Fsr::getObjectString(*gtx0.info, "name");
-            if (!obj_name.empty())
-            {
-                //std::cout << "object name='" << obj_name << "'" << std::endl;
-                for (std::set<uint32_t>::const_iterator it=light_mask_enabled.begin();
-                      it != light_mask_enabled.end(); ++it)
-                {
-                    DD::Image::LightContext* ltx = scene0->lights[*it];
-                    assert(ltx); // Shouldn't happen...
-                    //std::cout << "  checking light object mask '" << ltx->light()->node_name() << "'" << std::endl;
-
-                    // Check for identifer knob first, otherwise default to node name:
-                    std::string object_mask;
-                    DD::Image::Knob* k = ltx->light()->knob("object_mask");
-                    if (!k)
-                    {
-                        // If light doesn't have an object mask control always enable it:
-                        gptx->enabled_lights.insert(*it);
-                        continue;
-                    }
-                    object_mask = k->get_text();
-                    //std::cout << "    object_mask='" << object_mask << "'" << std::endl;
-                    if (object_mask.empty())
-                        continue;
-
-                    // Tokenize the light_mask string:
-                    std::vector<std::string> masks;
-                    Fsr::stringSplit(object_mask, ", \t\n", masks);
-                    if (masks.size() == 0)
-                        continue;
-                    // Check enabled lights against each mask:
-                    for (uint32_t i=0; i < masks.size(); ++i)
-                    {
-                        const std::string& mask = masks[i];
-                        //std::cout << "  light '" << ltx->light()->node_name() << "': obj_mask='" << mask << "'" << std::endl;
-                        if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, obj_name.c_str()))
-                        {
-                            gptx->enabled_lights.erase(*it);
-                        }
-                        else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, obj_name.c_str()))
-                        {
-                            gptx->enabled_lights.insert(*it);
-                        }
-                        else if (Fsr::globMatch(mask, obj_name))
-                        {
-                            gptx->enabled_lights.insert(*it);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                //std::cout << "no object name, enable all lights" << std::endl;
-                // No object mask, add all lights:
-                gptx->enabled_lights = light_mask_enabled;
-            }
-        }
 
 #if 1
-        rtx.object_context.push_back(gptx);
-        objref_list.push_back(zpr::ObjectContextRef(gptx, gptx->bbox));
-        //std::cout << "  obj[" << obj_index << "]: info=" << gtx0.info;
-        //std::cout << ", bbox(non-xformed)" << Fsr::Box3f(gtx0.info->bbox());
-        //std::cout << ", otx->bbox(xformed)" << gptx->bbox << std::endl;
+            rtx.object_context.push_back(gptx);
+            objref_list.push_back(zpr::ObjectContextRef(gptx, gptx->bbox));
+            //std::cout << "  obj[" << obj_index << "]: info=" << gtx0.info;
+            //std::cout << ", bbox(non-xformed)" << Fsr::Box3f(gtx0.info->bbox());
+            //std::cout << ", otx->bbox(xformed)" << gptx->bbox << std::endl;
 
 #else
-        // Determine if this context matches any existing ones in the map:
-        std::map<uint64_t, uint32_t>::iterator it = rtx.object_map.find(gptx->hash.value());
-        if (it == rtx.object_map.end())
-        {
-            // Not in current map, add to keep map:
-            keep_map[gptx->hash.value()] = gptx;
-        }
-        else
-        {
-            // Already in map, add it to keep map and delete the temp gptx:
-            GeoInfoContext* existing_gptx = rtx.object_context[it->second];
-            keep_map[gptx->hash.value()] = existing_gptx;
-            // Update the existing context with the corrected GeoInfo
-            // indices:  TODO: change this so that the indices aren't required...
-            existing_gptx->motion_geoinfos = gptx->motion_geoinfos;
-            delete gptx;
-        }
+            // Determine if this context matches any existing ones in the map:
+            std::map<uint64_t, uint32_t>::iterator it = rtx.object_map.find(gptx->hash.value());
+            if (it == rtx.object_map.end())
+            {
+                // Not in current map, add to keep map:
+                keep_map[gptx->hash.value()] = gptx;
+            }
+            else
+            {
+                // Already in map, add it to keep map and delete the temp gptx:
+                GeoInfoContext* existing_gptx = rtx.object_context[it->second];
+                keep_map[gptx->hash.value()] = existing_gptx;
+                // Update the existing context with the corrected GeoInfo
+                // indices:  TODO: change this so that the indices aren't required...
+                existing_gptx->motion_geoinfos = gptx->motion_geoinfos;
+                delete gptx;
+            }
 #endif
 
-    } // nObjects loop
+        } // nObjects loop
 
 
 #if 0
-    // Delete the ones not in keep map:
-    nObjects = rtx.object_context.size();
-    for (uint32_t i=0; i < nObjects; ++i)
-    {
-        GeoInfoContext* gptx = rtx.object_context[i];
-        std::map<uint64_t, GeoInfoContext*>::iterator it = keep_map.find(gptx->hash.value());
-        if (it == keep_map.end())
+        // Delete the ones not in keep map:
+        nObjects = rtx.object_context.size();
+        for (uint32_t i=0; i < nObjects; ++i)
         {
-            delete gptx;
-            rtx.object_context[i] = 0;
-        }
-    }
-
-    // Rebuild list & map from keep map:
-    nObjects = keep_map.size();
-    //
-    rtx.object_context.clear();
-    rtx.object_context.reserve(nObjects + nLights);
-
-    rtx.object_map.clear();
-    std::map<uint64_t, GeoInfoContext*>::iterator it = keep_map.begin();
-    for (; it != keep_map.end(); ++it)
-    {
-        GeoInfoContext* gptx = it->second;
-        rtx.object_context.push_back(gptx);
-        const uint32_t obj = rtx.object_context.size()-1;
-        rtx.object_map[gptx->hash.value()] = obj;
-        gptx->index = obj; // update the index
-
-        objref_list.push_back(zpr::ObjectContextRef(gptx, gptx->bbox));
-        //std::cout << "obj[" << obj << "]: bbox=" << gptx->bbox << std::endl;
-    }
-#endif
-
-
-    //==============================================================
-    // Light Volume Objects:
-    //==============================================================
-    if (rtx.k_atmospherics_enabled)
-    {
-        for (uint32_t lt_index=0; lt_index < nLights; ++lt_index)
-        {
-            // Bail quickly on user-interrupt:
-            if (Op::aborted())
+            GeoInfoContext* gptx = rtx.object_context[i];
+            std::map<uint64_t, GeoInfoContext*>::iterator it = keep_map.find(gptx->hash.value());
+            if (it == keep_map.end())
             {
-#ifdef DEBUG_ABORTED
-                std::cout << "    ******** generate_render_primitives(): engine aborted ********" << std::endl;         
-#endif
-                return false;
+                delete gptx;
+                rtx.object_context[i] = 0;
             }
+        }
 
-            DD::Image::LightContext* ltx = scene0->lights[lt_index];
-            assert(ltx); // Shouldn't happen...
-            if (ltx->light()->node_disabled())
-                continue; // skip it if it's off
+        // Rebuild list & map from keep map:
+        nObjects = keep_map.size();
+        //
+        rtx.object_context.clear();
+        rtx.object_context.reserve(nObjects + nLights);
 
-            // Get the bbox, but also whether this light can produce a volume:
-            Fsr::Box3d lt_bbox;
-            zpr::SourcePrimitiveType prim_type = rtx.getVolumeLightTypeAndBbox(ltx->light(), lt_bbox);
-            if (prim_type == zpr::UNRECOGNIZED_PRIM)
-                continue;
+        rtx.object_map.clear();
+        std::map<uint64_t, GeoInfoContext*>::iterator it = keep_map.begin();
+        for (; it != keep_map.end(); ++it)
+        {
+            GeoInfoContext* gptx = it->second;
+            rtx.object_context.push_back(gptx);
+            const uint32_t obj = rtx.object_context.size()-1;
+            rtx.object_map[gptx->hash.value()] = obj;
+            gptx->index = obj; // update the index
 
-            // Build a LightVolumeContext:
-            LightVolumeContext* otx = new LightVolumeContext();
-            otx->motion_objects.reserve(nShutterSamples);
-            otx->motion_times.reserve(nShutterSamples);
-            otx->motion_lights.reserve(nShutterSamples);
+            objref_list.push_back(zpr::ObjectContextRef(gptx, gptx->bbox));
+            //std::cout << "obj[" << obj << "]: bbox=" << gptx->bbox << std::endl;
+        }
+#endif
 
-            // Store sample 0:
-            otx->addLightVolumeSample(scene0, lt_index);
+        //==============================================================
+        // Build BVH:
+        //==============================================================
 
-            otx->hash.reset();
-            otx->hash.append(nShutterSamples);
-            otx->hash.append(ltx->light()->hash());
-            otx->bbox = lt_bbox;
+        rtx.bvh_max_depth   = k_bvh_max_depth;
+        rtx.bvh_max_objects = k_bvh_max_objects_per_leaf;
 
-            // Match the motion-blurred GeoInfo's together:
-            uint32_t nMotionSamples = 1;
-            if (rtx.isMotionBlurEnabled())
+        // Build the primary intersection test BVH, which is simply the bboxes of all the ObjectContexts:
+        if (objref_list.size() > 0)
+        {
+            rtx.objects_bvh.build(objref_list, 1/*max_objects_per_leaf*/);
+            rtx.objects_bvh.setName("object_bvh");
+            rtx.objects_bvh.setGlobalOrigin(Fsr::Vec3d(0,0,0));
+            //std::cout << "    object_bvh" << rtx.objects_bvh.bbox() << ", depth=" << rtx.objects_bvh.maxNodeDepth() << std::endl;
+        }
+
+        rtx.objects_bvh_initialized = true;
+    }
+
+
+
+    //if (!rtx.lights_bvh_initialized)
+    {
+        // These lists are passed to the BVHs to build them:
+        std::vector<zpr::ObjectContextRef> ltvref_list;
+        ltvref_list.reserve(nLights);
+
+        rtx.destroyLightBVHs(true/*force*/);
+
+        //==============================================================
+        // Light Volume Objects:
+        //==============================================================
+        if (rtx.atmospheric_lighting_enabled)
+        {
+            for (uint32_t lt_index=0; lt_index < nLights; ++lt_index)
             {
-                // Build motion sample list:
-                DD::Image::LightContext* current_ltx = ltx;
-                zpr::Scene* this_scene = scene0;
-                zpr::Scene* next_scene = (zpr::Scene*)this_scene->mb_scene();
-                while (1)
+                // Bail quickly on user-interrupt:
+                if (Op::aborted())
                 {
-                    //std::cout << "  this_scene(" << this_scene << "), next_scene(" << next_scene << ")" << std::endl;
-                    if (current_ltx == 0 || next_scene == 0)
-                        break;
-
-                    // Verify that the next light is from the same node and has same prim type:
-                    DD::Image::LightContext* next_ltx = next_scene->lights[lt_index];
-                    zpr::SourcePrimitiveType next_prim_type = rtx.getVolumeLightTypeAndBbox(next_ltx->light(), lt_bbox);
-                    if (next_prim_type != prim_type ||
-                        current_ltx->light()->node() != next_ltx->light()->node())
-                    {
-                        // shouldn't happen...
-                        std::cerr << "light prim type or index mismatch!" << std::endl;
-                        break;
-                    }
-
-                    otx->addLightVolumeSample(next_scene, lt_index);
-
-                    otx->hash.append(next_ltx->light()->hash());
-                    otx->bbox.expand(lt_bbox);
-
-                    current_ltx = next_ltx;
-                    this_scene = next_scene;
-                    next_scene = (zpr::Scene*)this_scene->mb_scene();
-
-                    ++nMotionSamples;
+#ifdef DEBUG_ABORTED
+                    std::cout << "    ******** generate_render_primitives(): engine aborted ********" << std::endl;         
+#endif
+                    return false;
                 }
 
-                //std::cout << "[" << ltx << " " << ltx << "]: hash=" << std::hex << otx->hash.value() << std::dec;
-                //std::cout << std::endl;
-            }
-            otx->hash.append(nMotionSamples); // make sure motion_sample count is taken into account
-            otx->bbox.append(otx->hash);
-            // Force it to change every render pass:
-            otx->hash.append(rtx.render_version);
+                DD::Image::LightContext* ltx = scene0->lights[lt_index];
+                assert(ltx); // Shouldn't happen...
+                if (ltx->light()->node_disabled())
+                    continue; // skip it if it's off
 
-            rtx.light_context.push_back(otx);
+                // Get the bbox, but also whether this light can produce a volume:
+                Fsr::Box3d lt_bbox;
+                zpr::SourcePrimitiveType prim_type = rtx.getVolumeLightTypeAndBbox(ltx->light(), lt_bbox);
+                if (prim_type == zpr::UNRECOGNIZED_PRIM)
+                    continue;
 
-            ltvref_list.push_back(zpr::ObjectContextRef(otx, otx->bbox));
-            //std::cout << "  lt[" << otx << "]: bbox=" << otx->bbox << std::endl;
+                // Build a LightVolumeContext:
+                LightVolumeContext* otx = new LightVolumeContext();
+                otx->motion_objects.reserve(nShutterSamples);
+                otx->motion_times.reserve(nShutterSamples);
+                otx->motion_lights.reserve(nShutterSamples);
 
-        } // nLights loop
+                // Store sample 0:
+                otx->addLightVolumeSample(scene0, lt_index);
+
+                otx->hash.reset();
+                otx->hash.append(nShutterSamples);
+                otx->hash.append(ltx->light()->hash());
+                otx->bbox = lt_bbox;
+
+                // Match the motion-blurred GeoInfo's together:
+                uint32_t nMotionSamples = 1;
+                if (rtx.isMotionBlurEnabled())
+                {
+                    // Build motion sample list:
+                    DD::Image::LightContext* current_ltx = ltx;
+                    zpr::Scene* this_scene = scene0;
+                    zpr::Scene* next_scene = (zpr::Scene*)this_scene->mb_scene();
+                    while (1)
+                    {
+                        //std::cout << "  this_scene(" << this_scene << "), next_scene(" << next_scene << ")" << std::endl;
+                        if (current_ltx == 0 || next_scene == 0)
+                            break;
+
+                        // Verify that the next light is from the same node and has same prim type:
+                        DD::Image::LightContext* next_ltx = next_scene->lights[lt_index];
+                        zpr::SourcePrimitiveType next_prim_type = rtx.getVolumeLightTypeAndBbox(next_ltx->light(), lt_bbox);
+                        if (next_prim_type != prim_type ||
+                            current_ltx->light()->node() != next_ltx->light()->node())
+                        {
+                            // shouldn't happen...
+                            std::cerr << "light prim type or index mismatch!" << std::endl;
+                            break;
+                        }
+
+                        otx->addLightVolumeSample(next_scene, lt_index);
+
+                        otx->hash.append(next_ltx->light()->hash());
+                        otx->bbox.expand(lt_bbox);
+
+                        current_ltx = next_ltx;
+                        this_scene = next_scene;
+                        next_scene = (zpr::Scene*)this_scene->mb_scene();
+
+                        ++nMotionSamples;
+                    }
+
+                    //std::cout << "[" << ltx << " " << ltx << "]: hash=" << std::hex << otx->hash.value() << std::dec;
+                    //std::cout << std::endl;
+                }
+                otx->hash.append(nMotionSamples); // make sure motion_sample count is taken into account
+                otx->bbox.append(otx->hash);
+                // Force it to change every render pass:
+                otx->hash.append(rtx.render_version);
+
+                rtx.light_context.push_back(otx);
+
+                ltvref_list.push_back(zpr::ObjectContextRef(otx, otx->bbox));
+                //std::cout << "  lt[" << otx << "]: bbox=" << otx->bbox << std::endl;
+
+            } // nLights loop
+        }
+
+        //==============================================================
+        // Build BVH:
+        //==============================================================
+
+        rtx.bvh_max_depth   = k_bvh_max_depth;
+        rtx.bvh_max_objects = k_bvh_max_objects_per_leaf;
+
+        // Build the primary intersection test BVH, which is simply the bboxes of all the ObjectContexts:
+        if (ltvref_list.size() > 0)
+        {
+            rtx.lights_bvh.build(ltvref_list, 1/*max_objects_per_leaf*/);
+            rtx.objects_bvh.setName("lights_bvh");
+            rtx.objects_bvh.setGlobalOrigin(Fsr::Vec3d(0,0,0));
+            //std::cout << "    lights_bvh" << rtx.lights_bvh.bbox() << ", depth=" << rtx.lights_bvh.maxNodeDepth() << std::endl;
+        }
+
+        rtx.lights_bvh_initialized = true;
     }
-
-    //==============================================================
-    // Build BVHs:
-    //==============================================================
-
-    rtx.bvh_max_depth   = k_bvh_max_depth;
-    rtx.bvh_max_objects = k_bvh_max_objects_per_leaf;
-
-    // Build the primary intersection test BVH, which is simply the bboxes of all the ObjectContexts:
-    if (objref_list.size() > 0)
-    {
-        rtx.objects_bvh.build(objref_list, 1/*max_objects_per_leaf*/);
-        rtx.objects_bvh.setName("object_bvh");
-        rtx.objects_bvh.setGlobalOrigin(Fsr::Vec3d(0,0,0));
-        //std::cout << "    object_bvh" << rtx.objects_bvh.bbox() << ", depth=" << rtx.objects_bvh.maxNodeDepth() << std::endl;
-    }
-
-    // Build the primary intersection test BVH, which is simply the bboxes of all the ObjectContexts:
-    if (ltvref_list.size() > 0)
-    {
-        rtx.lights_bvh.build(ltvref_list, 1/*max_objects_per_leaf*/);
-        rtx.objects_bvh.setName("lights_bvh");
-        rtx.objects_bvh.setGlobalOrigin(Fsr::Vec3d(0,0,0));
-        //std::cout << "    lights_bvh" << rtx.lights_bvh.bbox() << ", depth=" << rtx.lights_bvh.maxNodeDepth() << std::endl;
-    }
-
-    rtx.objects_initialized = true;
 
     //==============================================================
     // Build Light Shaders:
     //==============================================================
 
     rtx.buildLightShaders();
+
+
+    // Ok we're done:
+    rtx.objects_initialized = true;
 
     return true;
 }

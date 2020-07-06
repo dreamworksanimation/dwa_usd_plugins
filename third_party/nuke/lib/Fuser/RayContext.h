@@ -93,6 +93,16 @@ class FSR_EXPORT RayContext
         GLOSSY       = 0x00000020       //!< A hint about the last-hit surface this ray will contribute to
     };
 
+    // Type mask convenience methods:
+    bool isCameraPath()        const { return (type_mask & CAMERA      ); }
+    bool isShadowPath()        const { return (type_mask & SHADOW      ); }
+    bool isReflectedPath()     const { return (type_mask & REFLECTION  ); }
+    bool isTransmittedPath()   const { return (type_mask & TRANSMISSION); }
+    //
+    bool isGlossyContributor()  const { return (type_mask & DIFFUSE     ); }
+    bool isDiffuseContributor() const { return (type_mask & GLOSSY      ); }
+
+
 
   protected:
     // Ray direction is protected to keep inv_direction and slope indicators up to date.

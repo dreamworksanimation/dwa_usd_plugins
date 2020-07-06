@@ -949,7 +949,7 @@ static void thread_proc_cb(unsigned thread_index, unsigned num_threads, void* p)
             return; // all done, bail
 
         // Aquire a write lock if we're multithreaded:
-        if (num_threads > 1)
+        if (num_threads > 0)
         {
             otx->geo_ctx.lock();
             // Check again to avoid race condition:
@@ -1331,12 +1331,17 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
     }
 
     if (num_threads <= 1)
-        thread_proc_cb(0/*thread_index*/, 1/*num_threads*/, &geo_thread_ctx); // just do one
+    {
+        // Pass 0 for num_threads so object loop knows it's not multi-threaded:
+        thread_proc_cb(0/*thread_index*/, 0/*num_threads*/, &geo_thread_ctx); // just do one
+    }
     else
     {
-        // Spawn multiple threads minus one for this thread to directly execute, then wait for them to finish:
+        // Spawn multiple threads (minus one for this thread to directly execute,) then wait for them to finish:
         DD::Image::Thread::spawn(thread_proc_cb, num_threads-1, &geo_thread_ctx);
-        thread_proc_cb(num_threads-1/*thread_index*/, num_threads-1/*num_threads*/, &geo_thread_ctx); // just do one
+        // This thread handles the last one:
+        thread_proc_cb(num_threads-1/*thread_index*/, num_threads/*num_threads*/, &geo_thread_ctx); // just do one
+        //
         DD::Image::Thread::wait(&geo_thread_ctx);
     }
 

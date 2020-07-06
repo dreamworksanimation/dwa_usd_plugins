@@ -51,6 +51,8 @@
 
 namespace Fsr {
 
+class FuserUsdShadeNodeGraphNode;
+
 
 //-------------------------------------------------------------------------------
 
@@ -70,10 +72,11 @@ class FuserUsdShadeShaderNode : public FuserUsdNode,
     //! Returns the class name, must implement.
     /*virtual*/ const char* fuserNodeClass() const { return "UsdShadeShaderNode"; }
 
-    FuserUsdShadeShaderNode(const Pxr::UsdStageRefPtr& stage,
-                            const Pxr::UsdPrim&        shader_prim,
-                            const Fsr::ArgSet&         args,
-                            Fsr::Node*                 parent);
+    FuserUsdShadeShaderNode(const Pxr::UsdStageRefPtr&  stage,
+                            const Pxr::UsdPrim&         shader_prim,
+                            const Fsr::ArgSet&          args,
+                            FuserUsdShadeNodeGraphNode* group,
+                            Fsr::Node*                  parent=NULL);
 
 
     //! Called before execution to allow node to update local data from args.
@@ -135,7 +138,7 @@ class FuserUsdShadeNodeGraphNode : public FuserUsdNode,
 //--------------------------------------------------------------------------
 
 
-/*! USD dummy placeholder node for a real shader node graph (material shader network).
+/*! USD dummy placeholder node for a real material.
 */
 class FuserUsdShadeMaterialNode : public FuserUsdShadeNodeGraphNode
 {

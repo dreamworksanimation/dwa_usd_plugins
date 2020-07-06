@@ -131,7 +131,7 @@ class ZPR_EXPORT RayCamera
 
 
   public:
-    //! Convert a pixel-space coordinate into -0.5...+0.5 screen-window (NDC) range.
+    //! Convert a pixel-space coordinate into -1...+1 screen-window (NDC) range.
     double pixelXToScreenWindowX(double pixelX) const;
     double pixelYToScreenWindowY(double pixelY) const;
     void   pixelXYToScreenWindowXY(const Fsr::Vec2d& pixelXY,
@@ -159,9 +159,17 @@ class ZPR_EXPORT RayCamera
                       Fsr::RayDifferentials& Rdif) const;
 
 
-    //! Find the camera-projected coordinate at NDC coordinate u/v.
+    //! Find the camera-projected coordinate at screen-window NDC coordinate (in -1...+1 range).
     virtual Fsr::Vec3d getDirVector(const RayCamera::Sample& cam,
                                     const Fsr::Vec2d&        screenWindowST) const=0;
+
+    //! Project a world-space point into -1...+1 screen-window (NDC) range.
+    virtual Fsr::Vec2d projectPoint(const RayCamera::Sample& cam,
+                                    const Fsr::Vec3d&        worldspaceP) const=0;
+
+    //! Project a world-space AABB into -1...+1 screen-window (NDC) range.
+    virtual Fsr::Vec2d projectBbox(const RayCamera::Sample& cam,
+                                   const Fsr::Box3d&        worldspaceBbox) const;
 
 
   protected:

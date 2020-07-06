@@ -32,6 +32,7 @@
 #include "AttributeTypes.h"
 
 #include <DDImage/Pixel.h>
+#include <DDImage/Channel3D.h>
 
 
 //-------------------------------------------------------------
@@ -149,9 +150,21 @@ class FSR_EXPORT Pixel : public DD::Image::Pixel
 
     //----------------------------------------------------------
 
+    //! Sets assigned channels to zero.
+    void clear();
 
     //! Does an explicit memset on all channels. Like erase().
     void clearAllChannels() { memset(chan, 0, sizeof(float)*size_t(DD::Image::Chan_Last+1)); }
+
+    //! Convenience color functions
+    void setRGBAToBlack() { rgb().set(0.0f); alpha() = 1.0f; }
+    void setRGBAToWhite() { rgba().set(1.0f); }
+
+    void setRGBToBlack()  { rgb().set(0.0f); }
+    void setRGBToWhite()  { rgb().set(1.0f); }
+
+    void setOpacityToFull() { opacity() = 1.0f; }
+    void setOpacityToNone() { opacity() = 0.0f; }
 
 
     //----------------------------------------------------------
@@ -164,42 +177,44 @@ class FSR_EXPORT Pixel : public DD::Image::Pixel
 
 
     // Read/write vector attribute access convenience methods:
-    Fsr::Vec4f&   P() { return reinterpret_cast<Fsr::Vec4f&>(chan[DD::Image::Chan_P_]); }
-    float&        x() { return P().x; }
-    float&        y() { return P().y; }
-    float&        z() { return P().z; }
-    float&        w() { return P().w; }
+    Fsr::Vec4f&    P() { return reinterpret_cast<Fsr::Vec4f&>(chan[DD::Image::Chan_P_]); }
+    float&         x() { return P().x; }
+    float&         y() { return P().y; }
+    float&         z() { return P().z; }
+    float&         w() { return P().w; }
 
-    float&        Z() { return chan[DD::Image::Chan_Z        ]; }
-    float&       Zf() { return chan[DD::Image::Chan_DeepFront]; }
-    float&       Zb() { return chan[DD::Image::Chan_DeepBack ]; }
+    float&         Z() { return chan[DD::Image::Chan_Z        ]; }
+    float&        Zf() { return chan[DD::Image::Chan_DeepFront]; }
+    float&        Zb() { return chan[DD::Image::Chan_DeepBack ]; }
 
-    Fsr::Vec3f&  PL() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_PL_ ]); }
-    Fsr::Vec3f&  PW() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_PW_ ]); }
-    Fsr::Vec3f&  MB() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_MB_ ]); }
-    Fsr::Vec4f&  UV() { return reinterpret_cast<Fsr::Vec4f&>(chan[DD::Image::Chan_UV_ ]); }
-    Fsr::Vec3f&   N() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_N_  ]); }
-    Fsr::Vec3f& VEL() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_VEL_]); }
+    Fsr::Vec3f&   PL() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_PL_ ]); }
+    Fsr::Vec3f&   PW() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_PW_ ]); }
+    Fsr::Vec3f&   MB() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_MB_ ]); }
+    Fsr::Vec4f&   UV() { return reinterpret_cast<Fsr::Vec4f&>(chan[DD::Image::Chan_UV_ ]); }
+    Fsr::Vec3f&    N() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_N_  ]); }
+    Fsr::Vec3f&  VEL() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_VEL_]); }
 
-    Fsr::Vec4f&  Cf() { return reinterpret_cast<Fsr::Vec4f&>(chan[DD::Image::Chan_Red]); }
-    float&        r() { return chan[DD::Image::Chan_Red  ]; }
-    float&        g() { return chan[DD::Image::Chan_Green]; }
-    float&        b() { return chan[DD::Image::Chan_Blue ]; }
-    float&        a() { return chan[DD::Image::Chan_Alpha]; }
-    float&      red() { return chan[DD::Image::Chan_Red  ]; }
-    float&    green() { return chan[DD::Image::Chan_Green]; }
-    float&     blue() { return chan[DD::Image::Chan_Blue ]; }
-    float&    alpha() { return chan[DD::Image::Chan_Alpha]; }
+    Fsr::Vec4f&   Cf() { return reinterpret_cast<Fsr::Vec4f&>(chan[DD::Image::Chan_Red ]); }
+    Fsr::Vec4f& rgba() { return reinterpret_cast<Fsr::Vec4f&>(chan[DD::Image::Chan_Red ]); }
+    Fsr::Vec3f&  rgb() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_Red ]); }
+    float&         r() { return chan[DD::Image::Chan_Red  ]; }
+    float&         g() { return chan[DD::Image::Chan_Green]; }
+    float&         b() { return chan[DD::Image::Chan_Blue ]; }
+    float&         a() { return chan[DD::Image::Chan_Alpha]; }
+    float&       red() { return chan[DD::Image::Chan_Red  ]; }
+    float&     green() { return chan[DD::Image::Chan_Green]; }
+    float&      blue() { return chan[DD::Image::Chan_Blue ]; }
+    float&     alpha() { return chan[DD::Image::Chan_Alpha]; }
 
     float& cutoutAlpha() { return chan[DD::Image::Chan_Cutout_Alpha]; }
     float& cutoutDepth() { return chan[DD::Image::Chan_Cutout_Depth]; }
 
-    Fsr::Vec3f& color()   { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_Red]); }
-    float&      opacity() { return Cf().w; }
+    Fsr::Vec3f&    color() { return reinterpret_cast<Fsr::Vec3f&>(chan[DD::Image::Chan_Red]); }
+    float&       opacity() { return Cf().w; }
 
     Fsr::Vec3f& position() { return PW();  }
     Fsr::Vec3f& velocity() { return VEL(); }
-    Fsr::Vec3f& normal()   { return N();   }
+    Fsr::Vec3f&   normal() { return N();   }
 
 };
 
@@ -243,6 +258,14 @@ Pixel::setChannels(const DD::Image::ChannelSet& _channels)
     }
 }
 
+inline void
+Pixel::clear()
+{
+    const uint32_t nChans = this->getNumChans();
+    for (uint32_t i=0; i < nChans; ++i)
+        chan[this->getIdx(i)] = 0.0f;
+}
+
 inline Pixel&
 Pixel::operator *= (const Pixel& b)
 {
@@ -258,7 +281,7 @@ Pixel::operator *= (const Pixel& b)
 inline Pixel&
 Pixel::operator *= (float v)
 {
-    const uint32_t nChans = m_chan_indices.size();
+    const uint32_t nChans = this->getNumChans();
     for (uint32_t i=0; i < nChans; ++i)
         chan[this->getIdx(i)] *= v;
     return *this;
@@ -279,7 +302,7 @@ Pixel::operator += (const Pixel& b)
 inline Pixel&
 Pixel::operator += (float v)
 {
-    const uint32_t nChans = m_chan_indices.size();
+    const uint32_t nChans = this->getNumChans();
     for (uint32_t i=0; i < nChans; ++i)
         chan[this->getIdx(i)] += v;
     return *this;

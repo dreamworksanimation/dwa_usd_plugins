@@ -56,6 +56,10 @@ class ZPR_EXPORT VolumeShader : public RayShader
     //!
     static const char* zpClass();
 
+    //! Returns the class name, must implement.
+    /*virtual*/ const char* zprShaderClass() const { return "VolumeShader"; }
+
+
     /*! !!HACK ALERT!! This adds an invisible 'zpVolumeShader' knob
         that's used to identify a VolumeShader-derived Op to other plugins.
 
@@ -69,7 +73,8 @@ class ZPR_EXPORT VolumeShader : public RayShader
     void addVolumeShaderIdKnob(DD::Image::Knob_Callback f);
 
     //! Initialize any vars prior to rendering.
-    /*virtual*/ void validateShader(bool for_real);
+    /*virtual*/ void validateShader(bool                 for_real,
+                                    const RenderContext& rtx);
 
 
   public:

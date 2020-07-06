@@ -77,7 +77,8 @@ LightShader::addLightShaderIdKnob(DD::Image::Knob_Callback f)
 /*!
 */
 /*virtual*/ void
-LightShader::validateShader(bool for_real)
+LightShader::validateShader(bool                 for_real,
+                            const RenderContext& rtx)
 {
 }
 

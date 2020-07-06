@@ -186,14 +186,22 @@ void
 FuserUsdCamera::importSceneOp(DD::Image::Op*     op,
                               const Fsr::ArgSet& args)
 {
-    DD::Image::CameraOp* camera = dynamic_cast<DD::Image::CameraOp*>(op);
-    if (!camera)
+    // Allow camera nodes to import their xforms into any AxisOp subclass:
+    if (!dynamic_cast<DD::Image::AxisOp*>(op))
         return; // shouldn't happen...
 
     const bool debug = args.getBool(Arg::Scene::read_debug, false);
-
     if (debug)
-        std::cout << "    FuserUsdCamera::importSceneOp('" << camera->node_name() << "')" << std::endl;
+        std::cout << "    FuserUsdCamera::importSceneOp('" << op->node_name() << "')" << std::endl;
+
+const bool allow_anim = true;
+
+    // Import the Xform data into the Axis_Knob:
+    FuserUsdXform::importSceneOp(op, args);
+
+    DD::Image::CameraOp* camera = dynamic_cast<DD::Image::CameraOp*>(op);
+    if (!camera)
+        return; // skip any camera-specific data if not a CameraOp
 
     Pxr::UsdPrim camera_prim = m_camera_schema.GetPrim();
 
@@ -207,14 +215,6 @@ FuserUsdCamera::importSceneOp(DD::Image::Op*     op,
 
     }
 #endif
-
-
-
-
-const bool allow_anim = true;
-
-    // Import the Xform data into the Axis_Knob:
-    FuserUsdXform::importSceneOp(op, args);
 
     //std::cout << "    FuserUsdCamera::importSceneOp('" << camera_prim.GetName() << "')" << std::endl;
 
@@ -413,13 +413,13 @@ const bool allow_anim = true;
             else if (name == Pxr::UsdGeomTokens->shutterOpen)
             {
                 // For now we don't bother with multiple time samples:
-                shutter_open = getPrimAttribDouble(attrib, Pxr::UsdTimeCode::Default());
+                shutter_open = getPrimAttribDouble(attrib, Pxr::UsdTimeCode::EarliestTime());
                 ++have_shutter_vars;
             }
             else if (name == Pxr::UsdGeomTokens->shutterClose)
             {
                 // For now we don't bother with multiple time samples:
-                shutter_close = getPrimAttribDouble(attrib, Pxr::UsdTimeCode::Default());
+                shutter_close = getPrimAttribDouble(attrib, Pxr::UsdTimeCode::EarliestTime());
                 ++have_shutter_vars;
             }
             else if (name == Pxr::UsdGeomTokens->visibility)
@@ -636,6 +636,43 @@ const bool allow_anim = true;
                 {
                     if (getBoolValue(iop->knob("sync_max_radius")))
                         copyAttribToKnob(attrib, allow_anim, iop->knob("max_radius"), -1/*view*/);
+                }
+                else if (name == "dofBlurShape")
+                {
+                    // Currently-supported CamDefocus shapes:
+                    //      'disc', 'bladed', 'square'
+                    if (getBoolValue(iop->knob("sync_disc_shape")))
+                    {
+                        Pxr::VtValue v; attrib.Get(&v, Pxr::UsdTimeCode::EarliestTime()/*random frame*/);
+                        const std::string blur_shape(v.Get<Pxr::TfToken>().GetString());
+                        if (!blur_shape.empty())
+                        {
+                            // TODO: put this in copyAttribToKnob():
+                            DD::Image::Knob* k = iop->knob("filter_type");
+                            if (k)
+                                k->set_text(blur_shape.c_str());
+                        }
+                    }
+                }
+                else if (name == "dofAspectRatio")
+                {
+                    if (getBoolValue(iop->knob("sync_disc_aspect")))
+                        copyAttribToKnob(attrib, allow_anim, iop->knob("aspect"), -1/*view*/);
+                }
+                else if (name == "dofBladeCount")
+                {
+                    if (getBoolValue(iop->knob("sync_blade_count")))
+                        copyAttribToKnob(attrib, allow_anim, iop->knob("blades"), -1/*view*/);
+                }
+                else if (name == "dofBladeRoundness")
+                {
+                    if (getBoolValue(iop->knob("sync_blade_roundness")))
+                        copyAttribToKnob(attrib, allow_anim, iop->knob("roundness"), -1/*view*/);
+                }
+                else if (name == "dofBladeRotation")
+                {
+                    if (getBoolValue(iop->knob("sync_blade_rotation")))
+                        copyAttribToKnob(attrib, allow_anim, iop->knob("rotation"), -1/*view*/);
                 }
             }
 

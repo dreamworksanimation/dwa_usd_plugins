@@ -184,19 +184,22 @@ void
 FuserUsdLight::importSceneOp(DD::Image::Op*     op,
                              const Fsr::ArgSet& args)
 {
-    DD::Image::LightOp* light = dynamic_cast<DD::Image::LightOp*>(op);
-    if (!light)
+    // Allow camera nodes to import their xforms into any AxisOp subclass:
+    if (!dynamic_cast<DD::Image::AxisOp*>(op))
         return; // shouldn't happen...
 
     const bool debug = args.getBool(Arg::Scene::read_debug, false);
-
     if (debug)
-        std::cout << "    FuserUsdLight::importSceneOp('" << light->node_name() << "')" << std::endl;
+        std::cout << "    FuserUsdLight::importSceneOp('" << op->node_name() << "')" << std::endl;
 
 const bool allow_anim = true;
 
     // Import the Xform data into the Axis_Knob:
     FuserUsdXform::importSceneOp(op, args);
+
+    DD::Image::LightOp* light = dynamic_cast<DD::Image::LightOp*>(op);
+    if (!light)
+        return; // skip any light-specific data if not a LightOp
 
     Pxr::UsdPrim light_prim = m_light_schema.GetPrim();
     //std::cout << "    FuserUsdLight::importSceneOp('" << light_prim.GetName() << "')" << std::endl;

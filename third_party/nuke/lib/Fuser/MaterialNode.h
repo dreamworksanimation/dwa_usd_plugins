@@ -29,7 +29,7 @@
 #ifndef Fuser_MaterialNode_h
 #define Fuser_MaterialNode_h
 
-#include "Node.h"
+#include "ShaderNode.h"
 
 
 namespace Fsr {
@@ -49,10 +49,12 @@ namespace Fsr {
     TODO: continue fleshing this concept out
 
 */
-class FSR_EXPORT MaterialNode : public Fsr::Node
+class FSR_EXPORT MaterialNode : public Fsr::ShaderNode
 {
   protected:
-    std::vector<std::string> m_outputs;
+    std::vector<ShaderNode*> m_surface_outputs;         //!< Surface shader outputs from various ShaderNode trees
+    std::vector<ShaderNode*> m_displacement_outputs;    //!< Displacement shader outputs from various ShaderNode trees
+    std::vector<ShaderNode*> m_volume_outputs;          //!< Volume shader outputs from various ShaderNode trees
 
 
   public:
@@ -69,6 +71,10 @@ class FSR_EXPORT MaterialNode : public Fsr::Node
     virtual ~MaterialNode();
 
 
+    // The list of output shader connections.
+    const std::vector<ShaderNode*>& surfaceOutputs()      const { return m_surface_outputs; }
+    const std::vector<ShaderNode*>& displacementOutputs() const { return m_displacement_outputs; }
+    const std::vector<ShaderNode*>& volumeOutputs()       const { return m_volume_outputs; }
 };
 
 

@@ -114,15 +114,36 @@ class ZPR_EXPORT Mesh : public Traceable,
 
 
     //!
-    Fsr::Vec3f getFaceShadingNormal(uint32_t          face,
-                                    uint32_t          subtri,
-                                    const Fsr::Vec2f& st,
-                                    uint32_t          motion_sample=0) const;
-    Fsr::Vec3f getMBFaceShadingNormal(uint32_t          face,
-                                      uint32_t          subtri,
-                                      const Fsr::Vec2f& st,
-                                      uint32_t          motion_step,
-                                      float             motion_step_t) const;
+    Fsr::Vec3f getFaceNormal(uint32_t          face,
+                             uint32_t          subtri,
+                             const Fsr::Vec2f& st,
+                             uint32_t          motion_sample=0) const;
+    void       getFaceNormal(uint32_t          face,
+                             uint32_t          subtri,
+                             const Fsr::Vec2f& st,
+                             const Fsr::Vec2f& Rxst,
+                             const Fsr::Vec2f& Ryst,
+                             uint32_t          motion_sample,
+                             Fsr::Vec3f&       Nst,
+                             Fsr::Vec3f&       NRxst,
+                             Fsr::Vec3f&       NRyst) const;
+
+    //!
+    Fsr::Vec3f getMBFaceNormal(uint32_t          face,
+                               uint32_t          subtri,
+                               const Fsr::Vec2f& st,
+                               uint32_t          motion_step,
+                               float             motion_step_t) const;
+    void       getMBFaceNormal(uint32_t          face,
+                               uint32_t          subtri,
+                               const Fsr::Vec2f& st,
+                               const Fsr::Vec2f& Rxst,
+                               const Fsr::Vec2f& Ryst,
+                               uint32_t          motion_step,
+                               float             motion_step_t,
+                               Fsr::Vec3f&       Nst,
+                               Fsr::Vec3f&       NRxst,
+                               Fsr::Vec3f&       NRyst) const;
 
     //!
     int setTriIntersection(uint32_t             face,
@@ -233,10 +254,10 @@ class ZPR_EXPORT Mesh : public Traceable,
                             Fsr::Vec3fList& face_PLs,
                             uint32_t        motion_sample=0) const;
 
-    //! Get all the shading normals for this face.
-    void getFaceShadingNormals(uint32_t        face,
-                               Fsr::Vec3fList& face_normals,
-                               uint32_t        motion_sample=0) const;
+    //! Get all the normals for this face.
+    void getFaceNormals(uint32_t        face,
+                        Fsr::Vec3fList& face_normals,
+                        uint32_t        motion_sample=0) const;
 
 
   public:
@@ -609,15 +630,15 @@ Mesh::getFacePointsLocal(uint32_t        face,
 }
 
 
-/*! Get all the shading normals for this face at once.  This is more efficient than
-    getting the shading normals for each vertex separately.
+/*! Get all the  normals for this face at once.  This is more efficient than
+    getting the normals for each vertex separately.
 
     TODO: test this out!
 */
 inline void
-Mesh::getFaceShadingNormals(uint32_t        face,
-                            Fsr::Vec3fList& face_normals,
-                            uint32_t        motion_sample) const
+Mesh::getFaceNormals(uint32_t        face,
+                     Fsr::Vec3fList& face_normals,
+                     uint32_t        motion_sample) const
 {
 #if DEBUG
     assert(motion_sample < m_motion_meshes.size());
@@ -698,10 +719,10 @@ Mesh::getBBoxLocal(uint32_t motion_sample) const
 
 //!
 inline Fsr::Vec3f
-Mesh::getFaceShadingNormal(uint32_t          face,
-                           uint32_t          subtri,
-                           const Fsr::Vec2f& st,
-                           uint32_t          motion_sample) const
+Mesh::getFaceNormal(uint32_t          face,
+                    uint32_t          subtri,
+                    const Fsr::Vec2f& st,
+                    uint32_t          motion_sample) const
 {
 #if DEBUG
     assert(motion_sample < (uint32_t)m_motion_meshes.size());
@@ -713,31 +734,56 @@ Mesh::getFaceShadingNormal(uint32_t          face,
         return getFaceGeometricNormal(face, motion_sample);
     }
 
-    const uint32_t* vp;
-    if (m_all_quads)
-        vp = &m_vert_indice_list[face*4];
-    else if (m_all_tris)
-        vp = &m_vert_indice_list[face*3];
-    else
-        vp = &m_vert_indice_list[m_vert_start_per_face[face]];
-
-    Fsr::Vec3f Ns = Fsr::interpolateAtBaryCoord(normals[vp[0       ]],
-                                                normals[vp[subtri+1]],
-                                                normals[vp[subtri+2]],
+    const uint32_t* vp = m_vert_indice_list.data() + getFaceVertStartIndex(face);
+    Fsr::Vec3f N = Fsr::interpolateAtBaryCoord(normals[vp[0       ]],
+                                               normals[vp[subtri+1]],
+                                               normals[vp[subtri+2]],
                                                 st);
-    Ns.fastNormalize();
-    return Ns;
+    N.fastNormalize();
+    return N;
 }
+inline void
+Mesh::getFaceNormal(uint32_t          face,
+                    uint32_t          subtri,
+                    const Fsr::Vec2f& st,
+                    const Fsr::Vec2f& Rxst,
+                    const Fsr::Vec2f& Ryst,
+                    uint32_t          motion_sample,
+                    Fsr::Vec3f&       Nst,
+                    Fsr::Vec3f&       NRxst,
+                    Fsr::Vec3f&       NRyst) const
+{
+#if DEBUG
+    assert(motion_sample < (uint32_t)m_motion_meshes.size());
+#endif
+    const Fsr::Vec3fList& normals = m_motion_meshes[motion_sample].N_list;
+    if (normals.size() == 0)
+    {
+        // No normals, get geometric normal instead:
+        Nst = getFaceGeometricNormal(face, motion_sample);
+        NRxst = NRyst = Nst;
+        return;
+    }
+
+    const uint32_t* vp = m_vert_indice_list.data() + getFaceVertStartIndex(face);
+    const Fsr::Vec3f& n0 = normals[vp[0       ]];
+    const Fsr::Vec3f& n1 = normals[vp[subtri+1]];
+    const Fsr::Vec3f& n2 = normals[vp[subtri+2]];
+    Nst   = Fsr::interpolateAtBaryCoord(n0, n1, n2, st  );   Nst.fastNormalize();
+    NRxst = Fsr::interpolateAtBaryCoord(n0, n1, n2, Rxst); NRxst.fastNormalize();
+    NRyst = Fsr::interpolateAtBaryCoord(n0, n1, n2, Ryst); NRyst.fastNormalize();
+}
+
 
 //!
 inline Fsr::Vec3f
-interpolateMBNormalAt(const Fsr::Vec3fList& normals0,
-                      const Fsr::Vec3fList& normals1,
-                      uint32_t              v0,
-                      uint32_t              v1,
-                      uint32_t              v2,
-                      float                 motion_step_t,
-                      const Fsr::Vec2f&     st)
+interpolateNormalAt(const Fsr::Vec3fList& normals0,
+                    const Fsr::Vec3fList& normals1,
+                    uint32_t              v0,
+                    uint32_t              v1,
+                    uint32_t              v2,
+                    float                 motion_step_t,
+                    const Fsr::Vec2f&     st)
 
 {
     const Fsr::Vec3f Ns0 = Fsr::interpolateAtBaryCoord(normals0[v0],
@@ -748,18 +794,18 @@ interpolateMBNormalAt(const Fsr::Vec3fList& normals0,
                                                        normals1[v1],
                                                        normals1[v2],
                                                        st);
-    Fsr::Vec3f Ns = Ns0.interpolateTo(Ns1, motion_step_t);
-    Ns.fastNormalize();
-    return Ns;
+    Fsr::Vec3f N = Ns0.interpolateTo(Ns1, motion_step_t);
+    N.fastNormalize();
+    return N;
 }
 
 //!
 inline Fsr::Vec3f
-Mesh::getMBFaceShadingNormal(uint32_t          face,
-                             uint32_t          subtri,
-                             const Fsr::Vec2f& st,
-                             uint32_t          motion_step,
-                             float             motion_step_t) const
+Mesh::getMBFaceNormal(uint32_t          face,
+                      uint32_t          subtri,
+                      const Fsr::Vec2f& st,
+                      uint32_t          motion_step,
+                      float             motion_step_t) const
 {
 #if DEBUG
     assert(motion_step < m_motion_meshes.size());
@@ -777,38 +823,47 @@ Mesh::getMBFaceShadingNormal(uint32_t          face,
         return Ng;
     }
 
-    if (m_all_quads)
+    const uint32_t* vp = m_vert_indice_list.data() + getFaceVertStartIndex(face);
+    return interpolateNormalAt(normals0, normals1, vp[0], vp[subtri+1], vp[subtri+2], motion_step_t,   st);
+}
+//!
+inline void
+Mesh::getMBFaceNormal(uint32_t          face,
+                      uint32_t          subtri,
+                      const Fsr::Vec2f& st,
+                      const Fsr::Vec2f& Rxst,
+                      const Fsr::Vec2f& Ryst,
+                      uint32_t          motion_step,
+                      float             motion_step_t,
+                      Fsr::Vec3f&       Nst,
+                      Fsr::Vec3f&       NRxst,
+                      Fsr::Vec3f&       NRyst) const
+{
+#if DEBUG
+    assert(motion_step < m_motion_meshes.size());
+    assert((motion_step+1) < m_motion_meshes.size());
+#endif
+    const Fsr::Vec3fList& normals0 = m_motion_meshes[motion_step  ].N_list;
+    const Fsr::Vec3fList& normals1 = m_motion_meshes[motion_step+1].N_list;
+    if (normals0.size() == 0)
     {
-        const uint32_t* vp = &m_vert_indice_list[face*4];
-        return interpolateMBNormalAt(normals0,
-                                     normals1,
-                                     vp[0       ],
-                                     vp[subtri+1],
-                                     vp[subtri+2],
-                                     motion_step_t,
-                                     st);
-    }
-    else if (m_all_tris)
-    {
-        const uint32_t* vp = &m_vert_indice_list[face*3];
-        return interpolateMBNormalAt(normals0,
-                                     normals1,
-                                     vp[0],
-                                     vp[1],
-                                     vp[2],
-                                     motion_step_t,
-                                     st);
+        // No normals, get geometric normal instead:
+        const Fsr::Vec3f Ng0 = getFaceGeometricNormal(face, motion_step  );
+        const Fsr::Vec3f Ng1 = getFaceGeometricNormal(face, motion_step+1);
+        Nst = Ng0.interpolateTo(Ng1, motion_step_t);
+        Nst.fastNormalize();
+        return;
     }
 
-    const uint32_t* vp = &m_vert_indice_list[m_vert_start_per_face[face]];
-    return interpolateMBNormalAt(normals0,
-                                 normals1,
-                                 vp[0       ],
-                                 vp[subtri+1],
-                                 vp[subtri+2],
-                                 motion_step_t,
-                                 st);
+    const uint32_t* vp = m_vert_indice_list.data() + getFaceVertStartIndex(face);
+    const uint32_t v0 = vp[0       ];
+    const uint32_t v1 = vp[subtri+1];
+    const uint32_t v2 = vp[subtri+2];
+    Nst   = interpolateNormalAt(normals0, normals1, v0, v1, v2, motion_step_t,   st);
+    NRxst = interpolateNormalAt(normals0, normals1, v0, v1, v2, motion_step_t, Rxst);
+    NRyst = interpolateNormalAt(normals0, normals1, v0, v1, v2, motion_step_t, Ryst);
 }
+
 
 //!
 inline int
@@ -826,9 +881,12 @@ Mesh::setTriIntersection(uint32_t             face,
     I.object_ref    = 1;        // one hit
     I.part_index    = face;     // the face index
     I.subpart_index = subtri;   // the subtriangle index
+    // TODO: switch to using interpolatAtBaryCoord for PW?
     I.PW            = I.PWg = stx.Rtx.getPositionAt(I.t); // I.t was set in intersectTriangle()
+    I.RxPW          = Fsr::interpolateAtBaryCoord(p0, p1, p2, I.Rxst) + m_P_offset;
+    I.RyPW          = Fsr::interpolateAtBaryCoord(p0, p1, p2, I.Ryst) + m_P_offset;
     I.Ng            = zpr::getTriGeometricNormal(p0, p1, p2);
-    I.Ns            = I.N = getFaceShadingNormal(face, subtri, I.st, motion_sample);
+    getFaceNormal(face, subtri, I.st, I.Rxst, I.Ryst, motion_sample, I.N, I.RxN, I.RyN);
 
     return Fsr::RAY_INTERSECT_POINT;
 }
@@ -850,12 +908,12 @@ Mesh::setMBTriIntersection(uint32_t             face,
     I.object_ref    = 1;        // one hit
     I.part_index    = face;     // the face index
     I.subpart_index = subtri;   // the subtriangle index
+    // TODO: switch to using interpolatAtBaryCoord for PW?
     I.PW            = I.PWg = stx.Rtx.getPositionAt(I.t); // I.t was set in intersectTriangle()
+    I.RxPW          = Fsr::interpolateAtBaryCoord(p0, p1, p2, I.Rxst) + m_P_offset;
+    I.RyPW          = Fsr::interpolateAtBaryCoord(p0, p1, p2, I.Ryst) + m_P_offset;
     I.Ng            = zpr::getTriGeometricNormal(p0, p1, p2);
-    I.Ns            = I.N = getMBFaceShadingNormal(face, subtri, I.st, motion_step, motion_step_t);
-
-    I.Rxst.set(0.0f, 0.0f);
-    I.Ryst.set(0.0f, 0.0f);
+    getMBFaceNormal(face, subtri, I.st, I.Rxst, I.Ryst, motion_step, motion_step_t, I.N, I.RxN, I.RyN);
 
     return Fsr::RAY_INTERSECT_POINT;
 }

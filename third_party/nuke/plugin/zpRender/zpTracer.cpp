@@ -31,7 +31,7 @@
 
 #include <zprender/RenderContext.h>
 #include <zprender/ThreadContext.h>
-#include <zprender/RayShader.h>
+#include <zprender/RayMaterial.h>
 #include <zprender/RayShaderContext.h>
 
 #include <Fuser/NukeGeoInterface.h> // for hasObjectAttrib(), hasObjectString(), etc.
@@ -253,7 +253,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
 
     //-----------------------------------------------------------------
     // These are the channels shaders must calculate:
-    DD::Image::ChannelSet shader_channels = rtx.scene_channels;//out_channels;
+    DD::Image::ChannelSet shader_channels = rtx.material_channels;//out_channels;
     // Shaders calcuate Z without needing the Z bit on in the mask
     // because color channels are mixed, but not Z channels.
     // Make sure Z channel is off for the shaders:
@@ -304,8 +304,11 @@ zpRender::tracerEngine(int y, int t, int x, int r,
     //-----------------------------------------------------------------
     // Are we outputing flat or deep data?
     // 
+#ifdef ENABLE_DEEP
     const bool flat_output_mode = (deep_out_plane == NULL);
-
+#else
+    const bool flat_output_mode = true;
+#endif
     if (flat_output_mode)
     {
         // Copy input row to output, and clear any
@@ -337,7 +340,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
         }
 
         // If this line is outside the rendering bbox bail quick:
-        if (y < DD::Image::Render::screen_bbox.y() || y >= DD::Image::Render::screen_bbox.t())
+        if (y < rtx.render_region.y() || y >= rtx.render_region.t())
             return true;
     }
 
@@ -345,7 +348,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
     assert(scene0); // Shouldn't be null!
 
     // Bail if scene has no objects, or lights in atmospheric mode...:
-    if (scene0->objects()==0 && (rtx.k_atmospherics_enabled && scene0->lights.size()==0))
+    if (scene0->objects()==0 && (rtx.atmospheric_lighting_enabled && scene0->lights.size()==0))
         return true;
 
     rtx.updateLightingScenes(scene0/*ref_scene*/, *thread_ctx);
@@ -515,6 +518,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
     assert(rtx.ray_cameras[0]);
     const RayCamera& rcam0 = *rtx.ray_cameras[0];
 
+#ifdef ENABLE_DEEP
     // x-r pixel loop:
     if (!flat_output_mode)
     {
@@ -522,11 +526,11 @@ zpRender::tracerEngine(int y, int t, int x, int r,
         *deep_out_plane = DD::Image::DeepOutputPlane(out_channels,
                                                      DD::Image::Box(x, y, r, t)/*, DD::Image::DeepPixel::eZAscending*/);
     }
-
-
+#endif
     DD::Image::ChannelSet deep_color_channels(rtx.render_channels);
     deep_color_channels -= DD::Image::Chan_Z;
     deep_color_channels -= DD::Image::Mask_Deep;
+
 
     // List and map of Pixels for all samples:
     Traceable::DeepIntersectionList deep_accum_list; // the accumulated list for the whole pixel
@@ -536,9 +540,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
     m_deep_static_intersection_list.reserve(20);
     Traceable::DeepIntersectionMap deep_intersection_map;
 
-    zpr::VolumeShader* ambient_volume = (rtx.k_atmospherics_enabled && rtx.k_direct_lighting_enabled) ?
-                                            &k_ambient_volume :
-                                                NULL;
+    zpr::VolumeShader* ambient_volume = rtx.atmospheric_lighting_enabled ? &k_ambient_volume : NULL;
 
     //-----------------------------------------------------------------
     // Pixel region loops
@@ -548,7 +550,8 @@ zpRender::tracerEngine(int y, int t, int x, int r,
     double     fRadius; // distance from nominal lens center to fUV, for perspective compensation
     for (int yy=y; yy < t; ++yy)
     {
-        if (yy < DD::Image::Render::screen_bbox.y() || yy >= DD::Image::Render::screen_bbox.t())
+        //std::cout << "y=" << yy << std::endl;
+        if (yy < rtx.render_region.y() || yy >= rtx.render_region.t())
         {
             // In deep mode fill the empty output line with holes:
             if (deep_out_plane)
@@ -566,7 +569,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
         {
             //std::cout << "y=" << yy << " x=" << xx << std::endl;
 
-            if (xx < DD::Image::Render::screen_bbox.x() || xx >= DD::Image::Render::screen_bbox.r())
+            if (xx < rtx.render_region.x() || xx >= rtx.render_region.r())
             {
                 // In deep mode fill empty output pixels with holes:
                 if (deep_out_plane)
@@ -894,7 +897,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                     // Interpolate LightContext vectors if lighting enabled:
                     // TODO: rework this to use Fuser Light classes
                     //
-                    if (rtx.k_direct_lighting_enabled)
+                    if (rtx.direct_lighting_enabled)
                     {
                         if (nShutterSteps > 0)
                         {
@@ -943,7 +946,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
 
                         //=========================================================
                         //=========================================================
-                        RayShader::getIllumination(stx, Rcolor, NULL/*deep_out*/);
+                        RayMaterial::getIllumination(stx, Rcolor, NULL/*deep_out*/);
                         //=========================================================
                         //=========================================================
 
@@ -970,7 +973,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                             }
 
                             // Light volume intersection depth is shoved into red channel:
-                            if (rtx.k_direct_lighting_enabled && rtx.k_atmospherics_enabled)
+                            if (rtx.atmospheric_lighting_enabled)
                             {
                                 level = rtx.lights_bvh.intersectLevel(stx, -1/*level*/, rtx.k_diagnostics_sample/*max_level*/);
                                 if (level >= 0)
@@ -993,7 +996,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                         //
                         // Final color for surfaces:
                         m_deep_intersection_list.clear();
-                        RayShader::getIllumination(stx, Rcolor, &m_deep_intersection_list);
+                        RayMaterial::getIllumination(stx, Rcolor, &m_deep_intersection_list);
 
                         // Collapse like-object shader fragments together:
                         const uint32_t nDeepIntersections = (uint32_t)m_deep_intersection_list.size();
@@ -1262,7 +1265,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                     //-----------------------------------------------------------------
                     // Add final color and Z to accumulators
                     //
-                    if (enable_pixel_filter)
+                    if (0)//(enable_pixel_filter)
                     {
                         // Multiply the final result by the pixel filter:
                         const float pfw = pf_weights[sample_index];
@@ -1409,7 +1412,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                             // Evaluate the surface shader and determine if it's transparent enough to
                             // continue tracing:
                             RayShaderContext stx_shade(stx);
-                            RayShader::updateShaderContextFromIntersection(tI, stx_shade);
+                            RayMaterial::updateShaderContextFromIntersection(tI, stx_shade);
 
                             // Having surface_color be black is essential to front-to-back
                             // under-ing because the Nuke legacy shaders are doing overs
@@ -1419,7 +1422,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
 
                             //------------------------------------------------
                             //------------------------------------------------
-                            RayShader::doShading(stx_shade, Rcolor/*surface_color*/);
+                            RayMaterial::doShading(stx_shade, Rcolor/*surface_color*/);
                             //------------------------------------------------
                             //------------------------------------------------
                         }
@@ -1451,7 +1454,6 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                 //
                 const float final_weight = (nSamples > 1) ? 1.0f/float(nSamples) : 1.0f;
                 coverage *= final_weight;
-
                 // Final color:
                 Raccum *= final_weight;
                 Raccum[k_coverage_chan] = coverage;

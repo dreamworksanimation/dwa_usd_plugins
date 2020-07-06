@@ -140,14 +140,37 @@ FuserUsdMesh::FuserUsdMesh(const Pxr::UsdStageRefPtr& stage,
 
         // Find material binding and create a child Fuser Node for it:
         //   ex.  'rel material:binding = </Root/Looks/dart_board_mat_inst>'
+        //
+        // Note that the bound prim may be outside the object's hierarchy which
+        // means it may be outside the initial stage mask!
+        // To check this we get the binding relationship and see if it's
+        // outside the 
+
 
         const Pxr::UsdShadeMaterialBindingAPI bindingAPI(usd_mesh);
         m_material_binding = bindingAPI.ComputeBoundMaterial();
-        if (m_material_binding)
+        if (!m_material_binding)
         {
-            // This Fuser Node takes responsibility for deleting the child pointer:
-            //const Pxr::UsdPrim mat_prim = stage->GetPrimAtPath(m_material_binding.GetPath());
-            //m_children.push_back(new FuserUsdShadeMaterialNode(stage, mat_prim, args, this));
+            const Pxr::UsdRelationship relation = mesh_prim.GetRelationship(Pxr::TfToken("material:binding"));
+            Pxr::SdfPathVector targets;
+            relation.GetTargets(&targets);
+            if (targets.size() > 0)
+            {
+                //stage->ExpandPopulationMask(std::function<bool (relation)>);
+                //{
+                //    static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock);
+                //    stage->ExpandPopulationMask();
+                //}
+
+                //m_material_binding = bindingAPI.ComputeBoundMaterial();
+
+                //if (!m_material_binding)
+                {
+                    std::cerr << "    FuserUsdMesh::ctor('" << mesh_prim.GetPath() << "'): ";
+                    std::cerr << "warning, material binding prim '" << targets[0].GetString() << "'";
+                    std::cerr << " cannot be resolved" << std::endl;
+                }
+            }
         }
 
         if (debug())
@@ -1337,6 +1360,7 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
     // around in memory as the GeometryList appends objects to it:
     Fsr::GeoInfoCacheRef geoinfo_cache;
     const int obj = geo_ctx.getObjectThreadSafe(scene_path, geoinfo_cache);
+
     if (obj < 0)
     {
         if (debug())
@@ -1556,18 +1580,27 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
         {
             // This Fuser Node takes responsibility for deleting the child pointer:
             const Pxr::UsdPrim mat_prim = getStage()->GetPrimAtPath(m_material_binding.GetPath());
-#if DEBUG
-            assert(mat_prim.IsValid());
-#endif
-            // The material creation args are slimmed down:
-            Fsr::ArgSet mat_args;
-            mat_args.setString(Arg::node_name,   mat_prim.GetName().GetString());
-            //mat_args.setString(Arg::node_path,   );
-            mat_args.setString(Arg::Scene::path, m_material_binding.GetPath().GetString());
-            if (getBool(Arg::NukeGeo::read_debug, false))
-                mat_args.setInt(Arg::node_debug, 1/*DEBUG_1*/);
+            if (mat_prim.IsValid())
+            {
+                // The material creation args are slimmed down:
+                Fsr::ArgSet mat_args;
+                mat_args.setString(Arg::node_name, mat_prim.GetName().GetString());
+                //mat_args.setString(Arg::node_path,   );
 
-            pmesh->addChild(new FuserUsdShadeMaterialNode(getStage(), mat_prim, mat_args, pmesh/*parent*/));
+                // Usd scene path:
+                mat_args.setString(Arg::Scene::path, m_material_binding.GetPath().GetString());
+                // Local Fsr node path:'fsr:node:path' is the mesh + child node path:
+                const std::string fsr_node_path = Fsr::buildPath(Fsr::Node::getPath(), mat_prim.GetName().GetString());
+                mat_args.setString(Arg::node_path, fsr_node_path);
+
+                // Local material binding path is the Fsr node path:
+                geo_ctx.setObjectStringThreadSafe(geoinfo_cache, "material:binding", fsr_node_path);
+
+                if (getBool(Arg::NukeGeo::read_debug, false))
+                    mat_args.setInt(Arg::node_debug, 1/*DEBUG_1*/);
+
+                pmesh->addChild(new FuserUsdShadeMaterialNode(getStage(), mat_prim, mat_args, pmesh/*parent*/));
+            }
         }
 
         //----------------------------------------------------------------------------------------

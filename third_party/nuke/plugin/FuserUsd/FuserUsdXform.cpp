@@ -251,9 +251,23 @@ FuserUsdXform::getConcatenatedXformOpTimeSamples(const Pxr::UsdPrim& prim,
 /*!
 */
 /*static*/ Fsr::Mat4d
+FuserUsdXform::getLocalMatrixAtPrim(const Pxr::UsdPrim&     prim,
+                                    const Pxr::UsdTimeCode& timecode)
+{
+    // Use the Xform cache system rather than direct xform access on the schema:
+    Pxr::UsdGeomXformCache xform_cache(timecode);
+    bool resets_xform_stack = false;
+    return Fsr::Mat4d(xform_cache.GetLocalTransformation(prim, &resets_xform_stack).GetArray());
+}
+
+
+/*!
+*/
+/*static*/ Fsr::Mat4d
 FuserUsdXform::getConcatenatedMatrixAtPrim(const Pxr::UsdPrim&     prim,
                                            const Pxr::UsdTimeCode& timecode)
 {
+    // Use the Xform cache system rather than direct xform access on the schema:
     Pxr::UsdGeomXformCache xform_cache(timecode);
     return Fsr::Mat4d(xform_cache.GetLocalToWorldTransform(prim).GetArray());
 }
@@ -382,7 +396,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
     if (!xform_prim.IsValid())
         return; // don't crash...
 
-    const bool debug    = args.getBool(Arg::Scene::read_debug, false);
+    const bool debug = args.getBool(Arg::Scene::read_debug, false);
     //
     const Fsr::XformOrder    decompose_xform_order =    (Fsr::XformOrder)args.getInt(Arg::Scene::decompose_xform_order, (int)Fsr::SRT_ORDER);
     const Fsr::RotationOrder decompose_rot_order   = (Fsr::RotationOrder)args.getInt(Arg::Scene::decompose_rot_order,   (int)Fsr::ZXY_ORDER);
@@ -391,7 +405,10 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
     const bool R_enable = args.getBool(Arg::Scene::R_enable, true);
     const bool S_enable = args.getBool(Arg::Scene::S_enable, true);
     const bool euler_filter_enable   = args.getBool(Arg::Scene::euler_filter_enable,   true);
-    const bool extract_parent_enable = args.getBool(Arg::Scene::parent_extract_enable, true);
+
+    const Pxr::UsdPrim parent_prim = xform_prim.GetParent();
+    const bool have_parent_xform = (parent_prim.IsA<Pxr::UsdGeomXformable>());
+    const bool extract_parent_enable = (have_parent_xform && args.getBool(Arg::Scene::parent_extract_enable, true));
 
     // This list gets filled in with the final transforms:
     AxisKnobValsList axis_vals_list;
@@ -406,9 +423,9 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
     DD::Image::Knob* kParentTranslate = op->knob("parent_translate");
     DD::Image::Knob* kParentRotate    = op->knob("parent_rotate"   );
     DD::Image::Knob* kParentScale     = op->knob("parent_scale"    );
-    bool parent_enabled = (extract_parent_enable &&
-                              kParentTranslate && kParentRotate && kParentScale &&
-                              canConcatenateTransform(xform_prim.GetParent()));
+    bool separate_parent_enabled = (extract_parent_enable &&
+                                    kParentTranslate && kParentRotate && kParentScale &&
+                                    canConcatenateTransform(xform_prim.GetParent()));
 
     if (debug)
     {
@@ -420,204 +437,163 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
         std::cout << ", R_enable=" << R_enable;
         std::cout << ", S_enable=" << S_enable;
         std::cout << ", euler_filter_enable=" << euler_filter_enable;
-        std::cout << ", extract_parent_enabled=" << parent_enabled;
+        std::cout << ", separate_parent_enabled=" << separate_parent_enabled;
         std::cout << std::endl;
     }
 
-    std::vector<double> times;
-    if (parent_enabled)
-    {
-        const Pxr::UsdPrim parent_prim = xform_prim.GetParent();
 
-        // Get the set of concatenated times from parent to local prim:
-        std::set<double> concat_times_set;
-        getConcatenatedXformOpTimeSamples(xform_prim, concat_times_set);
+    // Get unique set of concatenated times from top down to current prim:
+    std::set<double> concat_times;
+    getConcatenatedXformOpTimeSamples(xform_prim, concat_times);
+
+    // If no samples set to default time:
+    bool is_animated;
+    if (concat_times.size() == 0)
+    {
+        is_animated = false;
+        axis_vals_list.resize(1);
+        axis_vals_list[0].setToDefault(0.0);
+    }
+    else
+    {
+        is_animated = true;
+        axis_vals_list.resize(concat_times.size());
+        int j = 0;
+        for (std::set<double>::const_iterator it=concat_times.begin(); it != concat_times.end(); ++it, ++j)
+            axis_vals_list[j].setToDefault(*it);
+    }
+    //if (debug)
+    //    std::cout << "        times[" << times[0] << " - " << times[concat_times.size()-1] << "]" << std::endl;
+
+
+    // Handle parent-separate and parent-combined modes differently so we
+    // can handle local XformOps:
+    if (separate_parent_enabled)
+    {
+        //--------------------------------
+        // PARENT-SEPARATE MODE
+        //--------------------------------
 
         bool all_default_vals = true;
-        if (concat_times_set.size() > 0)
-        {
-            axis_vals_list.resize(concat_times_set.size());
-            times.resize(concat_times_set.size());
-            int j = 0;
-            for (std::set<double>::const_iterator it=concat_times_set.begin(); it != concat_times_set.end(); ++it, ++j)
-            {
-                const double the_time = *it;
-                times[j] = the_time;
 
-                AxisKnobVals& axis_vals = axis_vals_list[j];
-                axis_vals.setToDefault(the_time);
-                if (!axis_vals.extractFromMatrix(getConcatenatedMatrixAtPrim(parent_prim,
-                                                                             Pxr::UsdTimeCode(the_time)),
-                                                 T_enable, R_enable, false/*S_enable*/,
-                                                 Fsr::ZXY_ORDER,
-                                                 true/*apply_to_parent*/))
-                {
-                    std::cerr << "Unable to successfully decompose parent transform at USD prim <" << m_xformable_schema.GetPath().GetText() << ">" << std::endl;
-                    //TF_RUNTIME_ERROR("Unable to successfully decompose parent transform at USD prim <%s>", m_xformable_schema.GetPath().GetText());
-                    break;
-                }
-                axis_vals.parent_enable = true;
-                if (!axis_vals.isParentXformValsDefault())
-                    all_default_vals = false;
-
-            }
-            if (debug)
-                std::cout << "        times[" << times[0] << " - " << times[concat_times_set.size()-1] << "]" << std::endl;
-        }
-        else
+        // Extract the concat time samples and decompose to SRT down to parent prim:
+        int j = 0;
+        for (std::set<double>::const_iterator it=concat_times.begin(); it != concat_times.end(); ++it, ++j)
         {
-            // Get a uniform/constant transform:
-            axis_vals_list.resize(1);
-            AxisKnobVals& axis_vals = axis_vals_list[0];
-            axis_vals.setToDefault(0.0);
-            if (!axis_vals_list[0].extractFromMatrix(getConcatenatedMatrixAtPrim(parent_prim,
-                                                                                 Pxr::UsdTimeCode::Default()),
-                                                     T_enable, R_enable, false/*S_enable*/,
-                                                     Fsr::ZXY_ORDER,
-                                                     true/*apply_to_parent*/))
+            AxisKnobVals& axis_vals = axis_vals_list[j];
+
+            const Pxr::UsdTimeCode timecode = (is_animated) ?
+                                              Pxr::UsdTimeCode(axis_vals.time) :
+                                              Pxr::UsdTimeCode::Default();
+
+            if (!axis_vals.extractFromMatrix(getConcatenatedMatrixAtPrim(parent_prim, timecode),
+                                             T_enable, R_enable, S_enable,
+                                             Fsr::XYZ_ORDER,
+                                             true/*apply_to_parent*/))
             {
                 std::cerr << "Unable to successfully decompose parent transform at USD prim <" << m_xformable_schema.GetPath().GetText() << ">" << std::endl;
                 //TF_RUNTIME_ERROR("Unable to successfully decompose parent transform at USD prim <%s>", m_xformable_schema.GetPath().GetText());
+                break;
             }
             axis_vals.parent_enable = true;
             if (!axis_vals.isParentXformValsDefault())
                 all_default_vals = false;
+
         }
 
         // Disable parent extraction if there's no non-default keys:
         if (all_default_vals)
         {
-            parent_enabled = false;
             for (size_t j=0; j < axis_vals_list.size(); ++j)
                 axis_vals_list[j].parent_enable = false;
         }
 
-    }
-    else
-    {
-        // Just consider the local prim's xform sample times:
 
-        //m_xformable_schema.GetTimeSamplesInInterval(args.GetTimeInterval(), &times);
-        m_xformable_schema.GetTimeSamples(&times);
-        if (times.size() > 0)
+        //---------------------------------------------------------------------
+        // Figure out local XformOps - we can only do this if the
+        // local xform is separated from the parent hierarchy.
+        //
+        // If we fail to read XformOps with the correct names and orders,
+        // we'll fall back to grabbing the concatenated matrix and
+        // decompose it.
+        //
+        //---------------------------------------------------------------------
+
+        bool resets_xform_stack = false;
+        std::vector<Pxr::UsdGeomXformOp> xformops = m_xformable_schema.GetOrderedXformOps(&resets_xform_stack);
+
+        if (debug)
         {
-            axis_vals_list.resize(times.size());
-            for (size_t j=0; j < times.size(); ++j)
-                axis_vals_list[j].setToDefault(times[j]);
+            std::cout << "        xformOps[" << xformops.size() << "]: [";
+            for (size_t i=0; i < xformops.size(); ++i)
+            {
+                const Pxr::UsdGeomXformOp& xform_op = xformops[i];
+                std::cout << " " << i << ":'" << xform_op.GetName() << "'";
+            }
+            std::cout << " ]" << std::endl;
+        }
+
+
+        //---------------------------------------------------------------------
+        // TODO: we're punting on supporting more general XformOps for now
+        //       and just supporting decomposed matrices.
+        //---------------------------------------------------------------------
+#if 0
+        // Get XformOps.
+        // If there's only a single 'TypeTransform' (matrix4) Op then we can
+        // decompose it, otherwise attempt to map each transform type to the
+        // parts of a AxisKnobVals and build the transform & rotation orders.
+
+        // When we find ops, we match the ops by suffix ("" will define the basic
+        // translate, rotate, scale) and by order. If we find an op with a
+        // different name or out of order that will miss the match, we will rely on
+        // matrix decomposition
+
+        UsdMayaXformStack::OpClassList stackOps = \
+                UsdMayaXformStack::FirstMatchingSubstack(
+                        {
+                            &UsdMayaXformStack::MayaStack(),
+                            &UsdMayaXformStack::CommonStack()
+                        },
+                        xformops);
+
+        MFnDagNode MdagNode(mayaNode);
+
+        if (0/*!stackOps.empty()*/)
+        {
+            // make sure stackIndices.size() == xformops.size()
+            for (size_t i=0; i < stackOps.size(); ++i)
+            {
+                const Pxr::UsdGeomXformOp& xformop(xformops[i]);
+                const UsdMayaXformOpClassification& opDef(stackOps[i]);
+
+                // If we got a valid stack, we have both the members of the inverted twins..
+                // ...so we can go ahead and skip the inverted twin
+                if (opDef.IsInvertedTwin())
+                    continue;
+
+                const TfToken& opName(opDef.GetName());
+
+                _pushUSDXformOpToMayaXform(xformop, opName, MdagNode, args, context);
+            }
         }
         else
-        {
-            axis_vals_list.resize(1);
-            axis_vals_list[0].setToDefault(0.0);
-        }
-    }
-
-    const bool is_animated = (times.size() > 0);
-    const size_t nSamples = axis_vals_list.size();
-
-    //-------------------------------------------------
-    // Figure out local XformOps
-    //
-    // If we fail to read XformOps with the correct names and orders,
-    // we'll fall back to grabbing the concatenated matrix and
-    // decompose it.
-    //
-    //-------------------------------------------------
-
-    bool resets_xform_stack = false;
-    std::vector<Pxr::UsdGeomXformOp> xformops = m_xformable_schema.GetOrderedXformOps(&resets_xform_stack);
-
-    if (debug)
-    {
-        std::cout << "        xformOps[" << xformops.size() << "]: [";
-        for (size_t i=0; i < xformops.size(); ++i)
-        {
-            const Pxr::UsdGeomXformOp& xform_op = xformops[i];
-            std::cout << " " << i << ":'" << xform_op.GetName() << "'";
-        }
-        std::cout << " ]" << std::endl;
-    }
-
-#if 0
-    // TODO: we're punting on support more general XformOps for now
-    //       and just supporting decomposed matrices.
-    //
-    // Get XformOps.
-    // If there's only a single 'TypeTransform' (matrix4) Op then we can
-    // decompose it, otherwise attempt to map each transform type to the
-    // parts of a AxisKnobVals and build the transform & rotation orders.
-
-    // When we find ops, we match the ops by suffix ("" will define the basic
-    // translate, rotate, scale) and by order. If we find an op with a
-    // different name or out of order that will miss the match, we will rely on
-    // matrix decomposition
-
-    UsdMayaXformStack::OpClassList stackOps = \
-            UsdMayaXformStack::FirstMatchingSubstack(
-                    {
-                        &UsdMayaXformStack::MayaStack(),
-                        &UsdMayaXformStack::CommonStack()
-                    },
-                    xformops);
-
-    MFnDagNode MdagNode(mayaNode);
-
-    if (0/*!stackOps.empty()*/)
-    {
-        // make sure stackIndices.size() == xformops.size()
-        for (size_t i=0; i < stackOps.size(); ++i)
-        {
-            const Pxr::UsdGeomXformOp& xformop(xformops[i]);
-            const UsdMayaXformOpClassification& opDef(stackOps[i]);
-
-            // If we got a valid stack, we have both the members of the inverted twins..
-            // ...so we can go ahead and skip the inverted twin
-            if (opDef.IsInvertedTwin())
-                continue;
-
-            const TfToken& opName(opDef.GetName());
-
-            _pushUSDXformOpToMayaXform(xformop, opName, MdagNode, args, context);
-        }
-    }
-    else
 #endif
-    {
-        // No XformOps or only a 'TypeTransform' Op (matrix4), decompose it:
-
-        for (size_t j=0; j < nSamples; ++j)
         {
-            const double time = (is_animated) ? times[j] : 0.0;
-
-            bool resets_xform_stack = false;
-
-            AxisKnobVals& axis_vals = axis_vals_list[j];
-            axis_vals.xform_order = decompose_xform_order;
-            axis_vals.rot_order   = decompose_rot_order;
-
-            const Pxr::UsdTimeCode timecode = (is_animated) ?
-                                              Pxr::UsdTimeCode(time) :
-                                              Pxr::UsdTimeCode::Default();
-#if 1
-            // Use the Xform cache system rather than direct xform access on the schema:
-            Pxr::UsdGeomXformCache xform_cache(timecode);
-            Fsr::Mat4d local_xform;
-            if (parent_enabled)
-                local_xform = xform_cache.GetLocalTransformation(xform_prim, &resets_xform_stack).GetArray();
-            else
-                local_xform = xform_cache.GetLocalToWorldTransform(xform_prim).GetArray();
-            if (1)
-#else
-            if (m_xformable_schema.GetLocalTransformation(&l2w_xform,
-                                                          &resets_xform_stack,
-                                                          timecode))
-#endif
+            // Extract the local xform at each concat sample time and decompose to SRT:
+            const size_t nSamples = axis_vals_list.size();
+            for (size_t j=0; j < nSamples; ++j)
             {
-                //std::cout << "        time=" << axis_vals.time << std::endl;
-                //std::cout << " local_xform" << local_xform << std::endl;
+                AxisKnobVals& axis_vals = axis_vals_list[j];
 
-                // Decompose the matrix into AxisKnob-compatible values:
-                if (!axis_vals_list[j].extractFromMatrix(local_xform,
+                axis_vals.xform_order = decompose_xform_order;
+                axis_vals.rot_order   = decompose_rot_order;
+
+                const Pxr::UsdTimeCode timecode = (is_animated) ?
+                                                  Pxr::UsdTimeCode(axis_vals.time) :
+                                                  Pxr::UsdTimeCode::Default();
+
+                if (!axis_vals_list[j].extractFromMatrix(getLocalMatrixAtPrim(xform_prim, timecode),
                                                          T_enable, R_enable, S_enable,
                                                          decompose_rot_order,
                                                          false/*apply_to_parent*/))
@@ -626,37 +602,51 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
                     //TF_RUNTIME_ERROR("Unable to successfully decompose transform at USD prim <%s>", m_xformable_schema.GetPath().GetText());
                     break;
                 }
-
+                //std::cout << "      " << axis_vals.time;
+                //std::cout << " t" << axis_vals.translate << " r" << axis_vals.rotate << " s" << axis_vals.scaling;
+                //std::cout << std::endl;
             }
-            else
+
+        } // use Xform matrix
+
+    }
+    else
+    {
+        //--------------------------------
+        // PARENT-CONCATENATED MODE
+        //--------------------------------
+
+        // Extract the samples and decompose to SRT:
+        const size_t nSamples = axis_vals_list.size();
+        for (size_t j=0; j < nSamples; ++j)
+        {
+            AxisKnobVals& axis_vals = axis_vals_list[j];
+
+            axis_vals.xform_order = decompose_xform_order;
+            axis_vals.rot_order   = decompose_rot_order;
+
+            const Pxr::UsdTimeCode timecode = (is_animated) ?
+                                              Pxr::UsdTimeCode(axis_vals.time) :
+                                              Pxr::UsdTimeCode::Default();
+
+            if (!axis_vals_list[j].extractFromMatrix(getConcatenatedMatrixAtPrim(parent_prim, timecode),
+                                                     T_enable, R_enable, S_enable,
+                                                     decompose_rot_order,
+                                                     false/*apply_to_parent*/))
             {
-                std::cerr << "Missing sampled xform data on USD prim <" << m_xformable_schema.GetPath().GetText() << ">" << std::endl;
-                //TF_RUNTIME_ERROR("Missing sampled xform data on USD prim <%s>", m_xformable_schema.GetPath().GetText());
+                std::cerr << "Unable to successfully decompose transform at USD prim <" << m_xformable_schema.GetPath().GetText() << ">" << std::endl;
+                //TF_RUNTIME_ERROR("Unable to successfully decompose transform at USD prim <%s>", m_xformable_schema.GetPath().GetText());
                 break;
             }
-
             //std::cout << "      " << axis_vals.time;
-            //std::cout << " t" << axis_vals.translate;
-            //std::cout << " r" << axis_vals.rotate;
-            //std::cout << " s" << axis_vals.scaling;
+            //std::cout << " t" << axis_vals.translate << " r" << axis_vals.rotate << " s" << axis_vals.scaling;
             //std::cout << std::endl;
         }
-
-        // Apply euler filter to final decomposed rotations:
-        if (euler_filter_enable)
-            AxisKnobVals::applyEulerFilter(decompose_rot_order, axis_vals_list);
-
-    } // use Xform matrix
-
-
-    if (resets_xform_stack)
-    {
-        // TODO: do we need to handle this?
-        std::cout << "    resets_xform_stack=1" << std::endl;
-        //MPlug plg = MdagNode.findPlug("inheritsTransform");
-        //if (!plg.isNull())
-        //    plg.setBool(false);
     }
+
+    // Apply euler filter to final decomposed rotations:
+    if (euler_filter_enable)
+        AxisKnobVals::applyEulerFilter(decompose_rot_order, axis_vals_list);
 
     // Stores all the AxisKnob entries in the AxisOp transform knobs:
     AxisKnobVals::store(op, axis_vals_list);

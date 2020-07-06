@@ -43,6 +43,13 @@
 
 #  include <pxr/usd/ar/resolver.h>
 
+#  include <pxr/usd/kind/registry.h>
+
+#  include <pxr/usd/usd/primRange.h>
+#  include <pxr/usd/usd/modelAPI.h>
+
+#  include <pxr/usd/usdGeom/mesh.h>
+
 #  include <pxr/usd/usdShade/material.h>
 
 #  pragma GCC diagnostic pop
@@ -558,11 +565,63 @@ class StageOpenRequest : public Pxr::UsdStageCacheRequest
         // TODO: do we need to be able to switch between the two modes?
         if (1)
         {
-            return Pxr::UsdStage::OpenMasked(m_root_layer,
-                                             Pxr::TfNullPtr,//m_session_layer,
-                                             m_path_resolver_ctx,
-                                             m_populate_mask,
-                                             m_initial_load_set);
+            Pxr::UsdStageRefPtr stage;
+            stage = Pxr::UsdStage::OpenMasked(m_root_layer,
+                                              Pxr::TfNullPtr,//m_session_layer,
+                                              m_path_resolver_ctx,
+                                              m_populate_mask,
+                                              m_initial_load_set);
+#if DEBUG
+            assert(stage);
+#endif
+            //std::cout << "populate=[ " << stage->GetPopulationMask() << " ]" << std::endl;
+
+            if (!m_populate_mask.IsEmpty())
+            {
+                // ExpandPopulationMask() searches for all relationships and includes
+                // any targets in the mask.
+                // However this can be very expensive, so we use a more targeted
+                // version that tests for explicitly-desired relationship types,
+                // like materials and instances:
+                //stage->ExpandPopulationMask();
+
+                bool added_to_mask = false;
+
+                Pxr::UsdPrimRange range = stage->Traverse();
+
+                // Find and expand all Meshes with material relationships.
+                // TODO: check for instances?
+                {
+                    for (Pxr::UsdPrimRange::iterator it=range.begin(); it != range.end(); ++it)
+                    {
+                        if (it->IsA<Pxr::UsdGeomMesh>())
+                        {
+                            //std::cout << "  mesh path '" << it->GetPath() << "'" << std::endl;
+                            const Pxr::UsdRelationship mat_rel = it->GetRelationship(Pxr::TfToken("material:binding"));
+                            Pxr::SdfPathVector targets;
+                            mat_rel.GetTargets(&targets);
+                            for (size_t i=0; i < targets.size(); ++i)
+                            {
+                                //std::cout << "    '" << targets[i].GetString() << "'" << std::endl;
+                                m_populate_mask.Add(targets[i]);
+                            }
+                            added_to_mask = true;
+
+                            it.PruneChildren(); // skip children
+                        }
+                        else if (it->IsA<Pxr::UsdShadeMaterial>())
+                            it.PruneChildren(); // skip shader children
+                    }
+                }
+
+                // SetPopulationMask() will recompose the stage making the additional
+                // prims available:
+                if (added_to_mask)
+                    stage->SetPopulationMask(m_populate_mask);
+            }
+
+            return stage;
+
         }
         else
         {
@@ -571,6 +630,7 @@ class StageOpenRequest : public Pxr::UsdStageCacheRequest
                                        m_path_resolver_ctx,
                                        m_initial_load_set);
         }
+
     }
 
 };

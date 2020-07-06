@@ -33,9 +33,20 @@
 #include <zprender/SurfaceHandler.h>
 #include <zprender/ConeVolume.h>
 #include <zprender/SphereVolume.h>
+#include <zprender/VolumeMaterialOp.h>
 
 
 namespace zpr {
+
+
+class AmbientVolumeShader : public VolumeMaterialOp
+{
+  public:
+    AmbientVolumeShader() {}
+
+    //! Allocate and return a RayShader object. Calling object takes ownership of pointer.
+    /*virtual*/ VolumeShader* createShader(const RenderContext& rtx) { return NULL; }
+};
 
 
 /*!

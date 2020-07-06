@@ -73,7 +73,7 @@ class FSR_EXPORT Box3
     /*---------------------------*/
     /*       Constructors        */
     /*---------------------------*/
-    //! Default ctor makes an empty-state bbox where min=infinity & max=-infinity
+    //! Default ctor makes an empty-state bbox where min=<T>max() & max=-<T>max()
     Box3();
 
     //! Copy constructor
@@ -148,13 +148,13 @@ class FSR_EXPORT Box3
 
     Box3<T>& operator =  (const DD::Image::Box3& b);
 
-    //! Sets box to empty state where min=infinity & max=-infinity.
+    //! Sets box to empty state where min=<T>max() & max=-<T>max().
     void setToEmptyState();
 
-    //! Return true if the box is in an empty state (min=infinity & max=-infinity.)
+    //! Return true if the box is in an empty state (min=<T>max() & max=-<T>max().)
     bool isEmpty() const;
 
-    //! Type-specific clear. Sets box to empty state where min=infinity & max=-infinity.
+    //! Type-specific clear. Sets box to empty state where min=<T>max() & max=-<T>max().
     void clear() { setToEmptyState(); }
 
     //! Copy from/to a DD::Image::Box3
@@ -334,8 +334,8 @@ inline std::ostream& operator << (std::ostream& o, const Box3<T>& b)
 template<typename T>
 inline
 Box3<T>::Box3() :
-    min( std::numeric_limits<T>::infinity()),
-    max(-std::numeric_limits<T>::infinity())
+    min( std::numeric_limits<T>::max()),
+    max(-std::numeric_limits<T>::max())
 {
     //
 }
@@ -344,8 +344,8 @@ template<typename T>
 inline void
 Box3<T>::setToEmptyState()
 {
-    this->min.set( std::numeric_limits<T>::infinity());
-    this->max.set(-std::numeric_limits<T>::infinity());
+    this->min.set( std::numeric_limits<T>::max());
+    this->max.set(-std::numeric_limits<T>::max());
 }
 
 template<typename T>

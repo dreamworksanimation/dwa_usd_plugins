@@ -42,6 +42,8 @@
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
 
+#  include <pxr/usd/usd/modelAPI.h>
+
 #  include <pxr/usd/usdGeom/scope.h>
 #  include <pxr/usd/usdGeom/xform.h>
 #  include <pxr/usd/usdGeom/camera.h>
@@ -175,9 +177,19 @@ static void findXformNodes(const Pxr::UsdPrim&                       prim,
 #endif
     {
         std::cout << "    node'" << child->GetPath() << "'[" << child->GetTypeName() << "]";
+#if PXR_MAJOR_VERSION == 0 && PXR_MINOR_VERSION < 20
         Pxr::SdfPrimSpecHandle spec = child->GetPrimDefinition();
         if (spec)
             std::cout << ", Kind='" << spec->GetKind() << "'";
+#else
+        // Have to get the 'Kind' token through the UsdModelAPI interface:
+        {
+            const Pxr::UsdModelAPI modelAPI(*child);
+            Pxr::TfToken kind;
+            if (modelAPI.GetKind(&kind))
+                std::cout << ", Kind='" << kind << "'";
+        }
+#endif
         std::cout << ", IsAbstract=" << child->IsAbstract();
         //std::cout << ", isModel=" << child->IsModel();
         //std::cout << ", isCamera=" << child->IsA<Pxr::UsdGeomCamera>();
