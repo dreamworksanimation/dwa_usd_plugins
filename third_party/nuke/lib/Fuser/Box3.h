@@ -493,9 +493,12 @@ Box3<T>::expand(const Vec3<T>& p,
     else
     {
 #if 1
-        if (p.x < this->min.x) this->min.x = p.x; if (p.x > this->max.x) this->max.x = p.x;
-        if (p.y < this->min.y) this->min.y = p.y; if (p.y > this->max.y) this->max.y = p.y;
-        if (p.z < this->min.z) this->min.z = p.z; if (p.z > this->max.z) this->max.z = p.z;
+        if (p.x < this->min.x) this->min.x = p.x;
+        if (p.x > this->max.x) this->max.x = p.x;
+        if (p.y < this->min.y) this->min.y = p.y;
+        if (p.y > this->max.y) this->max.y = p.y;
+        if (p.z < this->min.z) this->min.z = p.z;
+        if (p.z > this->max.z) this->max.z = p.z;
 #else
         this->min.x = std::min(this->min.x, p.x); this->max.x = std::max(this->max.x, p.x);
         this->min.y = std::min(this->min.y, p.y); this->max.y = std::max(this->max.y, p.y);

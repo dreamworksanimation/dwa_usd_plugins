@@ -117,6 +117,8 @@ class FSR_EXPORT Vec3
     T*       array()       { return &x; }
     const T* array() const { return &x; }
 
+    Vec2<T>  xy()  const { return Vec2<T>(x, y); }
+
 
     /*---------------------------*/
     /*         Assignment        */

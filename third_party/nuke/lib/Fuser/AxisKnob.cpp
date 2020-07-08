@@ -266,7 +266,9 @@ AxisKnobVals::getValsAt(const DD::Image::Op*            op,
     //
     k = op->knob("useMatrix"    ); if (k)   getBoolKnob(k, context, use_matrix   ); else use_matrix = false;
     if (use_matrix)
+    {
         k = op->knob("matrix"   ); if (k) getMat4Knob(k, context, matrix         ); else matrix.setToIdentity();
+    }
     //
     if (parent_enable)
     {

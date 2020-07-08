@@ -415,8 +415,10 @@ Box2<T>::expand(const Vec2<T>& p,
     else
     {
 #if 1
-        if (p.x < this->min.x) this->min.x = p.x; if (p.x > this->max.x) this->max.x = p.x;
-        if (p.y < this->min.y) this->min.y = p.y; if (p.y > this->max.y) this->max.y = p.y;
+        if (p.x < this->min.x) this->min.x = p.x;
+        if (p.x > this->max.x) this->max.x = p.x;
+        if (p.y < this->min.y) this->min.y = p.y;
+        if (p.y > this->max.y) this->max.y = p.y;
 #else
         this->min.x = std::min(this->min.x, p.x); this->max.x = std::max(this->max.x, p.x);
         this->min.y = std::min(this->min.y, p.y); this->max.y = std::max(this->max.y, p.y);

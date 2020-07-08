@@ -629,7 +629,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
                                               Pxr::UsdTimeCode(axis_vals.time) :
                                               Pxr::UsdTimeCode::Default();
 
-            if (!axis_vals_list[j].extractFromMatrix(getConcatenatedMatrixAtPrim(parent_prim, timecode),
+            if (!axis_vals_list[j].extractFromMatrix(getConcatenatedMatrixAtPrim(xform_prim, timecode),
                                                      T_enable, R_enable, S_enable,
                                                      decompose_rot_order,
                                                      false/*apply_to_parent*/))
