@@ -886,7 +886,8 @@ Mesh::setTriIntersection(uint32_t             face,
     I.RxPW          = Fsr::interpolateAtBaryCoord(p0, p1, p2, I.Rxst) + m_P_offset;
     I.RyPW          = Fsr::interpolateAtBaryCoord(p0, p1, p2, I.Ryst) + m_P_offset;
     I.Ng            = zpr::getTriGeometricNormal(p0, p1, p2);
-    getFaceNormal(face, subtri, I.st, I.Rxst, I.Ryst, motion_sample, I.N, I.RxN, I.RyN);
+    getFaceNormal(face, subtri, I.st, I.Rxst, I.Ryst, motion_sample, I.Ni, I.RxN, I.RyN);
+    I.N = I.Ni;
 
     return Fsr::RAY_INTERSECT_POINT;
 }
@@ -913,7 +914,8 @@ Mesh::setMBTriIntersection(uint32_t             face,
     I.RxPW          = Fsr::interpolateAtBaryCoord(p0, p1, p2, I.Rxst) + m_P_offset;
     I.RyPW          = Fsr::interpolateAtBaryCoord(p0, p1, p2, I.Ryst) + m_P_offset;
     I.Ng            = zpr::getTriGeometricNormal(p0, p1, p2);
-    getMBFaceNormal(face, subtri, I.st, I.Rxst, I.Ryst, motion_step, motion_step_t, I.N, I.RxN, I.RyN);
+    getMBFaceNormal(face, subtri, I.st, I.Rxst, I.Ryst, motion_step, motion_step_t, I.Ni, I.RxN, I.RyN);
+    I.N = I.Ni;
 
     return Fsr::RAY_INTERSECT_POINT;
 }

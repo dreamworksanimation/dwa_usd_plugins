@@ -344,10 +344,11 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
         if (!input_binding)
             continue; // skip any null bindings
 
-        const RayShader::InputKnob& k_input = output_shader->getInputKnob(input);
+        const RayShader::InputKnob* k_input = output_shader->getInputKnob(input);
+        assert(k_input);
 
         //std::cout << "    '" << output_shader_name << "': input=" << input << ", binding" << *input_binding;
-        //std::cout << ", knob type=" << k_input.type << std::endl;
+        //std::cout << ", knob " << *k_input << std::endl;
         /*
             const char* name;           //!<
             KnobType    type;           //!<
@@ -355,12 +356,12 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
             RayShader*  shader;         //!< Non-NULL if knob is bound to another RayShader's output
             int32_t     output_index;   //!< Output index of another RayShader
         */
-        if (k_input.type == RayShader::PIXEL_KNOB)
+        if (k_input->type == RayShader::PIXEL_KNOB)
         {
             // Try to connect the input channel set to the input binding.
             // If the binding has an object pointer then it's attached to another
             // object, usually an Op, so handle those.
-            //std::cout << "    '" << output_shader_name << "': input#" << input << " binding=" << input_binding << *input_binding << std::endl;
+            //std::cout << "    '" << output_shader_name << "': input#" << input << " PIXEL_KNOB binding=" << input_binding << *input_binding << std::endl;
             if (input_binding->isSurfaceMaterialOp())
             {
                 SurfaceMaterialOp* input_material = input_binding->asSurfaceMaterialOp();
@@ -370,8 +371,8 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
 
                 if (input_shader)
                 {
-                    //const RayShader::OutputKnob& k_input_shader_output = input_shader->getOutputKnob(0);
-                    //std::cout << "      '" << output_shader_name << "': connect input '" << k_input.name << "' to input shader's output '" << k_input_shader_output.name << "'" << std::endl;
+                    //const RayShader::OutputKnob* k_input_shader_output = input_shader->getOutputKnob(0);
+                    //std::cout << "      '" << output_shader_name << "': connect input '" << k_input->name << "' to input shader's output '" << k_input_shader_output->name << "'" << std::endl;
 
                     if (output_shader->connectInput(input, input_shader, "surface"/*output_name*/))
                     {
@@ -389,7 +390,7 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
                         *input_binding = InputBinding();
                     }
 
-                    if (k_input.data != NULL)
+                    if (k_input->data != NULL)
                     {
                         std::stringstream chan_text;
                         chan_text << input_material->channels();
@@ -399,6 +400,10 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
                 else
                 {
                     //std::cout << "      cannot connect, no input shader to connect to!" << std::endl;
+                    std::cerr << node_name() << "::createSurfaceShaders()";
+                    std::cerr << " warning cannot connect input '" << k_input->name << "'";
+                    std::cerr << ", no shader to connect to.";
+                    std::cerr << std::endl;
                     output_shader->setInputValue(input, "");
                 }
 
@@ -410,8 +415,16 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
                 //std::cout << "    '" << output_shader_name << "': input#" << input << " TEXTURE" << std::endl;
 
                 // Change this to a RayShader::create() call:
+#if 0
+                RayShader* input_shader = RayShader::create("IopUVTexture");
+                assert(input_shader); // shouldn't happen...
+                RayShader::InputKnob* k = input_shader->knob("iop");
+                assert(k); // shouldn't happen...
+                k->setPointer(input_iop);
+#else
                 RayShader* input_shader = new zprIopUVTexture(input_iop);
                 assert(input_shader); // shouldn't happen...
+#endif
 
                 std::string input_shader_name(input_iop->node_name());
                 input_shader_name += "_shader";
@@ -422,7 +435,7 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
 
                 output_shader->connectInput(input, input_shader, "rgba"/*output_name*/);
 
-                if (k_input.data != NULL)
+                if (k_input->data != NULL)
                 {
                     std::stringstream chan_text;
                     chan_text << input_iop->channels();

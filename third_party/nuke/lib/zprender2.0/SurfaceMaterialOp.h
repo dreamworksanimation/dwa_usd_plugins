@@ -91,7 +91,7 @@ class ZPR_EXPORT SurfaceMaterialOp : public DD::Image::Material
         so we can test for this knob instead and then static_cast the
         pointer to SurfaceMaterialOp*.
 
-        Atm if this knob doesn't exist then the _evaluate*() methods will
+        Atm if this knob doesn't exist then the evaluate*() methods will
         not be called since the node will not be recognized as a SurfaceMaterialOp!
     */
     void addSurfaceMaterialOpIdKnob(DD::Image::Knob_Callback f);

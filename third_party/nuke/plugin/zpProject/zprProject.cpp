@@ -40,7 +40,7 @@ namespace zpr {
 
 
 static RayShader* shaderBuilder() { return new zprProject(); }
-/*static*/ const RayShader::ShaderDescription zprProject::description("zprProject", shaderBuilder);
+/*static*/ const RayShader::ShaderDescription zprProject::description("Project", shaderBuilder);
 /*static*/ const RayShader::InputKnobList zprProject::input_defs =
 {
     {InputKnob("bg",       PIXEL_KNOB)}, // BG0
@@ -52,10 +52,10 @@ static RayShader* shaderBuilder() { return new zprProject(); }
     {OutputKnob("surface", PIXEL_KNOB )},
     {OutputKnob("rgba",    COLOR4_KNOB)},
     {OutputKnob("rgb",     COLOR3_KNOB)},
-    {OutputKnob("r",       DOUBLE_KNOB)},
-    {OutputKnob("g",       DOUBLE_KNOB)},
-    {OutputKnob("b",       DOUBLE_KNOB)},
-    {OutputKnob("a",       DOUBLE_KNOB)},
+    {OutputKnob("r",       FLOAT_KNOB )},
+    {OutputKnob("g",       FLOAT_KNOB )},
+    {OutputKnob("b",       FLOAT_KNOB )},
+    {OutputKnob("a",       FLOAT_KNOB )},
 };
 
 
@@ -267,8 +267,8 @@ zprProject::evaluateSurface(RayShaderContext& stx,
     //std::cout << "zprProject::evaluateSurface() [" << stx.x << " " << stx.y << "]" << std::endl;
 
     // Let the background get shaded first.
-    if (getInput(BG0))
-        getInput(BG0)->evaluateSurface(stx, out);
+    if (getInputShader(BG0))
+        getInputShader(BG0)->evaluateSurface(stx, out);
     else
         out.rgba().set(0.0f, 0.0f, 0.0f, 1.0f);
 
@@ -332,7 +332,7 @@ zprProject::evaluateSurface(RayShaderContext& stx,
     {
         // Don't project on surfaces facing away from projection camera:
         const Fsr::Vec3d Vp = (Fsr::Vec3d(locals.m_proj_cam->matrix().translation()) - stx.PW);
-        const double Vp_dot_N = Vp.dot(stx.Ns);
+        const double Vp_dot_N = Vp.dot(stx.Ni);
         if ((inputs.k_faces_mode == FACES_FRONT && Vp_dot_N < 0.0f) || 
             (inputs.k_faces_mode == FACES_BACK  && Vp_dot_N > 0.0f))
         {

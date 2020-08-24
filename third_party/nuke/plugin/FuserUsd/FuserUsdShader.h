@@ -35,16 +35,18 @@
 #include <Fuser/MaterialNode.h>
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
-#  include <pxr/usd/usdShade/shader.h>
-#  include <pxr/usd/usdShade/nodeGraph.h>
-#  include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/shader.h>
+#include <pxr/usd/usdShade/nodeGraph.h>
+#include <pxr/usd/usdShade/material.h>
 
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
 
@@ -80,7 +82,7 @@ class FuserUsdShadeShaderNode : public FuserUsdNode,
 
 
     //! Called before execution to allow node to update local data from args.
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real);
 
 
@@ -120,7 +122,7 @@ class FuserUsdShadeNodeGraphNode : public FuserUsdNode,
 
 
     //! Called before execution to allow node to update local data from args.
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real);
 
 
@@ -158,7 +160,7 @@ class FuserUsdShadeMaterialNode : public FuserUsdShadeNodeGraphNode
                               Fsr::Node*                 parent);
 
     //! Called before execution to allow node to update local data from args.
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real);
 
 

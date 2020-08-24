@@ -28,7 +28,9 @@
 
 
 #include "zprPreviewSurface.h"
+#include "RenderContext.h"
 #include "ThreadContext.h"
+#include "LightShader.h"
 
 /*  UsdPreviewSurface
 
@@ -112,23 +114,23 @@ namespace zpr {
 
 
 static RayShader* shaderBuilder() { return new zprPreviewSurface(); }
-/*static*/ const RayShader::ShaderDescription zprPreviewSurface::description("zprPreviewSurface", shaderBuilder);
+/*static*/ const RayShader::ShaderDescription zprPreviewSurface::description("PreviewSurface", shaderBuilder);
 /*static*/ const RayShader::InputKnobList zprPreviewSurface::input_defs =
 {
-    {InputKnob("diffuseColor",        COLOR3_KNOB)},
-    {InputKnob("emissiveColor",       COLOR3_KNOB)},
-    {InputKnob("useSpecularWorkflow", INT_KNOB   )},
-    {InputKnob("specularColor",       COLOR3_KNOB)},
-    {InputKnob("metallic",            DOUBLE_KNOB)},
-    {InputKnob("roughness",           DOUBLE_KNOB)},
-    {InputKnob("clearcoat",           DOUBLE_KNOB)},
-    {InputKnob("clearcoatRoughness",  DOUBLE_KNOB)},
-    {InputKnob("opacity",             DOUBLE_KNOB)},
-    {InputKnob("opacityThreshold",    DOUBLE_KNOB)},
-    {InputKnob("ior",                 DOUBLE_KNOB)},
-    {InputKnob("normal",              COLOR3_KNOB)},
-    {InputKnob("displacement",        DOUBLE_KNOB)},
-    {InputKnob("occlusion",           DOUBLE_KNOB)},
+    {InputKnob("diffuseColor",        COLOR3_KNOB, "0.18 0.18 0.18")},
+    {InputKnob("emissiveColor",       COLOR3_KNOB, "0 0 0"         )},
+    {InputKnob("useSpecularWorkflow", INT_KNOB,    "0"             )},
+    {InputKnob("specularColor",       COLOR3_KNOB, "0 0 0"         )},
+    {InputKnob("metallic",            FLOAT_KNOB,  "0"             )},
+    {InputKnob("roughness",           FLOAT_KNOB,  "0.5"           )},
+    {InputKnob("clearcoat",           FLOAT_KNOB,  "0"             )},
+    {InputKnob("clearcoatRoughness",  FLOAT_KNOB,  "0.01"          )},
+    {InputKnob("opacity",             FLOAT_KNOB,  "1"             )},
+    {InputKnob("opacityThreshold",    FLOAT_KNOB,  "0"             )},
+    {InputKnob("ior",                 FLOAT_KNOB,  "1.5"           )},
+    {InputKnob("normal",              COLOR3_KNOB, "0 0 1"         )},
+    {InputKnob("displacement",        FLOAT_KNOB,  "0"             )},
+    {InputKnob("occlusion",           FLOAT_KNOB,  "1"             )},
 };
 /*static*/ const RayShader::OutputKnobList zprPreviewSurface::output_defs =
 {
@@ -137,49 +139,29 @@ static RayShader* shaderBuilder() { return new zprPreviewSurface(); }
 };
 
 
-//!
-zprPreviewSurface::InputParams::InputParams()
-{
-    k_diffuseColor.set(0.18, 0.18, 0.18);
-    k_emissiveColor.set(0.0, 0.0, 0.0);
-    k_useSpecularWorkflow = 0;
-    k_specularColor.set(0.0, 0.0, 0.0);
-    k_metallic            = 0.0;
-    k_roughness           = 0.5;
-    k_clearcoat           = 0.0;
-    k_clearcoatRoughness  = 0.01;
-    k_opacity             = 1.0;
-    k_opacityThreshold    = 0.0;
-    k_ior                 = 1.5;
-    k_normal.set(0.0, 0.0, 1.0);
-    k_displacement        = 0.0;
-    k_occlusion           = 1.0;
-}
-
-
 /*!
 */
 zprPreviewSurface::zprPreviewSurface() :
     RayShader(input_defs, output_defs)
 {
     //std::cout << "zprPreviewSurface::ctor(" << this << ")" << std::endl;
-    assert(m_inputs.size() == input_defs.size());
 
     // Point the knobs to their values:
-    m_inputs[ 0].data = &inputs.k_diffuseColor;
-    m_inputs[ 1].data = &inputs.k_emissiveColor;
-    m_inputs[ 2].data = &inputs.k_useSpecularWorkflow;
-    m_inputs[ 3].data = &inputs.k_specularColor;
-    m_inputs[ 4].data = &inputs.k_metallic;
-    m_inputs[ 5].data = &inputs.k_roughness;
-    m_inputs[ 6].data = &inputs.k_clearcoat;
-    m_inputs[ 7].data = &inputs.k_clearcoatRoughness;
-    m_inputs[ 8].data = &inputs.k_opacity;
-    m_inputs[ 9].data = &inputs.k_opacityThreshold;
-    m_inputs[10].data = &inputs.k_ior;
-    m_inputs[11].data = &inputs.k_normal;
-    m_inputs[12].data = &inputs.k_displacement;
-    m_inputs[13].data = &inputs.k_occlusion;
+    assert(m_inputs.size() == 14 && m_inputs.size() == input_defs.size());
+    assignInputKnob("diffuseColor",        &k_diffuseColor);
+    assignInputKnob("emissiveColor",       &k_emissiveColor);
+    assignInputKnob("useSpecularWorkflow", &k_useSpecularWorkflow);
+    assignInputKnob("specularColor",       &k_specularColor);
+    assignInputKnob("metallic",            &k_metallic);
+    assignInputKnob("roughness",           &k_roughness);
+    assignInputKnob("clearcoat",           &k_clearcoat);
+    assignInputKnob("clearcoatRoughness",  &k_clearcoatRoughness);
+    assignInputKnob("opacity",             &k_opacity);
+    assignInputKnob("opacityThreshold",    &k_opacityThreshold);
+    assignInputKnob("ior",                 &k_ior);
+    assignInputKnob("normal",              &k_normal);
+    assignInputKnob("displacement",        &k_displacement);
+    assignInputKnob("occlusion",           &k_occlusion);
 }
 
 
@@ -215,39 +197,305 @@ zprPreviewSurface::evaluateSurface(RayShaderContext& stx,
                                    Fsr::Pixel&       out)
 {
     //std::cout << "zprPreviewSurface::evaluateSurface() [" << stx.x << " " << stx.y << "]" << std::endl;
-    Fsr::Pixel& tex = stx.thread_ctx->surface_color;
+    Fsr::Pixel& tex = stx.thread_ctx->binding_color;
     tex.setChannels(m_texture_channels);
 
-    Fsr::Vec3f  diffuseColor(inputs.k_diffuseColor);
-    if (getInput(0))
+    Fsr::Vec3f diffuseColor(k_diffuseColor);
+    if (getInputShader(0))
     {
-        getInput(0)->evaluateSurface(stx, tex);
+        getInputShader(0)->evaluateSurface(stx, tex);
         diffuseColor = tex.rgb();
     }
 
-    Fsr::Vec3f emissiveColor(inputs.k_emissiveColor);
-    if (getInput(1))
+    Fsr::Vec3f emissiveColor(k_emissiveColor);
+    if (getInputShader(1))
     {
-        getInput(1)->evaluateSurface(stx, tex);
+        getInputShader(1)->evaluateSurface(stx, tex);
         emissiveColor = tex.rgb();
     }
 
-    Fsr::Vec3f specularColor(inputs.k_specularColor);
-    if (getInput(3))
+    float specularAmount = 1.0f;//k_;
+
+    Fsr::Vec3f specularColor(k_specularColor);
+    if (getInputShader(3))
     {
-        getInput(1)->evaluateSurface(stx, tex);
+        getInputShader(3)->evaluateSurface(stx, tex);
         specularColor = tex.rgb();
     }
 
-    float occlusion = inputs.k_occlusion;
-    if (getInput(13))
+    float specularRoughness = k_roughness;
+    if (getInputShader(5))
     {
-        getInput(13)->evaluateSurface(stx, tex);
+        getInputShader(5)->evaluateSurface(stx, tex);
+        specularRoughness = tex.r();
+    }
+
+    Fsr::Vec3f normal(k_normal);
+    if (getInputShader(11))
+    {
+        getInputShader(11)->evaluateSurface(stx, tex);
+        normal = tex.rgb();
+    }
+
+    float occlusion = k_occlusion;
+    if (getInputShader(13))
+    {
+        getInputShader(13)->evaluateSurface(stx, tex);
         occlusion = tex.r();
     }
 
-    out.rgb()   = diffuseColor*occlusion + emissiveColor;
-    out.alpha() = float(inputs.k_opacity);
+    // Evaluate all lights.
+    Fsr::Vec3f illum(0.0f);
+    if (stx.master_light_shaders)
+        illum = evaluateLights(stx,
+                               diffuseColor,
+                               false/*useSpecularWorkflow*/,
+                               1.0f/*ior*/,
+                               1.0f/*metallic*/,
+                               specularAmount,
+                               specularColor,
+                               specularRoughness/*specularRoughness*/,
+                               1.0f/*clearcoatAmount*/,
+                               Fsr::Vec3f(0.0f)/*clearcoatColor*/,
+                               1.0f/*clearcoatRoughness*/,
+                               occlusion);
+
+    out.rgb()   = illum + emissiveColor;
+    out.alpha() = k_opacity;
+}
+
+
+/*!
+*/
+Fsr::Vec3f
+zprPreviewSurface::evaluateLights(RayShaderContext& stx,
+                                  const Fsr::Vec3f& diffuseColor,
+                                  bool              useSpecularWorkflow,
+                                  float             ior,
+                                  float             metallic,
+                                  float             specularAmount,
+                                  const Fsr::Vec3f& specularColor,
+                                  float             specularRoughness,
+                                  float             clearcoatAmount,
+                                  const Fsr::Vec3f& clearcoatColor,
+                                  float             clearcoatRoughness,
+                                  float             occlusion) const
+{
+    const Fsr::Vec3d V = stx.getViewVector(); // this may build a fake-stereo view-vector
+#if 0
+    Fsr::Vec3d Rrefl = V.reflect(stx.N); Rrefl.normalize();
+
+    RayShaderContext Rrefl_stx(stx,
+                               Rrefl,
+                               std::numeric_limits<double>::epsilon(),
+                               std::numeric_limits<double>::infinity(),
+                               Fsr::RayContext::GLOSSY | Fsr::RayContext::REFLECTION/*ray_type*/,
+                               RenderContext::SIDES_BOTH/*sides_mode*/);
+#endif
+
+    Fsr::Vec3f directLight(0.0f);
+    Fsr::Vec3f indirectLight(0.0f);
+
+#if 1
+    // TODO: finish the direct lighting! Need to test ray-traced light shadowing
+    Fsr::Pixel& light_color = stx.thread_ctx->light_color;
+    //light_color.setChannels(DD::Image::Mask_RGB);
+
+    const uint32_t nLights = (uint32_t)stx.master_light_shaders->size();
+    for (uint32_t i=0; i < nLights; ++i)
+    {
+        LightShader* lshader = (*stx.master_light_shaders)[i];
+        if (!lshader)
+            continue;
+
+        Fsr::RayContext Rlight; // ray from surface to light, for shadowing, etc.
+        float direct_pdfW;
+        if (!lshader->illuminateSurface(stx, Rlight, direct_pdfW, light_color))
+            continue; // not affecting this surface
+
+        // Get shadowing factor for light (0=shadowed, 1=no shadow):
+        //float shadow = 1.0f;
+        RayShaderContext Rshadow_stx(stx,
+                                     Rlight,
+                                     Fsr::RayContext::SHADOW/*ray_type*/,
+                                     RenderContext::SIDES_BOTH/*sides_mode*/);
+        Traceable::SurfaceIntersection Ishadow(std::numeric_limits<double>::infinity());
+        if (stx.rtx->objects_bvh.getFirstIntersection(Rshadow_stx, Ishadow) > Fsr::RAY_INTERSECT_NONE &&
+             Ishadow.t < Rlight.maxdist)
+        {
+#if 1
+            continue;
+#else
+            //std::cout << "D=" << D << ", t=" << Ishadow.t << std::endl;
+            // Shadowed - make it fall off the farther the occluder is from surface(hack!!!):
+            shadow = (Ishadow.t / D);//powf(float(1.0 - (Ishadow.t / D)), 2.0f);
+            if (shadow <= 0.0f)
+            {
+                continue;
+            }
+#endif
+        }
+
+        const Fsr::Vec3d& L = Rlight.dir();
+
+        // Naive diffuse lobe (lambert):
+        const float N_dot_L = float(stx.Nf.dot(L));
+        if (N_dot_L < 0.0f)
+            continue; // surface facing away from light
+
+        //Fsr::Vec3d H = (V + L); H.normalize(); // half-vector between view and light vectors
+        //const float V_dot_H = float(stx.Nf.dot(H));
+
+        Fsr::Vec3d Lrefl = L.reflect(stx.N); Lrefl.normalize();
+        float Lrefl_dot_V = float(Lrefl.dot(V));
+
+        //const float fresnel = powf(std::max(0.0f, 1.0f - V_dot_H), 5.0f);//SchlickFresnel(V_dot_H);
+
+        // Evaluate diffuse
+        //Fsr::Vec3f diffuseContribution = diffuseColor*float(1.0 / M_PI);//evaluateDirectDiffuse();
+        Fsr::Vec3f diffuseContribution = diffuseColor*light_color.rgb()*N_dot_L;
+
+#if 1
+        // Naive specular lobe (phong):
+        if (Lrefl_dot_V <= 0.0 || Lrefl_dot_V >= M_PI_2)
+            Lrefl_dot_V = 0.0f;
+
+        // This is utter junk...:
+        const float spec_wt = float(pow(Lrefl_dot_V, (1.0/specularRoughness)*10.0));
+        Fsr::Vec3f specularContribution = specularColor*light_color.rgb()*spec_wt;
+        //Fsr::Vec3f specularContribution;
+        //specularContribution.set(specularRoughness);//float(pow(Lrefl_dot_V, 1.0/0.01)));
+
+#else
+        // Evaluate specular first lobe
+        Fsr::Vec3f specularContribution(0.0f);
+        if (specularAmount > 0.0f)
+        {
+            Fsr::Vec3f F0 = specularColor;
+            Fsr::Vec3f F90(1.0f);
+
+            if (!useSpecularWorkflow)
+            {
+                const float R = (1.0f - ior) / (1.0f + ior);
+                Fsr::Vec3f specColor = Fsr::Vec3f(1.0f).lerpTo(diffuseColor, metallic);
+                F0  = specColor*(R * R);
+                F90 = specColor;
+
+                // For metallic workflows, pure metals have no diffuse
+                d *= (1.0f - metallic);
+            }
+
+            specularContribution = specularAmount * evaluateDirectSpecular(F0,                // Specular color 0
+                                                                           F90,               // Specular color 90
+                                                                           specularRoughness, // Roughness
+                                                                           fresnel,           // Fresnel
+                                                                           NdotL,
+                                                                           NdotE,
+                                                                           NdotH,
+                                                                           EdotH); // Dot products needed for lights
+            //{ evaluateDirectSpecular():
+            //    Fsr::Vec3f F = mix(specularColorF0, specularColorF90, fresnel);
+            //    float D = NormalDistribution(specularRoughness, NdotH);
+                //{ NormalDistribution():
+                //    float alpha = specularRoughness * specularRoughness;
+                //    float alpha2 = alpha * alpha;
+                //    float NdotH2 = NdotH * NdotH;
+                //    float DDenom = (NdotH2 * (alpha2 - 1.0)) + 1.0;
+                //    DDenom *= DDenom;
+                //    DDenom *= PI;
+                //    float D = (alpha2 + EPSILON) / DDenom;
+                //    return D;
+                //}
+
+            //    float G = Geometric(specularRoughness, NdotL, NdotE, NdotH, EdotH);
+                //{  Geometric():
+                //    float alpha = specularRoughness * specularRoughness;
+                //    float k = alpha * 0.5;
+                //    float G = NdotE / (NdotE * (1.0 - k) + k);
+                //    G *= NdotL / (NdotL * (1.0 - k) + k);
+                //    return G;
+                //}
+
+            //    Fsr::Vec3f RNum = F * G * D;
+            //    float RDenom = 4.0f * NdotL * NdotE + EPSILON;
+            //    return RNum / RDenom;
+            //}
+
+            // Adjust the diffuse so glazing angles have less diffuse
+            diffuseContribution *= (1.0f - Fsr::lerp(F0, F90, fresnel));
+        }
+#endif
+
+        directLight += diffuseContribution + specularContribution;
+    }
+
+
+
+#else
+    for (int i=0; i < NUM_LIGHTS; ++i)
+    {
+
+        // Calculate necessary vector information for lighting
+        Fsr::Vec4f Plight = (lightSource[i].isIndirectLight) ? Fsr::Vec4f(0,0,0,1) : lightSource[i].position;
+        Fsr::Vec3f l = (Plight.w == 0.0) ? normalize(Plight.xyz) : normalize(Plight - Peye).xyz;
+        Fsr::Vec3f h = normalize(e + l);
+        float NdotL = max(0.0, dot(n, l));
+        float NdotH = max(0.0, dot(n, h));
+        float EdotH = max(0.0, dot(e, h));
+
+        // Calculate light intesity
+        float atten = lightDistanceAttenuation(Peye, i);
+        float spot = lightSpotAttenuation(l, i);
+
+        // Calculate the shadow factor
+        float shadow = 1.0;
+#if USE_SHADOWS
+        shadow = (lightSource[i].hasShadow) ? shadowing(/*lightIndex=*/i, Peye) : 1.0;
+#endif
+
+        float intensity = atten * spot * shadow;
+
+        Fsr::Vec3f lightDiffuseIrradiance = intensity * lightSource[i].diffuse.rgb;
+        Fsr::Vec3f lightSpecularIrradiance = intensity * lightSource[i].specular.rgb;
+
+        LightingContributions lightingContrib = evaluateLight(
+            diffuseColor,
+            useSpecularWorkflow,
+            ior,
+            metallic,
+            specularAmount,
+            specularColor,
+            specularRoughness,
+            clearcoatAmount,
+            clearcoatColor,
+            clearcoatRoughness,
+            occlusion,
+            NdotL,
+            NdotE,
+            NdotH,
+            EdotH,
+            lightDiffuseIrradiance,
+            lightSpecularIrradiance);
+
+        // calculate the indirect light (DomeLight)
+        if (lightSource[i].isIndirectLight)
+        {
+
+            indirectLight = evaluateIndirectLighting(diffuseColor,
+                                    specularColor, Neye, Reye, NdotE,
+                                    EdotH, ior, metallic, occlusion,
+                                    specularRoughness, useSpecularWorkflow,
+                                    lightSource[i].worldToLightTransform);
+        }
+        // all other light sources contribute to the direct lighting
+        else
+        {
+            directLight += (lightingContrib.diffuse + lightingContrib.specular);
+        }
+    }
+#endif
+
+    return (directLight + indirectLight);
 }
 
 

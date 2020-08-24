@@ -41,41 +41,25 @@ namespace zpr {
 class ZPR_EXPORT zprPreviewSurface : public RayShader
 {
   public:
-    struct InputParams
-    {
-        Fsr::Vec3d k_diffuseColor;          //!< (0.18, 0.18, 0.18) When using metallic workflow this is interpreted as albedo.
-        Fsr::Vec3d k_emissiveColor;         //!< (0.0, 0.0, 0.0)  Emissive component. 
-        int        k_useSpecularWorkflow;   //!< 0 
-        Fsr::Vec3d k_specularColor;         //!< (0.0, 0.0, 0.0)
-        double     k_metallic;              //!< 0.0
-        double     k_roughness;             //!< 0.5   Roughness for the specular lobe. The value ranges from 0 to 1, which goes from a perfectly specular surface at 0.0 to maximum roughness of the specular lobe. This value is usually squared before use with a GGX or Beckmann lobe.
-        double     k_clearcoat;             //!< 0.0   Second specular lobe amount. The color is white.
-        double     k_clearcoatRoughness;    //!< 0.01  Roughness for the second specular lobe.
-        double     k_opacity;               //!< 1.0   When opacity is 1.0 then the gprim is fully opaque, if it is smaller than 1.0 then the prim is translucent, when it is 0 the gprim is transparent.  Note that even a fully transparent object still receives lighting as, for example, perfectly clear glass still has a specular response.
-        double     k_opacityThreshold;      //!< 0.0   The opacityThreshold input is useful for creating geometric cut-outs based on the opacity input. A value of 0.0 indicates that no masking is applied to the opacity input, while a value greater than 0.0 indicates that rendering of the surface is limited to the areas where the opacity is greater than that value. A classic use of opacityThreshold is to create a leaf from an opacity input texture, in that case the threshold determines the parts of the opacity texture that will be fully transparent and not receive lighting. Note that when opacityThreshold is greater than zero, then opacity modulates the presence of the surface, rather than its transparency - pathtracers might implement this as allowing ((1 - opacity) * 100) % of the rays that do intersect the object to instead pass through it unhindered, and rasterizers may interpret opacity as pixel coverage.  Thus, opacityThreshold serves as a switch for how the opacity input is interpreted; this "translucent or masked" behavior is common in engines and renderers, and makes the UsdPreviewSurface easier to interchange.  It does imply, however, that it is not possible to faithfully recreate a glassy/translucent material that also provides an opacity-based mask... so no single-polygon glass leaves.
-        double     k_ior;                   //!< 1.5   Index of Refraction to be used for translucent objects.
-        Fsr::Vec3d k_normal;                //!< (0.0, 0.0, 1.0)  Expects normal in tangent space [(-1,-1,-1), (1,1,1)] This means your texture reader implementation should provide data to this node that is properly scaled and ready to be consumed as a tangent space normal.
-        double     k_displacement;          //!< 0.0   Displacement in the direction of the normal.
-        double     k_occlusion;             //!< 1.0 
+    Fsr::Vec3f k_diffuseColor;          //!< (0.18, 0.18, 0.18) When using metallic workflow this is interpreted as albedo.
+    Fsr::Vec3f k_emissiveColor;         //!< (0.0, 0.0, 0.0)  Emissive component. 
+    int        k_useSpecularWorkflow;   //!< 0 
+    Fsr::Vec3f k_specularColor;         //!< (0.0, 0.0, 0.0)
+    float      k_metallic;              //!< 0.0
+    float      k_roughness;             //!< 0.5   Roughness for the specular lobe.
+    float      k_clearcoat;             //!< 0.0   Second specular lobe amount. The color is white.
+    float      k_clearcoatRoughness;    //!< 0.01  Roughness for the second specular lobe.
+    float      k_opacity;               //!< 1.0   When opacity is 1.0 then the gprim is fully opaque, if it is smaller than 1.0 then the prim is translucent, when it is 0 the gprim is transparent.
+    float      k_opacityThreshold;      //!< 0.0   The opacityThreshold input is useful for creating geometric cut-outs based on the opacity input.
+    float      k_ior;                   //!< 1.5   Index of Refraction to be used for translucent objects.
+    Fsr::Vec3f k_normal;                //!< (0.0, 0.0, 1.0)  Expects normal in tangent space [(-1,-1,-1), (1,1,1)]
+    float      k_displacement;          //!< 0.0   Displacement in the direction of the normal.
+    float      k_occlusion;             //!< 1.0 
 
-
-        //!
-        InputParams();
-    };
-
-
-    struct LocalVars
-    {
-        bool m_diffuse_enabled;
-        bool m_specular_enabled;
-        bool m_transmission_enabled;
-        bool m_emission_enabled;
-    };
-
-
-  public:
-    InputParams inputs;
-    LocalVars   locals;
+    bool m_diffuse_enabled;
+    bool m_specular_enabled;
+    bool m_transmission_enabled;
+    bool m_emission_enabled;
 
 
   public:
@@ -99,6 +83,21 @@ class ZPR_EXPORT zprPreviewSurface : public RayShader
                                     const RenderContext& rtx);
     /*virtual*/ void evaluateSurface(RayShaderContext& stx,
                                      Fsr::Pixel&       out);
+
+  protected:
+    //!
+    Fsr::Vec3f evaluateLights(RayShaderContext& stx,
+                              const Fsr::Vec3f& diffuseColor,
+                              bool              useSpecularWorkflow,
+                              float             ior,
+                              float             metallic,
+                              float             specularAmount,
+                              const Fsr::Vec3f& specularColor,
+                              float             specularRoughness,
+                              float             clearcoatAmount,
+                              const Fsr::Vec3f& clearcoatColor,
+                              float             clearcoatRoughness,
+                              float             occlusion) const;
 
 };
 

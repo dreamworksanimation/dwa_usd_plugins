@@ -1395,7 +1395,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                         tI.PW          = PW;
                         tI.PWg         = PW;
                         tI.N           = N;  // Interpolated surface normal (vertex normal) possibly with bump
-                        tI.Ns          = N;  // Interpolated surface normal - with no bump
+                        tI.Ni          = N;  // Interpolated surface normal
                         tI.Ng          = Ng; // Geometric surface normal
 
                         // Offset tile UV into 0-1 range so that the 

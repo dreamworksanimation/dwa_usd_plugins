@@ -22,41 +22,23 @@
 // language governing permissions and limitations under the Apache License.
 //
 
-/// @file zprReadUVTexture.h
+/// @file zprTextureIop.h
 ///
 /// @author Jonathan Egstad
 
 
-#ifndef zprReadUVTexture_h
-#define zprReadUVTexture_h
+#ifndef zprPointLight_h
+#define zprPointLight_h
 
-#include "RayShader.h"
-
-#include <DDImage/Read.h>
+#include "LightShader.h"
 
 namespace zpr {
 
 
 /*!
 */
-class ZPR_EXPORT zprReadUVTexture : public RayShader
+class ZPR_EXPORT zprPointLight : public LightShader
 {
-  public:
-    std::string k_file;
-    int         k_wrapS;
-    int         k_wrapT;
-    Fsr::Vec4f  k_fallback;
-    Fsr::Vec4f  k_scale;
-    Fsr::Vec4f  k_bias;
-
-
-  protected:
-    DD::Image::Read*  m_read;           //!< Read Iop to access
-    bool              m_file_exists;    //!< Can the file be read
-    bool              m_read_error;     //!< Reader had some error
-    zpr::InputBinding m_binding;        //!< Texture binding
-
-
   public:
     static const ShaderDescription description;
     /*virtual*/ const char* zprShaderClass() const { return description.shaderClass(); }
@@ -66,22 +48,15 @@ class ZPR_EXPORT zprReadUVTexture : public RayShader
     /*virtual*/ const OutputKnobList& getOutputKnobDefinitions() const { return output_defs; }
 
     //!
-    zprReadUVTexture(const char* path=NULL);
-    ~zprReadUVTexture();
-
-    //!
-    //bool load(bool force=false);
-
-    //!
-    void setFilename(const char* path,
-                     int         version);
+    zprPointLight();
 
 
     /*virtual*/ void validateShader(bool                 for_real,
                                     const RenderContext& rtx);
-    /*virtual*/ void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
-    /*virtual*/ void evaluateSurface(RayShaderContext& stx,
-                                     Fsr::Pixel&       out);
+    /*virtual*/ bool illuminateSurface(const RayShaderContext& stx,
+                                       Fsr::RayContext&        light_ray,
+                                       float&                  direct_pdfW_out,
+                                       Fsr::Pixel&             light_color_out);
 
 };
 
@@ -90,7 +65,7 @@ class ZPR_EXPORT zprReadUVTexture : public RayShader
 
 #endif
 
-// end of zprReadUVTexture.h
+// end of zprPointLight.h
 
 //
 // Copyright 2020 DreamWorks Animation

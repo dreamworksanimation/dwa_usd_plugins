@@ -38,7 +38,7 @@ namespace zpr {
 
 
 static RayShader* shaderBuilder() { return new zprModify(); }
-/*static*/ const RayShader::ShaderDescription zprModify::description("zprModify", shaderBuilder);
+/*static*/ const RayShader::ShaderDescription zprModify::description("Modify", shaderBuilder);
 /*static*/ const RayShader::InputKnobList zprModify::input_defs =
 {
     {InputKnob("bg",       PIXEL_KNOB)}, // BG0
@@ -49,10 +49,10 @@ static RayShader* shaderBuilder() { return new zprModify(); }
     {OutputKnob("surface", PIXEL_KNOB )},
     {OutputKnob("rgba",    COLOR4_KNOB)},
     {OutputKnob("rgb",     COLOR3_KNOB)},
-    {OutputKnob("r",       DOUBLE_KNOB)},
-    {OutputKnob("g",       DOUBLE_KNOB)},
-    {OutputKnob("b",       DOUBLE_KNOB)},
-    {OutputKnob("a",       DOUBLE_KNOB)},
+    {OutputKnob("r",       FLOAT_KNOB )},
+    {OutputKnob("g",       FLOAT_KNOB )},
+    {OutputKnob("b",       FLOAT_KNOB )},
+    {OutputKnob("a",       FLOAT_KNOB )},
 };
 
 
@@ -107,7 +107,7 @@ zprModify::validateShader(bool                 for_real,
                           const RenderContext& rtx)
 {
     RayShader::validateShader(for_real, rtx); // < get the inputs
-    //std::cout << "zprModify::validateShader() bg0=" << getInput(BG0) << ", map1=" << getInput(MAP1) << std::endl;
+    //std::cout << "zprModify::validateShader() bg0=" << getInputShader(BG0) << ", map1=" << getInputShader(MAP1) << std::endl;
 
     m_texture_channels = DD::Image::Mask_None;
     m_output_channels  = DD::Image::Mask_None;
@@ -216,19 +216,18 @@ zprModify::evaluateSurface(RayShaderContext& stx,
                     if      (is_identity) ; // do nothing
                     else if (inputs.k_matrix == XFORM_LOCAL_TO_WORLD) { N = stx.w2l->normalTransform(N); N.normalize(); }
                     else if (inputs.k_matrix == XFORM_WORLD_TO_LOCAL) { N = stx.l2w->normalTransform(N); N.normalize(); }
-                    stx.N  = stx.Ns = N; // assign shading-normal(N) & shading-normal-no-bump(Ns)
+                    stx.N = N; // assign shading-normal(N) & shading-normal-no-bump(Ns)
                     stx.Nf = faceOutward(N, stx); // Facing-outward shading normal
                     break;}
 
                 case TARGET_N_NG_IN: {
-                    Fsr::Vec3f& N = map.rgb();
-                    N.normalize();
+                    Fsr::Vec3f& Ng = map.rgb();
+                    Ng.normalize();
                     // Transform by inverse transposed:
                     if      (is_identity) ; // do nothing
-                    else if (inputs.k_matrix == XFORM_LOCAL_TO_WORLD) { N = stx.w2l->normalTransform(N); N.normalize(); }
-                    else if (inputs.k_matrix == XFORM_WORLD_TO_LOCAL) { N = stx.l2w->normalTransform(N); N.normalize(); }
-                    stx.N  = stx.Ns = N; // assign shading-normal(N) & shading-normal-no-bump(Ns)
-                    stx.Nf = stx.Ng = N;
+                    else if (inputs.k_matrix == XFORM_LOCAL_TO_WORLD) { Ng = stx.w2l->normalTransform(Ng); Ng.normalize(); }
+                    else if (inputs.k_matrix == XFORM_WORLD_TO_LOCAL) { Ng = stx.l2w->normalTransform(Ng); Ng.normalize(); }
+                    stx.Ng = Ng;
                     break;}
 
                 case TARGET_UV_IN:
@@ -243,8 +242,8 @@ zprModify::evaluateSurface(RayShaderContext& stx,
     }
 
     // Call the input shader with a possibly modified shader context:
-    if (getInput(BG0))
-        getInput(BG0)->evaluateSurface(stx, out);
+    if (getInputShader(BG0))
+        getInputShader(BG0)->evaluateSurface(stx, out);
     else
         out.rgba().set(0.0f, 0.0f, 0.0f, 1.0f);
 

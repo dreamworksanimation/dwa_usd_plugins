@@ -550,7 +550,7 @@ SpherePoints::pointIntersect(uint32_t             point,
         I.PW = I.PWg = stx.Rtx.getPositionAt(tmin);
         I.N  = (I.PW - P.asVec3d());
         I.N.fastNormalize();
-        I.Ng = I.Ns = I.N;
+        I.Ng = I.Ni = I.N;
     }
 
     return Itype;
@@ -586,7 +586,7 @@ DiscPoints::pointIntersect(uint32_t             point,
         I.PW = I.PWg = stx.Rtx.getPositionAt(tmin);
         I.N  = (I.PW - P.asVec3d());
         I.N.fastNormalize();
-        I.Ng = I.Ns = I.N;
+        I.Ng = I.Ni = I.N;
         return Fsr::RAY_INTERSECT_POINT;
     }
 #endif
@@ -624,7 +624,7 @@ CardPoints::pointIntersect(uint32_t             point,
         I.PW = I.PWg = stx.Rtx.getPositionAt(tmin);
         I.N  = (I.PW - P.asVec3d());
         I.N.fastNormalize();
-        I.Ng = I.Ns = I.N;
+        I.Ng = I.Ni = I.N;
         return Fsr::RAY_INTERSECT_POINT;
     }
 #endif

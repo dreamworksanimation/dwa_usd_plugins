@@ -40,6 +40,7 @@
 
 #include <Fuser/Primitive.h>  // for FUSER_NODE_PRIMITIVE_TYPE, FUSER_MESH_PRIMITIVE_TYPE, etc
 #include <Fuser/NukeGeoInterface.h> // for getObjectString()
+#include <Fuser/NukeKnobInterface.h> // for getVec3Knob, etc
 #include <Fuser/Primitive.h>
 #include <Fuser/MaterialNode.h>
 
@@ -229,9 +230,8 @@ static void aov_handler_PL(   const RayShaderContext& stx, const AOVLayer& aov, 
 //
 static void aov_handler_N(    const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.N.array(),    3, aov, out); }
 static void aov_handler_Nf(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Nf.array(),   3, aov, out); }
+static void aov_handler_Ni(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ni.array(),   3, aov, out); }
 static void aov_handler_Ng(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ng.array(),   3, aov, out); }
-static void aov_handler_Ngf(  const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ngf.array(),  3, aov, out); }
-static void aov_handler_Ns(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.Ns.array(),   3, aov, out); }
 static void aov_handler_dNdx( const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.dNdx.array(), 3, aov, out); }
 static void aov_handler_dNdy( const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.dNdy.array(), 3, aov, out); }
 //
@@ -318,9 +318,8 @@ assign_aov_handlers(AOVBuiltIn* handlers)
     //              //
     handlers[AOV_N        ].set("n",               aov_handler_N        );
     handlers[AOV_Nf       ].set("nf",              aov_handler_Nf       );
+    handlers[AOV_Ni       ].set("ni",              aov_handler_Ni       );
     handlers[AOV_Ng       ].set("ng",              aov_handler_Ng       );
-    handlers[AOV_Ngf      ].set("ngf",             aov_handler_Ngf      );
-    handlers[AOV_Ns       ].set("ns",              aov_handler_Ns       );
     handlers[AOV_dNdx     ].set("dndx",            aov_handler_dNdx     );
     handlers[AOV_dNdy     ].set("dndy",            aov_handler_dNdy     );
     //              //
@@ -1844,16 +1843,17 @@ RenderContext::buildLightShaders()
 #endif
         if (light0->node_disabled())
             continue;
+std::cout << "  " << ltindex << "(" << light0->node_name() << "): type=" << light0->lightType() << std::endl;
 
-//std::cout << "  " << ltindex << ":" << std::endl;
+        //--------------------------------------------------
         // Get the light's xforms:
+        //
         motion_xforms.clear();
         motion_xforms.push_back(Fsr::Mat4d(light0->matrix()));
 //std::cout << "    0 xform" << motion_xforms[motion_xforms.size()-1] << std::endl;
         for (uint32_t j=1; j < nScenes; ++j)
         {
             zpr::Scene* scene1 = input_scenes[shutter_scenerefs[j].op_input_index];
-
             DD::Image::LightContext* ltx1 = scene1->lights[ltindex];
 #if DEBUG
             assert(ltx1);
@@ -1862,101 +1862,141 @@ RenderContext::buildLightShaders()
 #if DEBUG
             assert(light1);
 #endif
-
             motion_xforms.push_back(Fsr::Mat4d(light1->matrix()));
 //std::cout << "    " << j << " xform" << motion_xforms[motion_xforms.size()-1] << std::endl;
         }
 
-        // Create the LightShaders:
-        LightShader* lshader = new LightShader(motion_times, motion_xforms);
 
-        master_light_shaders.push_back(lshader);
-//std::cout << "  " << ltindex << ": lshader=" << lshader << std::endl;
-    }
+        //--------------------------------------------------
+        // Convert to LightShader:
+        //
 
+        LightShader* lshader = NULL;
 
+        //double near = clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity());
+        //double far  = clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity());
 
-    //per_object_light_shaders.resize();
+        /* In DDImage LightOp.h:
+            enum LightType
+            { 
+                ePointLight,       0
+                eDirectionalLight, 1
+                eSpotLight,        2
+                eOtherLight        3
+            };
+        */
 
-#if 0
-    //std::cout << "zpr::RenderContext::getVolumeLightTypeAndBbox():" << std::endl;
-    bbox.clear();
-    // Skip it if it's off:
-    if (!light || light->node_disabled())
-        return UNRECOGNIZED_PRIM;
-
-    // Only create prim if light can illuminate atmosphere:
-    DD::Image::Knob* k_light_illum = light->knob("illuminate_atmosphere");
-    if (!k_light_illum)
-        return UNRECOGNIZED_PRIM;
-    bool can_illuminate_atmosphere = false;
-    DD::Image::Hash junk;
-    k_light_illum->store(DD::Image::BoolPtr, &can_illuminate_atmosphere, junk, light->outputContext());
-    if (!can_illuminate_atmosphere)
-        return UNRECOGNIZED_PRIM;
-
-    //double near = clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity());
-    //double far  = clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity());
-    const Fsr::Mat4d light_xform(light->matrix());
-
-    /* In DDImage LightOp.h:
-        enum LightType
-        { 
-            ePointLight, 
-            eDirectionalLight, 
-            eSpotLight, 
-            eOtherLight 
-        };
-    */
-
-    // Check for recognized light types:
-    if (light->lightType() == DD::Image::LightOp::eSpotLight)
-    {
-        // Cone:
-        bbox = ConeVolume::getConeBbox(clamp(light->hfov(), 0.0001, 180.0),
-                                       clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity()),
-                                       clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity()),
-                                       light_xform);
-        //std::cout << " type=LIGHTCONE_PRIM, bbox" << bbox << std::endl;
-        return LIGHTCONE_PRIM;
-
-    }
-    else if (light->lightType() == DD::Image::LightOp::ePointLight)
-    {
-        // LightSphere
-        bbox = SphereVolume::getSphereBbox(clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity()),
-                                           clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity()),
-                                           light_xform);
-        //std::cout << " type=LIGHTSPHERE_PRIM, bbox" << bbox << std::endl;
-        return LIGHTSPHERE_PRIM;
-
-    }
-    else if (light->lightType() == DD::Image::LightOp::eDirectionalLight)
-    {
-        // LightCylinder
-
-        //std::cout << " type=LIGHTCYLINDER_PRIM, bbox" << bbox << std::endl;
-        return LIGHTCYLINDER_PRIM;
-
-    }
-    else
-    {
-        // Check for ReflectionCard:
-        if (strcmp(light->Class(), "ReflectionCard")==0 ||
-            strcmp(light->Class(), "AreaLight")==0)
+        // Check for recognized light types:
+        if (light0->lightType() == DD::Image::LightOp::eSpotLight)
         {
-            // LightCard
+            //bbox = ConeVolume::getConeBbox(clamp(light->hfov(), 0.0001, 180.0),
+            //                               clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity()),
+            //                               clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity()),
+            //                               light_xform);
+            //std::cout << " type=LIGHTCONE_PRIM" << std::endl;
 
-            //std::cout << " type=LIGHTCARD_PRIM, bbox" << bbox << std::endl;
-            return  LIGHTCARD_PRIM; 
+            //lshader = dynamic_cast<LightShader*>(RayShader::create("SpotLight"));
+
+        }
+        else if (light0->lightType() == DD::Image::LightOp::ePointLight)
+        {
+            //bbox = SphereVolume::getSphereBbox(clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity()),
+            //                                   clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity()),
+            //                                   light_xform);
+            //std::cout << " type=LIGHTSPHERE_PRIM" << std::endl;
+
+            lshader = dynamic_cast<LightShader*>(RayShader::create("PointLight"));
+
+        }
+        else if (light0->lightType() == DD::Image::LightOp::eDirectionalLight)
+        {
+            //lshader = dynamic_cast<LightShader*>(RayShader::create("DirectLight"));
+
+            //std::cout << " type=LIGHTCYLINDER_PRIM" << std::endl;
+
+        }
+        else
+        {
+            // Check for ReflectionCard:
+            if (strcmp(light0->Class(), "ReflectionCard")==0 ||
+                strcmp(light0->Class(), "AreaLight"     )==0)
+            {
+                // LightCard
+
+                //lshader = dynamic_cast<LightShader*>(RayShader::create("CardLight"));
+
+                //std::cout << " type=LIGHTCARD_PRIM" << std::endl;
+            }
+        }
+        //std::cout << "  " << ltindex << ": lshader=" << lshader << std::endl;
+
+        if (lshader)
+        {
+            // Assign xforms:
+            lshader->setMotionXforms(motion_times, motion_xforms);
+
+            // Assign common LightOp knob values:
+            /*
+                DWA PointLight node:
+                    color 1
+                    intensity 1
+
+                    near 0.001
+                    far 1
+                    falloff_rate 1
+                    light_identifier ""
+                    object_mask *
+
+                    falloff_profile_enable false
+                    falloff_profile
+
+
+                Stock PointLight node:
+                    color 1
+                    intensity 1
+                    falloff_type "No Falloff"
+
+                    cast_shadows false
+                    shadow_mode solid
+                    filter Cubic
+                    scene_epsilon 0.001
+                    samples 1
+                    sample_width 1
+                    depthmap_bias 0.01
+                    depthmap_slope_bias 0.01
+                    clipping_threshold 0.5
+                    shadow_jitter_scale 3
+                    depthmap_width 1024
+                    shadow_mask none
+            */
+            int kindex = 0;
+            while (1)
+            {
+                DD::Image::Knob* k = light0->knob(kindex++);
+                if (!k)
+                    break; // all done no more knobs
+
+                if (lshader->setInputValue(k->name().c_str(), k, light0->outputContext()))
+                {
+                    //std::cout << k->name() << ": copied" << std::endl;
+                }
+            }
+            //std::cout << *lshader << std::endl;
+
+            master_light_shaders.push_back(lshader);
+
+
+            // Let light shader calc any internal values:
+            lshader->validateShader(true/*for_real*/, *this);
+        }
+        else
+        {
+            //std::cout << " UNRECOGNIZED LIGHT TYPE" << std::endl;
+            //std::cout << "zpr::RenderContext::buildLightShaders(): warning, unknown light type, skipping..." << std::endl;
         }
     }
 
-    //std::cout << " UNRECOGNIZED TYPE" << std::endl;
-    //std::cout << "zpr::RenderContext::getVolumeLightTypeAndBbox(): warning, unknown light type, skipping..." << std::endl;
-#endif
-
-
+    //per_object_light_shaders.resize();
 }
 
 
@@ -2055,9 +2095,9 @@ RenderContext::updateLightingScene(const zpr::Scene* ref_scene,
 }
 
 
-/*! Per-pixel motionblurred lighting in Nuke's shading system requires a thread-safe
-    local copy of a Scene structure that contains the list of LightContext pointers
-    that the shaders use to light with.
+/*! Per-subpixel motionblurred lighting in Nuke's legacy shading system requires a
+    thread-safe local copy of a Scene structure that contains the list of LightContext
+    pointers that the shaders use to light with.
 
     Because we're changing the LightContext's Axis vectors every subpixel as time
     changes we need to pass a dummy Scene up the shading tree with modified
@@ -2097,7 +2137,7 @@ RenderContext::updateLightingScenes(const zpr::Scene* ref_scene,
         //
         per_object_lighting_scenes.push_back(new zpr::Scene());
         zpr::Scene* lscene = per_object_lighting_scenes[i];
-        //
+
         // Copy from reference scene:
         lscene->copyInfo(ref_scene);
         // Clear all lights initially:
@@ -2105,7 +2145,7 @@ RenderContext::updateLightingScenes(const zpr::Scene* ref_scene,
         lscene->light_transforms.clear();
         lscene->light_renderers.clear();
         lscene->transparency(true);
-        //
+
         // Get the list of enabled lights from the object context:
         lscene->lights.reserve(otx->enabled_lights.size());
         lscene->light_transforms.reserve(otx->enabled_lights.size());
@@ -2272,10 +2312,15 @@ ThreadContext::ThreadContext(RenderContext* rtx) :
     vol_intersections.reserve(500);
     uv_intersections.reserve(500);
 
+    texture_color.setChannels(DD::Image::Mask_RGBA);
     texture_color.setInterestRatchet(&textureColorInterestRatchet);
+    binding_color.setChannels(DD::Image::Mask_RGBA);
     binding_color.setInterestRatchet(&bindingColorInterestRatchet);
+    surface_color.setChannels(DD::Image::Mask_RGB);
     surface_color.setInterestRatchet(&surfaceColorInterestRatchet);
+    light_color.setChannels(DD::Image::Mask_RGB);
     light_color.setInterestRatchet(&lightColorInterestRatchet);
+    volume_color.setChannels(DD::Image::Mask_RGB);
     volume_color.setInterestRatchet(&volumeColorInterestRatchet);
 
     //std::vector<TextureSamplerContext*> m_tex_samplers;     //!< List of active texture samplers for this thread
@@ -2878,7 +2923,7 @@ RenderContext::getVolumeLightTypeAndBbox(const DD::Image::LightOp* light,
             // LightCard
 
             //std::cout << " type=LIGHTCARD_PRIM, bbox" << bbox << std::endl;
-            return  LIGHTCARD_PRIM; 
+            return LIGHTCARD_PRIM; 
         }
     }
 

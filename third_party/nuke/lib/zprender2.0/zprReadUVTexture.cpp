@@ -45,24 +45,24 @@ namespace zpr {
 
 
 static RayShader* shaderBuilder() { return new zprReadUVTexture(); }
-/*static*/ const RayShader::ShaderDescription zprReadUVTexture::description("zprReadUVTexture", shaderBuilder);
+/*static*/ const RayShader::ShaderDescription zprReadUVTexture::description("ReadUVTexture", shaderBuilder);
 /*static*/ const RayShader::InputKnobList zprReadUVTexture::input_defs =
 {
-    {InputKnob("file",     STRING_KNOB)},
-    {InputKnob("wrapS",    INT_KNOB   )},
-    {InputKnob("wrapT",    INT_KNOB   )},
-    {InputKnob("fallback", COLOR4_KNOB)},
-    {InputKnob("scale",    COLOR4_KNOB)},
-    {InputKnob("bias",     COLOR4_KNOB)},
+    {InputKnob("file",     STRING_KNOB, ""       )},
+    {InputKnob("wrapS",    INT_KNOB,    "0"      )},
+    {InputKnob("wrapT",    INT_KNOB,    "0"      )},
+    {InputKnob("fallback", COLOR4_KNOB, "1 1 1 1")},
+    {InputKnob("scale",    COLOR4_KNOB, "1 1 1 1")},
+    {InputKnob("bias",     COLOR4_KNOB, "0 0 0 0")},
 };
 /*static*/ const RayShader::OutputKnobList zprReadUVTexture::output_defs =
 {
     {OutputKnob("rgb",     COLOR3_KNOB)},
     {OutputKnob("rgba",    COLOR4_KNOB)},
-    {OutputKnob("r",       DOUBLE_KNOB)},
-    {OutputKnob("g",       DOUBLE_KNOB)},
-    {OutputKnob("b",       DOUBLE_KNOB)},
-    {OutputKnob("a",       DOUBLE_KNOB)},
+    {OutputKnob("r",       FLOAT_KNOB )},
+    {OutputKnob("g",       FLOAT_KNOB )},
+    {OutputKnob("b",       FLOAT_KNOB )},
+    {OutputKnob("a",       FLOAT_KNOB )},
 };
 
 
@@ -75,21 +75,17 @@ zprReadUVTexture::zprReadUVTexture(const char* path) :
     m_read_error(true)
 {
     //std::cout << "zprReadUVTexture::ctor(" << this << ")" << std::endl;
-    k_file  = path;
-    k_wrapS = 0;
-    k_wrapT = 0;
-    k_fallback.set(1.0f);
-    k_scale.set(1.0f);
-    k_bias.set(0.0f);
-
     // Assign the knobs to their values:
-    assert(m_inputs.size() == input_defs.size());
-    m_inputs[ 0].data = &k_file;
-    m_inputs[ 1].data = &k_wrapS;
-    m_inputs[ 2].data = &k_wrapT;
-    m_inputs[ 3].data = &k_fallback;
-    m_inputs[ 4].data = &k_scale;
-    m_inputs[ 5].data = &k_bias;
+    assert(m_inputs.size() == 6 && m_inputs.size() == input_defs.size());
+    assignInputKnob("file",     &k_file);
+    assignInputKnob("wrapS",    &k_wrapS);
+    assignInputKnob("wrapT",    &k_wrapT);
+    assignInputKnob("fallback", &k_fallback);
+    assignInputKnob("scale",    &k_scale);
+    assignInputKnob("bias",     &k_bias);
+
+    if (path)
+        k_file = path;
 }
 
 

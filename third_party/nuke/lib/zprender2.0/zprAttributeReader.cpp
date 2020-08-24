@@ -32,12 +32,12 @@
 
 namespace zpr {
 
-
 static RayShader* shaderBuilder() { return new zprAttributeReader(); }
-/*static*/ const RayShader::ShaderDescription zprAttributeReader::description("zprAttributeReader", shaderBuilder);
+/*static*/ const RayShader::ShaderDescription zprAttributeReader::description("AttributeReader", shaderBuilder);
 /*static*/ const RayShader::InputKnobList zprAttributeReader::input_defs =
 {
-    {InputKnob("diffuseColor",        COLOR3_KNOB)},
+    {InputKnob("attrib_name",         STRING_KNOB)},
+    {InputKnob("attrib_group",        STRING_KNOB)},
 };
 /*static*/ const RayShader::OutputKnobList zprAttributeReader::output_defs =
 {
@@ -53,6 +53,7 @@ zprAttributeReader::zprAttributeReader() :
     RayShader(input_defs, output_defs)
 {
     //std::cout << "zprAttributeReader::ctor(" << this << ")" << std::endl;
+    assert(m_inputs.size() > 0 && m_inputs.size() == input_defs.size());
 }
 
 

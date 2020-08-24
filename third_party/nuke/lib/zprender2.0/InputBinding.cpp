@@ -119,15 +119,14 @@ static void handler_PL(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out)
     }
 }
 //----------------------------------------
-static void handler_N(    const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->N.array(),     out); }
+static void handler_N(    const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->N.array(),    out); }
 static void handler_dNdx( const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->dNdx.array(), out); }
 static void handler_dNdy( const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->dNdy.array(), out); }
-static void handler_Nf(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->Nf.array(),    out); }
-static void handler_Ng(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->Ng.array(),    out); }
-static void handler_Ngf(  const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->Ngf.array(),   out); }
-static void handler_Ns(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->Ns.array(),    out); }
+static void handler_Nf(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->Nf.array(),   out); }
+static void handler_Ni(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->Ni.array(),   out); }
+static void handler_Ng(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->Ng.array(),   out); }
 //----------------------------------------
-static void handler_st(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib2f(etx.stx->st.array(),    out); }
+static void handler_st(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib2f(etx.stx->st.array(),   out); }
 static void handler_dstdx(const InputBinding::ExprContext& etx, Fsr::Vec4f& out) {
     const Fsr::Vec2f d(etx.stx->Rxst - etx.stx->st);
     copy_attrib2f(d.array(), out);
@@ -231,10 +230,8 @@ struct AttribHandlers
         map[std::string("dNdx"  )] = handler_dNdx;
         map[std::string("dNdy"  )] = handler_dNdy;
         map[std::string("nf"    )] = handler_Nf;
+        map[std::string("ni"    )] = handler_Ni;
         map[std::string("ng"    )] = handler_Ng;
-        map[std::string("ngf"   )] = handler_Ngf;
-        //
-        map[std::string("ns"    )] = handler_Ns;
         //
         map[std::string("st"    )] = handler_st;
         map[std::string("dstdx" )] = handler_dstdx;

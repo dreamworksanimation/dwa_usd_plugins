@@ -404,7 +404,7 @@ Bvh<T>::_build(BuilderNode*                bvh_node,
     std::cout << "    " << max_depth << ":" << nNodes << " " << nObjects << bbox;
 #endif
 
-    if (nObjects <= m_max_objects)
+    if (nObjects <= (int32_t)m_max_objects)
     {
         bvh_node->A = bvh_node->B = NULL; // mark node as leaf
 #ifdef DEBUG_BVH_BUILD

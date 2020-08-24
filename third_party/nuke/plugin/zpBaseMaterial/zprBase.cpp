@@ -37,7 +37,7 @@ namespace zpr {
 
 
 static RayShader* shaderBuilder() { return new zprBase(); }
-/*static*/ const RayShader::ShaderDescription zprBase::description("zprBase", shaderBuilder);
+/*static*/ const RayShader::ShaderDescription zprBase::description("Base", shaderBuilder);
 /*static*/ const RayShader::InputKnobList zprBase::input_defs =
 {
     {InputKnob("bg",       PIXEL_KNOB)}, // BG0
@@ -47,10 +47,10 @@ static RayShader* shaderBuilder() { return new zprBase(); }
     {OutputKnob("surface", PIXEL_KNOB )},
     {OutputKnob("rgba",    COLOR4_KNOB)},
     {OutputKnob("rgb",     COLOR3_KNOB)},
-    {OutputKnob("r",       DOUBLE_KNOB)},
-    {OutputKnob("g",       DOUBLE_KNOB)},
-    {OutputKnob("b",       DOUBLE_KNOB)},
-    {OutputKnob("a",       DOUBLE_KNOB)},
+    {OutputKnob("r",       FLOAT_KNOB )},
+    {OutputKnob("g",       FLOAT_KNOB )},
+    {OutputKnob("b",       FLOAT_KNOB )},
+    {OutputKnob("a",       FLOAT_KNOB )},
 };
 
 
@@ -205,8 +205,8 @@ zprBase::evaluateSurface(RayShaderContext& stx,
 {
     //std::cout << "zprBase::evaluateSurface() [" << stx.x << " " << stx.y << "]" << std::endl;
     // Let the background get shaded first.
-    if (getInput(0))
-        getInput(0)->evaluateSurface(stx, out);
+    if (getInputShader(0))
+        getInputShader(0)->evaluateSurface(stx, out);
     else
         out.rgba().set(0.0f, 0.0f, 0.0f, 1.0f);
 

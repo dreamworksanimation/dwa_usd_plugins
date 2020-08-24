@@ -34,10 +34,13 @@
 #include "VolumeShader.h"
 
 
-// Remove these when shader creation changed to RayShader::create() calls
-#include "zprReadUVTexture.h"
-#include "zprPreviewSurface.h"
+// Force the compiler to include the built-in shader static ShaderDescriptions
+// otherwise RayShader::create() won't find them:
 #include "zprAttributeReader.h"
+#include "zprIopUVTexture.h"
+#include "zprPreviewSurface.h"
+#include "zprReadUVTexture.h"
+#include "zprPointLight.h"
 
 
 namespace zpr {
@@ -63,6 +66,14 @@ RayMaterial::RayMaterial() :
     m_output_channels(DD::Image::Mask_None)
 {
     m_shaders.reserve(5);
+
+    // Force the compiler to include the built-in shader static ShaderDescriptions
+    // otherwise RayShader::create() won't find them:
+    static zprAttributeReader dummyAttributeReader;
+    static zprIopUVTexture    dummyIopUVTexture;
+    static zprPreviewSurface  dummyPreviewSurface;
+    static zprReadUVTexture   dummyReadUVTexture;
+    static zprPointLight      dummyPointLight;
 }
 
 
@@ -306,9 +317,8 @@ RayMaterial::updateShaderContextFromIntersection(const Traceable::SurfaceInterse
         Fsr::Vec3d dNdx;                //!< N x-derivative
         Fsr::Vec3d dNdy;                //!< N y-derivative
         Fsr::Vec3d Nf;                  //!< Face-forward shading normal
+        Fsr::Vec3d Ni;                  //!< Interpolated surface normal
         Fsr::Vec3d Ng;                  //!< Geometric surface normal
-        Fsr::Vec3d Ngf;                 //!< Face-forward geometric normal
-        Fsr::Vec3d Ns;                  //!< Interpolated surface normal (same as N but with no bump)
 
         Fsr::Vec2f UV;                  //!< Surface texture coordinate
         Fsr::Vec2f dUVdx;               //!< UV x-derivative
@@ -318,8 +328,6 @@ RayMaterial::updateShaderContextFromIntersection(const Traceable::SurfaceInterse
         Fsr::Vec4f dCfdx;               //!< Vertex color x-derivative
         Fsr::Vec4f dCfdy;               //!< Vertex color y-derivative
     */
-
-    const Fsr::Vec3d V = -stx.Rtx.dir(); // view-vector
 
     stx.PW    = I.PW;
     stx.PWg   = I.PWg;   // PW non-displaced
@@ -333,16 +341,12 @@ RayMaterial::updateShaderContextFromIntersection(const Traceable::SurfaceInterse
     stx.dNdx  = (I.RxN  - I.N);  // Surface normal x-derivative
     stx.dNdy  = (I.RyN  - I.N);  // Surface normal y-derivative
     //
-    stx.Ng    = I.Ng;    // Geometric normal
-    stx.Ngf   = RayShader::faceForward(stx.Ng,
-                                       V/*view vector*/,
-                                       I.Ng/*geometric normal*/); // Face-forward geometric normal
-    //
-    stx.N    = I.N;     // May get updated by auto_bump()
-    stx.Ns   = I.Ns;    // Interpolated surface normal (same as N but with no bump)
+    stx.N    = I.N;         // May get updated by auto_bump()
     stx.Nf   = RayShader::faceForward(stx.N,
-                                      V/*view vector*/,
+                                      -stx.Rtx.dir()/*view vector*/,
                                       I.Ng/*geometric normal*/);  // Face-forward shading normal
+    stx.Ni   = I.Ni;        // Interpolated surface normal
+    stx.Ng    = I.Ng;       // Geometric normal
 
     //------------------------------------------------------
     // Get interpolated vertex attributes from primitive:
@@ -648,9 +652,9 @@ RayMaterial::getIllumination(RayShaderContext&                stx,
             // Output diagnostic info
             //
             const Traceable::SurfaceIntersection& I = I_list[sorted_list[0]];
-            const float Rd_dot_N = powf(float(stx.Rtx.dir().dot(-I.Ns))*0.5f, 1.0f/0.26f);
+            const float Rd_dot_Ni = powf(float(stx.Rtx.dir().dot(-I.Ni))*0.5f, 1.0f/0.26f);
 
-            out.color().set(Rd_dot_N);
+            out.color().set(Rd_dot_Ni);
             out.alpha() = 1.0f;
             out.cutoutAlpha() = 1.0f;
         }
@@ -1046,21 +1050,27 @@ createSurfaceShaders(const Fsr::ShaderNode*   fsr_shader,
     RayShader* output = NULL;
     if      (shader_class == "UsdPreviewSurface")
     {
-        zprPreviewSurface* psurf = new zprPreviewSurface();
-        output = psurf;
+        zprPreviewSurface* psurf = dynamic_cast<zprPreviewSurface*>(RayShader::create("PreviewSurface"));
+        if (psurf)
+        {
+            output = psurf;
+        }
     }
     //---------------------------------------------------------------
     else if (shader_class == "UsdUVTexture")
     {
-        // Change these to RayShader::create() calls:
-        zprReadUVTexture* reader = new zprReadUVTexture(""/*path*/);
-        reader->k_wrapS = 0;
-        reader->k_wrapT = 0;
-        reader->k_fallback.set(1.0f);
-        reader->k_scale.set(1.0f);
-        reader->k_bias.set(0.0f);
+        zprReadUVTexture* reader = dynamic_cast<zprReadUVTexture*>(RayShader::create("ReadUVTexture"));
+        if (reader)
+        {
+            // Change these to setValue calls:
+            reader->k_wrapS = 0;
+            reader->k_wrapT = 0;
+            reader->k_fallback.set(1.0f);
+            reader->k_scale.set(1.0f);
+            reader->k_bias.set(0.0f);
 
-        output = reader;
+            output = reader;
+        }
     }
     //---------------------------------------------------------------
     /*
@@ -1078,43 +1088,83 @@ createSurfaceShaders(const Fsr::ShaderNode*   fsr_shader,
     */
     else if (shader_class == "UsdPrimvarReader_string")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+        }
+        output = reader;
     }
     else if (shader_class == "UsdPrimvarReader_int")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+        }
+        output = reader;
     }
     else if (shader_class == "UsdPrimvarReader_float")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+            output = reader;
+        }
     }
     else if (shader_class == "UsdPrimvarReader_float2")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+            output = reader;
+        }
     }
     else if (shader_class == "UsdPrimvarReader_float3")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+            output = reader;
+        }
     }
     else if (shader_class == "UsdPrimvarReader_float4")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+            output = reader;
+        }
     }
     else if (shader_class == "UsdPrimvarReader_point")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+            output = reader;
+        }
     }
     else if (shader_class == "UsdPrimvarReader_normal")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+            output = reader;
+        }
     }
     else if (shader_class == "UsdPrimvarReader_vector")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+            output = reader;
+        }
     }
     else if (shader_class == "UsdPrimvarReader_matrix")
     {
-        output = new zprAttributeReader();
+        zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
+        if (reader)
+        {
+            output = reader;
+        }
     }
     //---------------------------------------------------------------
     else if (shader_class == "Transform2d")
@@ -1122,108 +1172,111 @@ createSurfaceShaders(const Fsr::ShaderNode*   fsr_shader,
         output = NULL;
     }
 
-    if (output)
+    if (!output)
+        return NULL;
+
+    //----------------------------------------------------
+    // Configure the new shader and assign its inputs:
+    //
+    output->setName(fsr_shader->getName());
+
+    ray_shaders.push_back(output);
+
+    // Convert each input and attach them:
+    const uint32_t nInputs = fsr_shader->numInputs();
+    for (uint32_t i=0; i < nInputs; ++i)
     {
-        output->setName(fsr_shader->getName());
+        const Fsr::ShaderNode::InputBinding& fsr_binding = fsr_shader->getInput(i);
 
-        ray_shaders.push_back(output);
+        const int32_t ray_shader_input = output->getInputIndex(fsr_binding.name.c_str());
+        if (ray_shader_input < 0)
+            continue; // no match on RayShader, skip it
 
-        // Convert each input and attach them:
-        const uint32_t nInputs = fsr_shader->numInputs();
-        for (uint32_t i=0; i < nInputs; ++i)
+        if (fsr_binding.source_shader)
         {
-            const Fsr::ShaderNode::InputBinding& fsr_binding = fsr_shader->getInput(i);
-
-            const int32_t ray_shader_input = output->getInputByName(fsr_binding.name.c_str());
-            if (ray_shader_input < 0)
-                continue; // no match on RayShader, skip it
-
-            if (fsr_binding.source_shader)
+            // Input binding:
+            // Create and connect up SurfaceMaterialOp input:
+            RayShader* input_ray_shader = createSurfaceShaders(fsr_binding.source_shader, ray_shaders);
+            if (input_ray_shader)
             {
-                // Input binding:
-                // Create and connect up SurfaceMaterialOp input:
-                RayShader* input_ray_shader = createSurfaceShaders(fsr_binding.source_shader, ray_shaders);
-                if (input_ray_shader)
-                {
-                    //std::cout << "      " << fsr_shader->getName() << ": connect input " << i << "'" << fsr_binding.name << "'";
-                    //std::cout << "(" << fsr_binding.type << ")";
-                    //std::cout << " to shader '" << input_ray_shader->getName() << "'" << std::endl;
+                //std::cout << "      " << fsr_shader->getName() << ": connect input " << i << "'" << fsr_binding.name << "'";
+                //std::cout << "(" << fsr_binding.type << ")";
+                //std::cout << " to shader '" << input_ray_shader->getName() << "'" << std::endl;
 
-                    output->connectInput(ray_shader_input, input_ray_shader, fsr_binding.source_output_name.c_str());
-                }
+                output->connectInput(ray_shader_input, input_ray_shader, fsr_binding.source_output_name.c_str());
+            }
+        }
+        else
+        {
+            // Knob binding:
+            //std::cout << "      " << fsr_shader->getName() << ": knob '" << fsr_binding.name << "'";
+            //std::cout << "(" << fsr_binding.type << ")";
+            //std::cout << "=[" << fsr_binding.value << "]" << std::endl;
+
+            // Copy value from ShaderNode knob to RayShader knob:
+            const RayShader::InputKnob* output_knob = output->getInputKnob(ray_shader_input);
+            if      (fsr_binding.type == "int"   )
+            {
+                if (output_knob->type == RayShader::INT_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
+            }
+            else if (fsr_binding.type == "double")
+            {
+                if (output_knob->type == RayShader::DOUBLE_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
+            }
+            else if (fsr_binding.type == "string" || fsr_binding.type == "file")
+            {
+                if (output_knob->type == RayShader::STRING_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
+            }
+            //
+            else if (fsr_binding.type == "vec2"  )
+            {
+                if (output_knob->type == RayShader::VEC2_KNOB ||
+                    output_knob->type == RayShader::COLOR2_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
+            }
+            else if (fsr_binding.type == "vec3"  )
+            {
+                if (output_knob->type == RayShader::VEC3_KNOB ||
+                    output_knob->type == RayShader::COLOR3_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
+            }
+            else if (fsr_binding.type == "vec4"  )
+            {
+                if (output_knob->type == RayShader::VEC4_KNOB ||
+                    output_knob->type == RayShader::COLOR4_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
+            }
+            //
+            else if (fsr_binding.type == "vec2[]")
+            {
+                if (output_knob->type == RayShader::VEC2ARRAY_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
+            }
+            else if (fsr_binding.type == "vec3[]")
+            {
+                if (output_knob->type == RayShader::VEC3ARRAY_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
+            }
+            else if (fsr_binding.type == "vec4[]")
+            {
+                if (output_knob->type == RayShader::VEC4ARRAY_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
+            }
+            //
+            else if (fsr_binding.type == "mat4"  )
+            {
+                if (output_knob->type == RayShader::MAT4_KNOB)
+                    output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
             }
             else
             {
-                // Knob binding:
-                //std::cout << "      " << fsr_shader->getName() << ": knob '" << fsr_binding.name << "'";
-                //std::cout << "(" << fsr_binding.type << ")";
-                //std::cout << "=[" << fsr_binding.value << "]" << std::endl;
-
-                // Copy value from ShaderNode knob to RayShader knob:
-                const RayShader::InputKnob& output_knob = output->getInputKnob(ray_shader_input);
-                if      (fsr_binding.type == "int"   )
-                {
-                    if (output_knob.type == RayShader::INT_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                else if (fsr_binding.type == "double")
-                {
-                    if (output_knob.type == RayShader::DOUBLE_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                else if (fsr_binding.type == "string" || fsr_binding.type == "file")
-                {
-                    if (output_knob.type == RayShader::STRING_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                //
-                else if (fsr_binding.type == "vec2"  )
-                {
-                    if (output_knob.type == RayShader::VEC2_KNOB ||
-                        output_knob.type == RayShader::COLOR2_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                else if (fsr_binding.type == "vec3"  )
-                {
-                    if (output_knob.type == RayShader::VEC3_KNOB ||
-                        output_knob.type == RayShader::COLOR3_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                else if (fsr_binding.type == "vec4"  )
-                {
-                    if (output_knob.type == RayShader::VEC4_KNOB ||
-                        output_knob.type == RayShader::COLOR4_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                //
-                else if (fsr_binding.type == "vec2[]")
-                {
-                    if (output_knob.type == RayShader::VEC2ARRAY_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                else if (fsr_binding.type == "vec3[]")
-                {
-                    if (output_knob.type == RayShader::VEC3ARRAY_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                else if (fsr_binding.type == "vec4[]")
-                {
-                    if (output_knob.type == RayShader::VEC4ARRAY_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                //
-                else if (fsr_binding.type == "mat4"  )
-                {
-                    if (output_knob.type == RayShader::MAT4_KNOB)
-                        output->setInputValue(ray_shader_input, fsr_binding.value.c_str());
-                }
-                else
-                {
-                    std::cout << "      " << fsr_shader->getName() << ": warning, ignoring knob ";
-                    std::cout << "'" << fsr_binding.name << "'";
-                    std::cout << "(" << fsr_binding.type << ")";
-                    std::cout << "=[" << fsr_binding.value << "]" << std::endl;
-                }
+                std::cout << "      " << fsr_shader->getName() << ": warning, ignoring knob ";
+                std::cout << "'" << fsr_binding.name << "'";
+                std::cout << "(" << fsr_binding.type << ")";
+                std::cout << "=[" << fsr_binding.value << "]" << std::endl;
             }
         }
     }

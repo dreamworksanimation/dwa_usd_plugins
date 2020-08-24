@@ -41,6 +41,7 @@ pxr_static_library(${PXR_PACKAGE}
         VolumeMaterialOp.h
         zprAttributeReader.h
         zprIopUVTexture.h
+        zprPointLight.h
         zprPreviewSurface.h
         zprReadUVTexture.h
 
@@ -63,6 +64,7 @@ pxr_static_library(${PXR_PACKAGE}
         VolumeMaterialOp.cpp
         zprAttributeReader.cpp
         zprIopUVTexture.cpp
+        zprPointLight.cpp
         zprReadUVTexture.cpp
         zprPreviewSurface.cpp
 )

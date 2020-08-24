@@ -36,7 +36,7 @@ namespace zpr {
 
 
 static RayShader* shaderBuilder() { return new zprOcclusion(); }
-/*static*/ const RayShader::ShaderDescription zprOcclusion::description("zprOcclusion", shaderBuilder);
+/*static*/ const RayShader::ShaderDescription zprOcclusion::description("Occlusion", shaderBuilder);
 /*static*/ const RayShader::InputKnobList zprOcclusion::input_defs =
 {
     {InputKnob("bg",       PIXEL_KNOB)}, // BG0
@@ -46,10 +46,10 @@ static RayShader* shaderBuilder() { return new zprOcclusion(); }
     {OutputKnob("surface", PIXEL_KNOB )},
     {OutputKnob("rgba",    COLOR4_KNOB)},
     {OutputKnob("rgb",     COLOR3_KNOB)},
-    {OutputKnob("r",       DOUBLE_KNOB)},
-    {OutputKnob("g",       DOUBLE_KNOB)},
-    {OutputKnob("b",       DOUBLE_KNOB)},
-    {OutputKnob("a",       DOUBLE_KNOB)},
+    {OutputKnob("r",       FLOAT_KNOB )},
+    {OutputKnob("g",       FLOAT_KNOB )},
+    {OutputKnob("b",       FLOAT_KNOB )},
+    {OutputKnob("a",       FLOAT_KNOB )},
 };
 
 
@@ -124,7 +124,7 @@ zprOcclusion::validateShader(bool                 for_real,
                              const RenderContext& rtx)
 {
     RayShader::validateShader(for_real, rtx); // < get the inputs
-    //std::cout << "zprOcclusion::validateShader() bg0=" << getInput(BG0) << std::endl;
+    //std::cout << "zprOcclusion::validateShader() bg0=" << getInputShader(BG0) << std::endl;
 
     updateLocals(inputs, locals);
 
@@ -166,8 +166,8 @@ zprOcclusion::evaluateSurface(RayShaderContext& stx,
     }
 
     // Get the input shading result AFTER occlusion calc (just in case stx gets messed with):
-    if (getInput(BG0))
-        getInput(BG0)->evaluateSurface(stx, out);
+    if (getInputShader(BG0))
+        getInputShader(BG0)->evaluateSurface(stx, out);
     else
         out.rgba().set(0.0f, 0.0f, 0.0f, 1.0f);
 

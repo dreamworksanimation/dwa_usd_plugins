@@ -158,9 +158,8 @@ struct ZPR_EXPORT RayShaderContext
     Fsr::Vec3d dNdx;                //!< Ns x-derivative
     Fsr::Vec3d dNdy;                //!< Ns y-derivative
     Fsr::Vec3d Nf;                  //!< Face-forward shading normal
+    Fsr::Vec3d Ni;                  //!< Interpolated surface normal
     Fsr::Vec3d Ng;                  //!< Geometric surface normal
-    Fsr::Vec3d Ngf;                 //!< Face-forward geometric normal
-    Fsr::Vec3d Ns;                  //!< Interpolated surface normal (same as N but with no bump)
 
     Fsr::Vec2f UV;                  //!< Surface texture coordinate
     Fsr::Vec2f dUVdx;               //!< UV x-derivative
@@ -182,6 +181,11 @@ struct ZPR_EXPORT RayShaderContext
                      double            tmax=std::numeric_limits<double>::infinity());
 
     //! Copy ctor updates Rtx from current_stx PW, frame_time, etc.
+    RayShaderContext(const RayShaderContext&      current_stx,
+                     const Fsr::RayContext&       ray_context,
+                     uint32_t                     ray_type,
+                     int                          sides,
+                     const Fsr::RayDifferentials* ray_dif=NULL);
     RayShaderContext(const RayShaderContext&      current_stx,
                      const Fsr::Vec3d&            Rdir,
                      double                       tmin,
@@ -228,6 +232,31 @@ RayShaderContext::RayShaderContext(const Fsr::Vec3d& origin,
 }
 
 //!
+inline
+RayShaderContext::RayShaderContext(const RayShaderContext&      current_stx,
+                                   const Fsr::RayContext&       ray_context,
+                                   uint32_t                     ray_type,
+                                   int                          sides,
+                                   const Fsr::RayDifferentials* ray_dif)
+{
+    if (this != &current_stx)
+    {
+        memcpy(this, &current_stx, sizeof(RayShaderContext));
+        previous_stx = &current_stx;
+    }
+
+    Rtx = ray_context;
+    Rtx.time = frame_time;
+    Rtx.type_mask = ray_type;
+    if (ray_dif)
+    {
+        Rdif = *ray_dif;
+        use_differentials = true;
+    }
+
+    sides_mode = sides;
+    rprim = NULL;
+}
 inline
 RayShaderContext::RayShaderContext(const RayShaderContext&      current_stx,
                                    const Fsr::Vec3d&            Rdir,

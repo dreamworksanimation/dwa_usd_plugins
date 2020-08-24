@@ -42,7 +42,7 @@
 //#include <zprender/DeepPixelHandler.h>
 
 
-#include <Fuser/api.h> // for stringSplit
+#include <Fuser/api.h> // for stringSplit, globMatch
 
 
 #include <DDImage/ARRAY.h>
@@ -1352,12 +1352,18 @@ zpRender::knobs(DD::Image::Knob_Callback f)
         Tooltip(f, "If the mask value is below this, don't render the pixel.");
 
     Newline(f);
+#ifdef DWA_INTERNAL_BUILD
+    // Hide the copy specular knob for DWA builds:
     Bool_knob(f, &rtx.k_copy_specular, "copy_specular", INVISIBLE/*"copy specular from"*/);
     Tooltip(f, "Copy the camera view vector from the hero view's camera.  This eliminates the 'floating specular' "
                "problem that happens when the view vector is coming from multiple locations.");
-#if kDDImageVersionMajorNum != 9
-    // OneView knob crashes in Nuke 9 when it's used in certain gizmo arrangements, no idea why:
     OneView_knob(f, &rtx.k_hero_view, "hero_view", INVISIBLE/*""*/);
+        Tooltip(f, "Normally is the left view.");
+#else
+    Bool_knob(f, &rtx.k_copy_specular, "copy_specular", "copy specular from");
+    Tooltip(f, "Copy the camera view vector from the hero view's camera.  This eliminates the 'floating specular' "
+               "problem that happens when the view vector is coming from multiple locations.");
+    OneView_knob(f, &rtx.k_hero_view, "hero_view", "");
         Tooltip(f, "Normally is the left view.");
 #endif
 
@@ -1394,9 +1400,8 @@ zpRender::knobs(DD::Image::Knob_Callback f)
                           "<li><i>dstdy</i> - st y-derivative</li>"
                           "<li><i>N</i> - Shading normal (interpolated & bumped vertex normal)</li>"
                           "<li><i>Nf</i> - Face-forward shading normal</li>"
+                          "<li><i>Ni</i> - Interpolated surface normal</li>"
                           "<li><i>Ng</i> - Geometric surface normal</li>"
-                          "<li><i>Ngf</i> - Face-forward geometric normal</li>"
-                          "<li><i>Ns</i> - Interpolated surface normal (same as N but with no bump)</li>"
                           "<li><i>dNsdx</i> - Ns x-derivative</li>"
                           "<li><i>dNsdy</i> - Ns y-derivative</li>"
                           "<li><i>UV</i> - Surface texture coordinate</li>"
@@ -2379,6 +2384,11 @@ zpRender::_validate(bool for_real)
             rtx.indirect_lighting_enabled    = false;
             rtx.atmospheric_lighting_enabled = false;
         }
+#ifdef DEBUG_STARTUP
+        std::cout << "  direct_lighting_enabled=" << rtx.direct_lighting_enabled << std::endl;
+        std::cout << "  indirect_lighting_enabled=" << rtx.indirect_lighting_enabled << std::endl;
+        std::cout << "  atmospheric_lighting_enabled=" << rtx.atmospheric_lighting_enabled << std::endl;
+#endif
 
     } // for_real = true
 
@@ -2952,7 +2962,7 @@ zpRender::generate_render_primitives()
 
             Fsr::Box3d bbox0(gtx0.info->bbox());
             // Do the primitives inside the GeoInfo expand the bbox further than the
-            // point values imply? This is material displacement, that's done below.
+            // point values imply? This is material displacement done below.
             // Example is a PointCloud with point radii that expand the points into
             // spheres or discs.
             //
@@ -3075,11 +3085,12 @@ zpRender::generate_render_primitives()
             // Build the list of enabled lights for this object:
             if (rtx.direct_lighting_enabled)
             {
+                //std::cout << "  lighting enabled - link lights to objects:" << std::endl;
                 std::set<uint32_t> light_mask_enabled;
                 if (Fsr::hasObjectAttrib(*gtx0.info, "light_mask"))
                 {
                     std::string light_mask = Fsr::getObjectString(*gtx0.info, "light_mask");
-                    //std::cout << "light_mask('" << light_mask << "'):" << std::endl;
+                    //std::cout << "    light_mask('" << light_mask << "'):" << std::endl;
                     // Special-case the default '*' value:
                     if (light_mask == "*")
                     {
@@ -3109,12 +3120,12 @@ zpRender::generate_render_primitives()
                                 assert(ltx); // Shouldn't happen...
                                 if (ltx->light()->node_disabled())
                                     continue;
-                                //std::cout << "  checking light '" << ltx->light()->node_name() << "'" << std::endl;
+                                //std::cout << "    checking light '" << ltx->light()->node_name() << "'" << std::endl;
 
                                 // Check for identifer knob first, otherwise default to node name:
                                 std::string light_id;
                                 DD::Image::Knob* k = ltx->light()->knob("light_identifier");
-                                if (k)
+                                if (k && k->get_text())
                                     light_id = k->get_text();
                                 if (light_id.empty())
                                     light_id = ltx->light()->node_name(); // No id, default to node name
@@ -3139,6 +3150,7 @@ zpRender::generate_render_primitives()
                 }
                 else
                 {
+                    //std::cout << "    no light mask on object, add all lights:" << std::endl;
                     // No light mask, add all lights:
                     for (uint32_t lt=0; lt < nLights; ++lt)
                     {
@@ -3149,6 +3161,11 @@ zpRender::generate_render_primitives()
                         light_mask_enabled.insert(lt);
                     }
                 }
+                //std::cout << "      enabled lights[";
+                //for (std::set<uint32_t>::const_iterator it=light_mask_enabled.begin(); it != light_mask_enabled.end(); ++it)
+                //    std::cout << " " << scene0->lights[*it]->light()->node_name() << ",";
+                //std::cout << " ]" << std::endl;
+
 
                 // Now check the object mask in each enabled light the object name:
                 std::string obj_name;
@@ -3156,62 +3173,57 @@ zpRender::generate_render_primitives()
                     obj_name = Fsr::getObjectString(*gtx0.info, "scene_path");
                 else if (Fsr::hasObjectAttrib(*gtx0.info, "name"))
                     obj_name = Fsr::getObjectString(*gtx0.info, "name");
-                if (!obj_name.empty())
-                {
-                    //std::cout << "object name='" << obj_name << "'" << std::endl;
-                    for (std::set<uint32_t>::const_iterator it=light_mask_enabled.begin();
-                          it != light_mask_enabled.end(); ++it)
-                    {
-                        DD::Image::LightContext* ltx = scene0->lights[*it];
-                        assert(ltx); // Shouldn't happen...
-                        //std::cout << "  checking light object mask '" << ltx->light()->node_name() << "'" << std::endl;
-
-                        // Check for identifer knob first, otherwise default to node name:
-                        std::string object_mask;
-                        DD::Image::Knob* k = ltx->light()->knob("object_mask");
-                        if (!k)
-                        {
-                            // If light doesn't have an object mask control always enable it:
-                            gptx->enabled_lights.insert(*it);
-                            continue;
-                        }
-                        object_mask = k->get_text();
-                        //std::cout << "    object_mask='" << object_mask << "'" << std::endl;
-                        if (object_mask.empty())
-                            continue;
-
-                        // Tokenize the light_mask string:
-                        std::vector<std::string> masks;
-                        Fsr::stringSplit(object_mask, ", \t\n", masks);
-                        if (masks.size() == 0)
-                            continue;
-                        // Check enabled lights against each mask:
-                        for (uint32_t i=0; i < masks.size(); ++i)
-                        {
-                            const std::string& mask = masks[i];
-                            //std::cout << "  light '" << ltx->light()->node_name() << "': obj_mask='" << mask << "'" << std::endl;
-                            if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, obj_name.c_str()))
-                            {
-                                gptx->enabled_lights.erase(*it);
-                            }
-                            else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, obj_name.c_str()))
-                            {
-                                gptx->enabled_lights.insert(*it);
-                            }
-                            else if (Fsr::globMatch(mask, obj_name))
-                            {
-                                gptx->enabled_lights.insert(*it);
-                            }
-                        }
-                    }
-                }
                 else
                 {
-                    //std::cout << "no object name, enable all lights" << std::endl;
-                    // No object mask, add all lights:
-                    gptx->enabled_lights = light_mask_enabled;
+                    obj_name = "unnamed";
                 }
-            }
+                //std::cout << "    object name='" << obj_name << "'" << std::endl;
+
+                for (std::set<uint32_t>::const_iterator it=light_mask_enabled.begin();
+                      it != light_mask_enabled.end(); ++it)
+                {
+                    DD::Image::LightContext* ltx = scene0->lights[*it];
+                    assert(ltx); // Shouldn't happen...
+
+                    // Check for identifer knob first, otherwise default to node name:
+                    std::string object_mask;
+                    DD::Image::Knob* k = ltx->light()->knob("object_mask");
+                    if (!k)
+                    {
+                        // If light doesn't have an object mask control always enable it:
+                        gptx->enabled_lights.insert(*it);
+                        continue;
+                    }
+                    object_mask = k->get_text();
+                    //std::cout << "      '" << ltx->light()->node_name() << "': object_mask='" << object_mask << "'" << std::endl;
+                    if (object_mask.empty())
+                        continue;
+
+                    // Tokenize the light_mask string:
+                    std::vector<std::string> masks;
+                    Fsr::stringSplit(object_mask, ", \t\n", masks);
+                    if (masks.size() == 0)
+                        continue;
+
+                    // Check enabled lights against each mask:
+                    for (uint32_t i=0; i < masks.size(); ++i)
+                    {
+                        const std::string& mask = masks[i];
+                        //std::cout << "        light '" << ltx->light()->node_name() << "': obj_mask='" << mask << "'" << std::endl;
+                        if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, obj_name.c_str()))
+                            gptx->enabled_lights.erase(*it);
+                        else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, obj_name.c_str()))
+                            gptx->enabled_lights.insert(*it);
+                        else if (Fsr::globMatch(mask, obj_name))
+                            gptx->enabled_lights.insert(*it);
+                    }
+                }
+                //std::cout << "      enabled lights[";
+                //for (std::set<uint32_t>::const_iterator it=gptx->enabled_lights.begin(); it != gptx->enabled_lights.end(); ++it)
+                //    std::cout << " " << scene0->lights[*it]->light()->node_name() << ",";
+                //std::cout << " ]" << std::endl;
+
+            } // lighting enabled
 
 #if 1
             rtx.object_context.push_back(gptx);

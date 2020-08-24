@@ -79,9 +79,8 @@ enum AOVType
     //
     AOV_N,                  //!< Shading normal (interpolated & bumped vertex normal)
     AOV_Nf,                 //!< Face-forward shading normal
+    AOV_Ni,                 //!< Interpolated surface normal
     AOV_Ng,                 //!< Geometric surface normal
-    AOV_Ngf,                //!< Face-forward geometric normal
-    AOV_Ns,                 //!< Interpolated surface normal (same as N but with no bump)
     AOV_dNdx,               //!< N x-derivative
     AOV_dNdy,               //!< N y-derivative
     //

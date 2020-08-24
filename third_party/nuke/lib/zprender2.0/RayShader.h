@@ -100,25 +100,31 @@ class ZPR_EXPORT RayShader
         STRING_KNOB,    //!< std::string
         //
         INT_KNOB,       //!< Also used for boolean
-        DOUBLE_KNOB,    //!< Not bothering with separate float type
+        FLOAT_KNOB,     //!<
+        DOUBLE_KNOB,    //!<
         //
-        VEC2_KNOB,      //!< Fsr::Vec2d
-        VEC3_KNOB,      //!< Fsr::Vec3d
-        VEC4_KNOB,      //!< Fsr::Vec4d
+        VEC2_KNOB,      //!< Fsr::Vec2f
+        VEC3_KNOB,      //!< Fsr::Vec3f
+        VEC4_KNOB,      //!< Fsr::Vec4f
         MAT4_KNOB,      //!< Fsr::Mat4d
         //
-        COLOR2_KNOB,    //!< Fsr::Vec2d - mono with alpha
-        COLOR3_KNOB,    //!< Fsr::Vec3d - rgb
-        COLOR4_KNOB,    //!< Fsr::Vec4d - rgba
+        COLOR2_KNOB,    //!< Fsr::Vec2f - mono with alpha
+        COLOR3_KNOB,    //!< Fsr::Vec3f - rgb
+        COLOR4_KNOB,    //!< Fsr::Vec4f - rgba
         //
-        VEC2ARRAY_KNOB,
-        VEC3ARRAY_KNOB,
-        VEC4ARRAY_KNOB,
+        FLOATARRAY_KNOB,//!< Array of floats
+        VEC2ARRAY_KNOB, //!< Array of Vec2fs
+        VEC3ARRAY_KNOB, //!< Array of Vec3fs
+        VEC4ARRAY_KNOB, //!< Array of Vec4fs
         //
         PIXEL_KNOB,     //!< Fsr::Pixel (also contains a ChannelSet)
+        POINTER_KNOB,   //!< void*
         //
         NUM_KNOB_TYPES
     };
+
+    //! Return the string version of the type enum.
+    static const char* typeString(KnobType type);
 
 
     /*! Shader input. Similar to an Op knob except dedicated to RayShader
@@ -127,29 +133,65 @@ class ZPR_EXPORT RayShader
     */
     struct InputKnob
     {
-        const char* name;           //!<
+        //typedef void (*Handler)(const RayShaderContext& stx, Fsr::Vec4f& out);
+
+        const char* name;           //!< Pointer to the name string - no local copy is made!
         KnobType    type;           //!<
         void*       data;           //!< Pointer to local data, cast to type
+        const char* default_value;  //!< Pointer to the default value string - no local copy is made!
         RayShader*  shader;         //!< Non-NULL if knob is bound to another RayShader's output
         int32_t     output_index;   //!< Output index of another RayShader
+        //Handler     handler;        //!< Sampler handler to use
 
 
-        //!
-        InputKnob() : name(""), type(EMPTY_KNOB), data(NULL), shader(NULL), output_index(-1) {}
-        //!
-        InputKnob(const char* _name,
-                  KnobType    _type) :
-            name(_name),
-            type(_type),
-            data(NULL),
-            shader(NULL),
-            output_index(-1)
-        {
-            //
-        }
+        //! Default ctor leaves knob empty. TODO: deprecated?
+        InputKnob();
+        //! Ctor that can set the name, type & default value, used for static initializers.
+        InputKnob(const char* knob_name,
+                  KnobType    data_type,
+                  const char* default_val=NULL);
+
+
+        //! Cast the data pointer to various data types. No type checking is done!
+        explicit operator std::string() const { return *static_cast<std::string*>(data); }
+        explicit operator         int() const { return *static_cast<int*>(data);         }
+        explicit operator       float() const { return *static_cast<float*>(data);       }
+        explicit operator      double() const { return *static_cast<double*>(data);      }
+        explicit operator  Fsr::Vec2f() const { return *static_cast<Fsr::Vec2f*>(data);  }
+        explicit operator  Fsr::Vec3f() const { return *static_cast<Fsr::Vec3f*>(data);  }
+        explicit operator  Fsr::Vec4f() const { return *static_cast<Fsr::Vec4f*>(data);  }
+        explicit operator  Fsr::Mat4d() const { return *static_cast<Fsr::Mat4d*>(data);  }
 
         //!
         void setValue(const char* value);
+        //! Copy value from an Op knob, if types match, return true on success.
+        bool setValue(const DD::Image::Knob*          op_knob,
+                      const DD::Image::OutputContext& op_context);
+
+
+        //! Type-specific methods check that the type matches the arg.
+        void setString(const std::string& value);
+        void setString(const char*        value);
+        //
+        void   setBool(bool   value); // sets as INT_KNOB
+        void    setInt(int    value);
+        void  setFloat(float  value);
+        void setDouble(double value);
+        //
+        void  setVec2f(const Fsr::Vec2f& value);
+        void  setVec3f(const Fsr::Vec3f& value);
+        void  setVec4f(const Fsr::Vec4f& value);
+        //
+        void  setMat4d(const Fsr::Mat4d& value);
+
+
+        //! Return a string version of knob contents.
+        std::string getText() const;
+
+
+        //! Print the name, type and contents of knob to stream.
+        void print(std::ostream&) const;
+        friend std::ostream& operator << (std::ostream& o, const InputKnob& b) { b.print(o); return o; }
     };
 
     typedef std::vector<InputKnob> InputKnobList;
@@ -173,16 +215,28 @@ class ZPR_EXPORT RayShader
         {
             //
         }
+
+        //! Print the name, type and contents of knob to stream.
+        void print(std::ostream&) const;
+        friend std::ostream& operator << (std::ostream& o, const OutputKnob& b) { b.print(o); return o; }
     };
 
     typedef std::vector<OutputKnob> OutputKnobList;
+#if __cplusplus <= 201103L
+    typedef std::map<std::string, uint32_t> KnobNameMap;
+#else
+    // Only enable unordered_map with full C++11 support:
+    typedef std::unordered_map<std::string, uint32_t> KnobNameMap;
+#endif
 
 
   protected:
     std::string             m_name;             //!< Shader name
     //
     InputKnobList           m_inputs;           //!< Input knobs, copied and updated from the static list
+    KnobNameMap             m_input_name_map;   //!< Name to input index map
     OutputKnobList          m_outputs;          //!< Output knobs, copied from the static list
+    KnobNameMap             m_output_name_map;  //!< Name to output index map
     //
     bool                    m_valid;            //!< validateShader() has been called
     DD::Image::ChannelSet   m_texture_channels; //!< Set of channels output by all texture bindings
@@ -204,6 +258,11 @@ class ZPR_EXPORT RayShader
 
     //! Must have a virtual destructor!
     virtual ~RayShader() {}
+
+
+    //! Print the shader knob values to stream.
+    void print(std::ostream&) const;
+    friend std::ostream& operator << (std::ostream& o, const RayShader& b) { b.print(o); return o; }
 
 
     //---------------------------------------------------------
@@ -254,20 +313,31 @@ class ZPR_EXPORT RayShader
     //! Returns the number of output knobs.
     uint32_t numOutputs() const { return (uint32_t)m_outputs.size(); }
 
-    //! Returns output knob by index. If there's no knob an empty InputKnob is returned.
-    const InputKnob&  getInputKnob(uint32_t input) const;
-    //! Returns output knob by index. If there's no knob an empty OutputKnob is returned.
-    const OutputKnob& getOutputKnob(uint32_t output) const;
+    //! Returns input knob or NULL if not available.
+    InputKnob*  getInputKnob(uint32_t input) const;
+    InputKnob*  getInputKnob(const std::string& input_name) const;
+
+    //! Convenience Nuke-y method redirects to getInputKnob().
+    InputKnob*  knob(const char* input_name) const { return getInputKnob(std::string(input_name)); }
+
+    //! Convenience method to assign the data value target of a named InputKnob, returning true if successful.
+    bool assignInputKnob(const char* input_name,
+                         void*       data,
+                         const char* default_val=NULL);
+
+    //! Returns output knob or NULL if not available.
+    OutputKnob* getOutputKnob(uint32_t output) const;
+    OutputKnob* getOutputKnob(const std::string& output_name) const;
 
 
     //! Return a named input's index or -1 if not found.
-    int32_t    getInputByName(const char* input_name) const;
+    int32_t     getInputIndex(const std::string& input_name) const;
     //! Return a named output's index or -1 if not found.
-    int32_t    getOutputByName(const char* output_name) const;
+    int32_t     getOutputIndex(const std::string& output_name) const;
 
 
     //! Returns shader pointer for input. May be NULL if there's no input or no connection.
-    RayShader* getInput(uint32_t input) const;
+    RayShader* getInputShader(uint32_t input) const;
 
 
     //! Returns an InputBinding object for an input.
@@ -289,6 +359,11 @@ class ZPR_EXPORT RayShader
                        const char* value);
     void setInputValue(const char* input_name,
                        const char* value);
+
+    //! Set input knob value from an Op knob, return true if achieved. Convenience function.
+    bool setInputValue(const char*                     input_name,
+                       const DD::Image::Knob*          op_knob,
+                       const DD::Image::OutputContext& op_context);
 
     //---------------------------------------------------------
 
@@ -443,6 +518,11 @@ class ZPR_EXPORT RayShader
                                       const Fsr::Vec3d& N,
                                       const Fsr::Vec3d& lightV,
                                       double            roughnessSquared=(1.0*1.0));
+
+    //! Calc avoidance factor to compensate for the shadow-terminator problem.
+    static float getShadowTerminatorAvoidanceFactor(const Fsr::Vec3d& Ninterpolated,
+                                                    const Fsr::Vec3d& Nshading,
+                                                    const Fsr::Vec3d& Ldir);
 
     //! Convenience function to encapsulate the RGB triplet in a Pixel object as a Vec3f.
     static Fsr::Vec3f& vec3fColorInPixel(const Fsr::Pixel& pixel);

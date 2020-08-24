@@ -249,7 +249,8 @@ Mesh::Mesh(SurfaceContext*        stx,
             if (m_Cf_list.size() > 0)
                 tessellate_ctx.vert_vec4_attribs.push_back(&m_Cf_list);
 
-            int res = subdivider->execute(Fsr::NodeContext(subd_args), /*target_context*/
+            int res = subdivider->execute(Fsr::ArgSet()                /*node_args*/,
+                                          Fsr::NodeContext(subd_args), /*target_context*/
                                           tessellate_ctx.name,         /*target_name*/
                                           &tessellate_ctx              /*target*/);
             if (res < 0)

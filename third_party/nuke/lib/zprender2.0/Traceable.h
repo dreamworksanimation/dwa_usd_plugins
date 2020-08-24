@@ -128,7 +128,7 @@ class ZPR_EXPORT Traceable
         Fsr::Vec3f N;           //!< Interpolated surface normal (vertex normal) possibly with bump
         Fsr::Vec3f RxN;         //!< N at x-derivative offset
         Fsr::Vec3f RyN;         //!< N at y-derivative offset
-        Fsr::Vec3f Ns;          //!< Interpolated surface normal - with no bump
+        Fsr::Vec3f Ni;          //!< Interpolated surface normal
         Fsr::Vec3f Ng;          //!< Geometric surface normal
 
 

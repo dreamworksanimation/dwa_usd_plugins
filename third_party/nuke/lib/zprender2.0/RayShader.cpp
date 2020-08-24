@@ -39,10 +39,169 @@
 
 #include <dlfcn.h>  // for dlerror
 
+#if __cplusplus <= 201103L
+#else
+#  include <unordered_map>
+#endif
 
 static DD::Image::Lock expand_lock;
 
+
 namespace zpr {
+
+//------------------------------------------------------------------------------------
+
+//typedef void (*NukeKnobHandler)(DD::Image::Knob* k, Fsr::Pixel& out);
+
+//static void floatKnobHandler(DD::Image::Knob* k, Fsr::Pixel& out)
+//{
+//}
+
+
+struct NkKnobMapper
+{
+    int32_t             nk_num_floats;      //!< If -1 there's n floats
+    int32_t             nk_num_doubles;     //!< If -1 there's n doubles
+    RayShader::KnobType shader_knob_type;   //!<
+
+
+    NkKnobMapper(int32_t             nFloats,
+                 int32_t             nDoubles,
+                 RayShader::KnobType shaderType) :
+        nk_num_floats(nFloats),
+        nk_num_doubles(nDoubles),
+        shader_knob_type(shaderType)
+    {
+        //
+    }
+};
+
+#if __cplusplus <= 201103L
+typedef std::map<int32_t, NkKnobMapper> NukeKnobTypeMap;
+#else
+typedef std::unordered_map<int32_t, NkKnobMapper> NukeKnobTypeMap;
+#endif
+
+/*! Map of Nuke Knob::ClassID() to RayShader knob type.
+*/
+static const NukeKnobTypeMap nuke_knob_type_map =
+{
+    //--------------------------------------------------------------------------------
+    // Supported knob mappings:
+    { DD::Image::STRING_KNOB,                  NkKnobMapper(0, 0, RayShader::STRING_KNOB) },
+    { DD::Image::FILE_KNOB,                    NkKnobMapper(0, 0, RayShader::STRING_KNOB) },
+    { DD::Image::CACHED_FILE_KNOB,             NkKnobMapper(0, 0, RayShader::STRING_KNOB) },
+    { DD::Image::MULTILINE_STRING_KNOB,        NkKnobMapper(0, 0, RayShader::STRING_KNOB) },
+    { DD::Image::MULTILINE_EVAL_STRING_KNOB,   NkKnobMapper(0, 0, RayShader::STRING_KNOB) },
+    { DD::Image::TEXT_EDITOR_KNOB,             NkKnobMapper(0, 0, RayShader::STRING_KNOB) },
+    { DD::Image::SCRIPT_KNOB,                  NkKnobMapper(0, 0, RayShader::STRING_KNOB) },
+    //
+    { DD::Image::INT_KNOB,                     NkKnobMapper(0, 0, RayShader::INT_KNOB   ) },
+    { DD::Image::BOOL_KNOB,                    NkKnobMapper(0, 0, RayShader::INT_KNOB   ) },
+    { DD::Image::RADIO_KNOB,                   NkKnobMapper(0, 0, RayShader::INT_KNOB   ) },
+    { DD::Image::ENUMERATION_KNOB,             NkKnobMapper(0, 0, RayShader::INT_KNOB   ) },
+    { DD::Image::CASCADING_ENUMERATION_KNOB,   NkKnobMapper(0, 0, RayShader::INT_KNOB   ) },
+    //
+    { DD::Image::FLOAT_KNOB,                   NkKnobMapper(1, 0, RayShader::FLOAT_KNOB ) },
+    { DD::Image::SIZE_KNOB,                    NkKnobMapper(1, 0, RayShader::FLOAT_KNOB ) },
+    //
+    { DD::Image::DOUBLE_KNOB,                  NkKnobMapper(0, 1, RayShader::DOUBLE_KNOB) },
+    { DD::Image::PIXELASPECT_KNOB,             NkKnobMapper(0, 1, RayShader::DOUBLE_KNOB) },
+    //
+    { DD::Image::ARRAY_KNOB,                   NkKnobMapper(-1, 0, RayShader::FLOATARRAY_KNOB) }, // n floats
+    { DD::Image::RESIZABLE_ARRAY_KNOB,         NkKnobMapper(-1, 0, RayShader::FLOATARRAY_KNOB) }, // n floats
+    //
+    { DD::Image::XY_KNOB,                      NkKnobMapper(0, 2, RayShader::VEC2_KNOB  ) }, // 2 doubles/floats
+    { DD::Image::WH_KNOB,                      NkKnobMapper(0, 2, RayShader::VEC2_KNOB  ) }, // 2 doubles/floats
+    { DD::Image::UV_KNOB,                      NkKnobMapper(0, 2, RayShader::VEC2_KNOB  ) }, // 2 doubles/floats
+    { DD::Image::SCALE_KNOB,                   NkKnobMapper(0, 2, RayShader::VEC2_KNOB  ) }, // 2 doubles
+    //
+    { DD::Image::XYZ_KNOB,                     NkKnobMapper(3, 0, RayShader::VEC3_KNOB  ) }, // 3 floats
+    //
+    { DD::Image::BOX3_KNOB,                    NkKnobMapper(6, 0, RayShader::EMPTY_KNOB ) }, // 6 floats - TODO: support
+    { DD::Image::BBOX_KNOB,                    NkKnobMapper(0, 4, RayShader::EMPTY_KNOB ) }, // 4 doubles - TODO: support
+    //
+    { DD::Image::COLOR_KNOB,                   NkKnobMapper(3, 0, RayShader::COLOR3_KNOB) }, // 3 doubles/floats
+    { DD::Image::ACOLOR_KNOB,                  NkKnobMapper(4, 0, RayShader::COLOR4_KNOB) }, // 4 doubles/floats
+    //
+    { DD::Image::TRANSFORM2D_KNOB,             NkKnobMapper(16, 0, RayShader::MAT4_KNOB ) }, // 16 floats (Mat4f) - TODO: support
+    { DD::Image::AXIS_KNOB,                    NkKnobMapper(16, 0, RayShader::MAT4_KNOB ) }, // 16 floats (Mat4f) - TODO: support
+    //
+    { DD::Image::CHANNEL_MASK_KNOB,            NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) }, // TODO: support?
+    { DD::Image::CHANNEL_KNOB,                 NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) }, // TODO: support?
+    { DD::Image::INPUTONLY_CHANNEL_MASK_KNOB,  NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) }, // TODO: support?
+    { DD::Image::INPUTONLY_CHANNEL_KNOB,       NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) }, // TODO: support?
+
+#if 0
+    //--------------------------------------------------------------------------------
+    // Unsupported knobs:
+    { DD::Image::FORMAT_KNOB,                  NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    //
+    { DD::Image::ONEVIEW_KNOB,                 NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::MULTIVIEW_KNOB,               NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::VIEWVIEW_KNOB,                NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::VIEWPAIR_KNOB,                NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    //
+    { DD::Image::CUSTOM_KNOB,                  NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    //
+    { DD::Image::PULLDOWN_KNOB,                NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::PYPULLDOWN_KNOB,              NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::MULTIARRAY_KNOB,              NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::LIST_KNOB,                    NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+
+    { DD::Image::CP_KNOB,                      NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::MENU_KNOB,                    NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::PASSWORD_KNOB,                NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::TABLE_KNOB,                   NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::CONTROL_POINT_COLLECTION_KNOB,NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::DYNAMIC_BITMASK_KNOB,         NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::META_KEY_FRAME_KNOB,          NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::POSITIONVECTOR_KNOB,          NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+
+    { DD::Image::SIMPLE_ARRAY_KNOB,            NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::DISABLE_KNOB,                 NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::FREETYPE_KNOB,                NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+    { DD::Image::EDITABLE_ENUMERATION_KNOB,    NkKnobMapper(0, 0, RayShader::EMPTY_KNOB ) },
+#endif
+};
+
+
+//------------------------------------------------------------------------------------
+
+
+//! Return the string version of the type enum.
+/*static*/
+const char*
+RayShader::typeString(KnobType type)
+{
+    switch (type)
+    {
+        default:
+        case EMPTY_KNOB:      return "none";       break;
+        //
+        case STRING_KNOB:     return "string";     break;
+        case INT_KNOB:        return "int";        break;
+        case FLOAT_KNOB:      return "float";      break;
+        case DOUBLE_KNOB:     return "double";     break;
+        //
+        case COLOR2_KNOB:     return "color2";     break;
+        case COLOR3_KNOB:     return "color3";     break;
+        case COLOR4_KNOB:     return "color4";     break;
+        //
+        case VEC2_KNOB:       return "vec2";       break;
+        case VEC3_KNOB:       return "vec3";       break;
+        case VEC4_KNOB:       return "vec4";       break;
+        //
+        case MAT4_KNOB:       return "mat4";       break;
+        //
+        case FLOATARRAY_KNOB: return "floatarray"; break;
+        case VEC2ARRAY_KNOB:  return "vec2array";  break;
+        case VEC3ARRAY_KNOB:  return "vec3array";  break;
+        case VEC4ARRAY_KNOB:  return "vec4array";  break;
+        //
+        case PIXEL_KNOB:      return "pixel";      break;
+    }
+}
 
 
 //------------------------------------------------------------------------------------
@@ -51,6 +210,119 @@ namespace zpr {
 static Fsr::Vec4f vec4_zero(0.0f, 0.0f, 0.0f, 0.0f);
 static Fsr::Vec4f  vec4_one(1.0f, 1.0f, 1.0f, 1.0f);
 
+
+/*!
+*/
+RayShader::InputKnob::InputKnob() :
+    name(""),
+    type(EMPTY_KNOB),
+    data(NULL),
+    default_value(NULL),
+    shader(NULL),
+    output_index(-1)
+{
+    //
+}
+
+
+/*!
+*/
+RayShader::InputKnob::InputKnob(const char* knob_name,
+                                KnobType    data_type,
+                                const char* default_val) :
+    name((knob_name) ? knob_name : ""),
+    type(data_type),
+    data(NULL),
+    default_value(default_val),
+    shader(NULL),
+    output_index(-1)
+{
+    //
+}
+
+#define DBL_STR_SIZE 64
+
+/*!
+*/
+std::string
+RayShader::InputKnob::getText() const
+{
+    switch (type)
+    {
+        default:
+        case EMPTY_KNOB: return std::string("");
+
+        case STRING_KNOB: return (std::string)*this;
+
+        case INT_KNOB: {
+            char buf[DBL_STR_SIZE];
+            std::snprintf(buf, DBL_STR_SIZE, "%d", (int32_t)*this);
+            return std::string(buf); }
+
+        case FLOAT_KNOB: {
+            char buf[DBL_STR_SIZE];
+            std::snprintf(buf, DBL_STR_SIZE, "%.20g", (float)*this);
+            return std::string(buf); }
+
+        case DOUBLE_KNOB: {
+            char buf[DBL_STR_SIZE];
+            std::snprintf(buf, DBL_STR_SIZE, "%.20g", (double)*this);
+            return std::string(buf); }
+
+        case COLOR2_KNOB:
+        case VEC2_KNOB: {
+            const Fsr::Vec2f& v = Fsr::Vec2f(*this);
+            char buf[DBL_STR_SIZE*2];
+            std::snprintf(buf, DBL_STR_SIZE*2, "%.20g %.20g", v.x, v.y);
+            return std::string(buf); }
+
+        case COLOR3_KNOB:
+        case VEC3_KNOB: {
+            const Fsr::Vec3f& v = Fsr::Vec3f(*this);
+            char buf[DBL_STR_SIZE*3];
+            std::snprintf(buf, DBL_STR_SIZE*3, "%.20g %.20g %.20g", v.x, v.y, v.z);
+            return std::string(buf); }
+
+        case COLOR4_KNOB:
+        case VEC4_KNOB: {
+            const Fsr::Vec4f& v = Fsr::Vec4f(*this);
+            char buf[DBL_STR_SIZE*4];
+            std::snprintf(buf, DBL_STR_SIZE*4, "%.20g %.20g %.20g %.20g", v.x, v.y, v.z, v.w);
+            return std::string(buf); }
+
+        case MAT4_KNOB: {
+            const Fsr::Mat4d& m = Fsr::Mat4d(*this);
+            char buf[DBL_STR_SIZE*16];
+            std::snprintf(buf, DBL_STR_SIZE*16,
+                            "%.20g %.20g %.20g %.20g "
+                            "%.20g %.20g %.20g %.20g "
+                            "%.20g %.20g %.20g %.20g "
+                            "%.20g %.20g %.20g %.20g",
+                                m.a00, m.a10, m.a20, m.a30,
+                                m.a01, m.a11, m.a21, m.a31,
+                                m.a02, m.a12, m.a22, m.a32,
+                                m.a03, m.a13, m.a23, m.a33);
+            return std::string(buf); }
+
+        case FLOATARRAY_KNOB: return std::string("");
+        case VEC2ARRAY_KNOB:  return std::string("");
+        case VEC3ARRAY_KNOB:  return std::string("");
+        case VEC4ARRAY_KNOB:  return std::string("");
+
+        case PIXEL_KNOB:      return std::string("");
+    }
+}
+
+
+/*! Print the name, type and contents of knob to stream.
+*/
+void
+RayShader::InputKnob::print(std::ostream& o) const
+{
+    o << name << "(" << typeString(type) << ")[" << getText() << "]";
+}
+
+
 /*!
 */
 void
@@ -58,6 +330,13 @@ RayShader::InputKnob::setValue(const char* value)
 {
     if (!value)
         return; // don't crash
+    else if (!data)
+    {
+        std::cerr << "setValue(" << value << ") on input knob '" << name << "'";
+        std::cerr << " ignored, knob has no assigned data pointer";
+        std::cerr << std::endl;
+        return; // don't crash
+    }
 
     //std::cout << "        " << name << "(" << type << ")::setValue(" << value << ") data=" << data << std::endl;
     switch (type)
@@ -79,6 +358,12 @@ RayShader::InputKnob::setValue(const char* value)
             v = ::atoi(value);
             break;
         }
+        case FLOAT_KNOB:
+        {
+            float& v = *static_cast<float*>(data);
+            v = float(::atof(value));
+            break;
+        }
         case DOUBLE_KNOB:
         {
             double& v = *static_cast<double*>(data);
@@ -89,35 +374,54 @@ RayShader::InputKnob::setValue(const char* value)
         case COLOR2_KNOB:
         case VEC2_KNOB:
         {
-            Fsr::Vec2d& v = *static_cast<Fsr::Vec2d*>(data);
-            std::sscanf(value, "%lf %lf", &v.x, &v.y);
+            Fsr::Vec2f& v = *static_cast<Fsr::Vec2f*>(data);
+            if (std::sscanf(value, "%f %f", &v.x, &v.y) != 2)
+            {
+                std::sscanf(value, "%f, %f", &v.x, &v.y);
+            }
             break;
         }
         case COLOR3_KNOB:
         case VEC3_KNOB:
         {
-            Fsr::Vec3d& v = *static_cast<Fsr::Vec3d*>(data);
-            std::sscanf(value, "%lf %lf %lf", &v.x, &v.y, &v.z);
+            Fsr::Vec3f& v = *static_cast<Fsr::Vec3f*>(data);
+            if (std::sscanf(value, "%f %f %f", &v.x, &v.y, &v.z) != 3)
+            {
+                std::sscanf(value, "%f, %f, %f", &v.x, &v.y, &v.z);
+            }
             break;
         }
         case COLOR4_KNOB:
         case VEC4_KNOB:
         {
-            Fsr::Vec4d& v = *static_cast<Fsr::Vec4d*>(data);
-            std::sscanf(value, "%lf %lf %lf %lf", &v.x, &v.y, &v.z, &v.w);
+            Fsr::Vec4f& v = *static_cast<Fsr::Vec4f*>(data);
+            if (std::sscanf(value, "%f %f %f %f", &v.x, &v.y, &v.z, &v.w) != 4)
+            {
+                std::sscanf(value, "%f, %f, %f, %f", &v.x, &v.y, &v.z, &v.w);
+            }
             break;
         }
         case MAT4_KNOB:
         {
             Fsr::Mat4d& m = *static_cast<Fsr::Mat4d*>(data);
-            std::sscanf(value, "%lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
-                        &m.a00, &m.a10, &m.a20, &m.a30,
-                        &m.a01, &m.a11, &m.a21, &m.a31,
-                        &m.a02, &m.a12, &m.a22, &m.a32,
-                        &m.a03, &m.a13, &m.a23, &m.a33);
+            if (std::sscanf(value, "%lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
+                            &m.a00, &m.a10, &m.a20, &m.a30,
+                            &m.a01, &m.a11, &m.a21, &m.a31,
+                            &m.a02, &m.a12, &m.a22, &m.a32,
+                            &m.a03, &m.a13, &m.a23, &m.a33) != 16)
+            {
+                std::sscanf(value, "%lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf",
+                            &m.a00, &m.a10, &m.a20, &m.a30,
+                            &m.a01, &m.a11, &m.a21, &m.a31,
+                            &m.a02, &m.a12, &m.a22, &m.a32,
+                            &m.a03, &m.a13, &m.a23, &m.a33);
+            }
             break;
         }
         //
+        case FLOATARRAY_KNOB:
+// TODO: support!
+            break;
         case VEC2ARRAY_KNOB:
 // TODO: support!
             break;
@@ -132,16 +436,244 @@ RayShader::InputKnob::setValue(const char* value)
         {
             // We don't store the channel values yet, just the channel list:
             Fsr::Pixel& p = *static_cast<Fsr::Pixel*>(data);
-// TODO: parse the channel names!
+// TODO: parse the channel names and use the DDImage channel findChannel() method to get the Channels.
             const std::string str(value);
-            if      (str == "rgb" ) p.setChannels(DD::Image::Mask_RGB);
-            else if (str == "rgba") p.setChannels(DD::Image::Mask_RGBA);
+            if      (str == "rgb" ) p.setChannels(DD::Image::Mask_RGB  );
+            else if (str == "rgba") p.setChannels(DD::Image::Mask_RGBA );
+            else if (str == "r"   ) p.setChannels(DD::Image::Mask_Red  );
+            else if (str == "g"   ) p.setChannels(DD::Image::Mask_Green);
+            else if (str == "b"   ) p.setChannels(DD::Image::Mask_Blue );
+            else if (str == "a"   ) p.setChannels(DD::Image::Mask_Alpha);
 
             //std::cout << "        " << name << "(" << type << ")::setValue(" << value << ")" << ", channels=" << p.channels << std::endl;
             break;
         }
     }
+    //std::cout << "  InputKnob::setValue() " << *this << std::endl;
+}
 
+
+/*! Copy value from an Op knob, if types match, return true on success.
+
+    If the data type of the Op knob matches or can be converted
+    the value is copied.
+*/
+bool
+RayShader::InputKnob::setValue(const DD::Image::Knob*          op_knob,
+                               const DD::Image::OutputContext& op_context)
+{
+    if (!op_knob)
+        return false;
+
+const bool print_warning = true;//false;
+
+    if (!data)
+    {
+        if (print_warning)
+        {
+            std::cerr << "setValue('" << op_knob->name() << "') on input knob '" << name << "'";
+            std::cerr << " ignored, knob has no assigned data pointer";
+            std::cerr << std::endl;
+        }
+        return false; // don't crash
+    }
+
+    //std::cout << "setValue('" << op_knob->name() << "') on input knob '" << name << "'";
+    //std::cout << ", ClassID=" << op_knob->ClassID();
+    //std::cout << std::endl;
+
+    // Is there a mapping for this Nuke knob type?
+    const NukeKnobTypeMap::const_iterator mapping = nuke_knob_type_map.find(op_knob->ClassID());
+    if (mapping == nuke_knob_type_map.end())
+    {
+        if (print_warning)
+        {
+            std::cerr << "setValue('" << op_knob->name() << "') on input knob '" << name << "'";
+            std::cerr << " ignored, Nuke knob class " << op_knob->Class() << " cannot be handled.";
+            std::cerr << std::endl;
+        }
+        return false; // can't copy data
+    }
+
+    const NkKnobMapper& mapper = mapping->second;
+    if (mapper.shader_knob_type != this->type)
+    {
+        if (print_warning)
+        {
+            std::cerr << "setValue('" << op_knob->name() << "') on input knob '" << name << "'";
+            std::cerr << " ignored, Nuke knob class " << op_knob->Class() << " is not supported";
+            std::cerr << " by this knob's '" << typeString(mapper.shader_knob_type) << "' type.";
+            std::cerr << std::endl;
+        }
+        return false; // can't copy data
+    }
+
+    DD::Image::Hash dummy_hash;
+    DD::Image::Knob* k = const_cast<DD::Image::Knob*>(op_knob);
+
+    //std::cout << "  mapped: shader_knob_type=" << typeString(mapper.shader_knob_type);
+    //std::cout << ", nNkFloats=" << mapper.nk_num_floats;
+    //std::cout << ", nNkDoubles=" << mapper.nk_num_doubles;
+    switch (mapper.shader_knob_type)
+    {
+        default:
+        case EMPTY_KNOB:
+        case PIXEL_KNOB:
+            return false;
+        //
+        case STRING_KNOB:
+        {
+            assert(k->stringKnob()); // shouldn't happen...
+
+            const char* s = NULL;
+            k->store(DD::Image::StringPtr, &s, dummy_hash, op_context);
+            if (s)
+                *static_cast<std::string*>(data) = s;
+            else
+                *static_cast<std::string*>(data) = "";
+            return true;
+        }
+        //
+        case INT_KNOB:
+            k->store(DD::Image::IntPtr, data, dummy_hash, op_context);
+            return true;
+        case FLOAT_KNOB:
+            k->store(DD::Image::FloatPtr, data, dummy_hash, op_context);
+            return true;
+        case DOUBLE_KNOB:
+            k->store(DD::Image::DoublePtr, data, dummy_hash, op_context);
+            return true;
+        //
+        case COLOR2_KNOB:
+        case VEC2_KNOB:
+        {
+            double vals[2];
+            k->store(DD::Image::DoublePtr, vals, dummy_hash, op_context);
+            static_cast<Fsr::Vec2f*>(data)->set(float(vals[0]), float(vals[1]));
+            return true;
+        }
+        case COLOR3_KNOB:
+        case VEC3_KNOB:
+        {
+            double vals[3];
+            k->store(DD::Image::DoublePtr, vals, dummy_hash, op_context);
+            static_cast<Fsr::Vec3f*>(data)->set(float(vals[0]), float(vals[1]), float(vals[2]));
+            return true;
+        }
+        case COLOR4_KNOB:
+        case VEC4_KNOB:
+        {
+            double vals[4];
+            k->store(DD::Image::DoublePtr, vals, dummy_hash, op_context);
+            static_cast<Fsr::Vec4f*>(data)->set(float(vals[0]), float(vals[1]), float(vals[2]), float(vals[3]));
+            return true;
+        }
+        //
+        case MAT4_KNOB:
+        {
+            float vals[16];
+            k->store(DD::Image::FloatPtr, vals, dummy_hash, op_context);
+            Fsr::Mat4d& m = *static_cast<Fsr::Mat4d*>(data);
+            m.setTo(double(vals[ 0]), double(vals[ 1]), double(vals[ 2]), double(vals[ 3]),
+                    double(vals[ 4]), double(vals[ 5]), double(vals[ 6]), double(vals[ 7]),
+                    double(vals[ 8]), double(vals[ 9]), double(vals[10]), double(vals[11]),
+                    double(vals[12]), double(vals[13]), double(vals[14]), double(vals[15]));
+            return true;
+        }
+        //
+        /*
+          TODO: support
+            { DD::Image::ARRAY_KNOB,           NkKnobMapper(-1, 0, RayShader::FLOATARRAY_KNOB) }, // n floats
+            { DD::Image::RESIZABLE_ARRAY_KNOB, NkKnobMapper(-1, 0, RayShader::FLOATARRAY_KNOB) }, // n floats
+        */
+        case FLOATARRAY_KNOB:
+            break;
+        case VEC2ARRAY_KNOB:
+            break;
+        case VEC3ARRAY_KNOB:
+            break;
+        case VEC4ARRAY_KNOB:
+            break;
+    }
+    //std::cout << std::endl;
+
+    //std::cout << "  InputKnob::setValue() " << *this << std::endl;
+
+    return false; // unhandled
+}
+
+
+void
+RayShader::InputKnob::setString(const std::string& value)
+{
+    if (data && type == STRING_KNOB)
+        *static_cast<std::string*>(data) = value;
+}
+void
+RayShader::InputKnob::setString(const char* value) 
+{
+    if (data && type == STRING_KNOB)
+        *static_cast<std::string*>(data) = value;
+}
+
+void
+RayShader::InputKnob::setInt(int value)
+{
+    if (data && type == INT_KNOB)
+        *static_cast<int32_t*>(data) = value;
+}
+void RayShader::InputKnob::setBool(bool value) { setInt(value); }
+
+void
+RayShader::InputKnob::setFloat(float value)
+{
+    if (data && type == FLOAT_KNOB)
+        *static_cast<float*>(data) = value;
+}
+
+void
+RayShader::InputKnob::setDouble(double value)
+{
+    if (data && type == DOUBLE_KNOB)
+        *static_cast<double*>(data) = value;
+}
+
+void
+RayShader::InputKnob::setVec2f(const Fsr::Vec2f& value)
+{
+    if (data && (type == VEC2_KNOB || type == COLOR2_KNOB))
+        *static_cast<Fsr::Vec2f*>(data) = value;
+}
+void
+RayShader::InputKnob::setVec3f(const Fsr::Vec3f& value)
+{
+    if (data && (type == VEC3_KNOB || type == COLOR3_KNOB))
+        *static_cast<Fsr::Vec3f*>(data) = value;
+}
+void
+RayShader::InputKnob::setVec4f(const Fsr::Vec4f& value)
+{
+    if (data && (type == VEC4_KNOB || type == COLOR4_KNOB))
+        *static_cast<Fsr::Vec4f*>(data) = value;
+}
+
+void
+RayShader::InputKnob::setMat4d(const Fsr::Mat4d& value)
+{
+    if (data && type == INT_KNOB)
+        *static_cast<Fsr::Mat4d*>(data) = value;
+}
+
+
+//------------------------------------------------------------------------------------
+
+
+/*! Print the name, type and contents of knob to stream.
+*/
+void
+RayShader::OutputKnob::print(std::ostream& o) const
+{
+    o << name << "(" << typeString(type) << ")";//[" << getText() << "]";
 }
 
 
@@ -175,14 +707,10 @@ RayShader::RayShader() :
     m_outputs(m_default_outputs),
     m_valid(false)
 {
-    //
-    //std::cout << "RayShader::ctor(" << this << "): inputs[";
-    //for (uint32_t i=0; i < m_inputs.size(); ++i)
-    //    std::cout << " '" << m_inputs[i].name << "'";
-    //std::cout << " ] outputs[";
-    //for (uint32_t i=0; i < m_outputs.size(); ++i)
-    //    std::cout << " '" << m_outputs[i].name << "'";
-    //std::cout << " ]" << std::endl;
+    for (uint32_t i=0; i < m_inputs.size(); ++i)
+        m_input_name_map[m_inputs[i].name] = i;
+    for (uint32_t i=0; i < m_outputs.size(); ++i)
+        m_output_name_map[m_outputs[i].name] = i;
 }
 
 
@@ -194,14 +722,25 @@ RayShader::RayShader(const InputKnobList&  inputs,
     m_outputs(outputs),
     m_valid(false)
 {
-    //
-    //std::cout << "RayShader::ctor(" << this << "): inputs[";
-    //for (uint32_t i=0; i < m_inputs.size(); ++i)
-    //    std::cout << " '" << m_inputs[i].name << "'";
-    //std::cout << " ] outputs[";
-    //for (uint32_t i=0; i < m_outputs.size(); ++i)
-    //    std::cout << " '" << m_outputs[i].name << "'";
-    //std::cout << " ]" << std::endl;
+    for (uint32_t i=0; i < m_inputs.size(); ++i)
+        m_input_name_map[m_inputs[i].name] = i;
+    for (uint32_t i=0; i < m_outputs.size(); ++i)
+        m_output_name_map[m_outputs[i].name] = i;
+}
+
+
+/*! Print input and output knob values to stream.
+*/
+void
+RayShader::print(std::ostream& o) const
+{
+    o << m_name << ":" << std::endl;
+    o << "  inputs:" << std::endl;
+    for (uint32_t i=0; i < m_inputs.size(); ++i)
+        o << "    " << m_inputs[i] << std::endl;
+    o << "  outputs:" << std::endl;
+    for (uint32_t i=0; i < m_outputs.size(); ++i)
+        o << "    " << m_outputs[i] << std::endl;
 }
 
 
@@ -227,26 +766,61 @@ RayShader::getOutputKnobDefinitions() const
 }
 
 
-/*! Returns output knob by index.
-    If there's no knob an empty InputKnob is returned.
+/*! Returns input knob or NULL if not available.
 */
-const RayShader::InputKnob&
+RayShader::InputKnob*
 RayShader::getInputKnob(uint32_t input) const
 {
     if (input >= m_inputs.size())
-        return m_empty_input;
-    return m_inputs[input];
+        return NULL;
+    return const_cast<InputKnob*>(&m_inputs[input]);
+}
+RayShader::InputKnob*
+RayShader::getInputKnob(const std::string& input_name) const
+{
+    const int32_t input = getInputIndex(input_name);
+    return (input < 0) ? NULL : const_cast<InputKnob*>(&m_inputs[input]);
 }
 
-/*! Returns output knob by index.
-    If there's no knob an empty OutputKnob is returned.
+
+/*! Returns output knob or NULL if not available.
 */
-const RayShader::OutputKnob&
+RayShader::OutputKnob*
 RayShader::getOutputKnob(uint32_t output) const
 {
     if (output >= m_outputs.size())
-        return m_empty_output;
-    return m_outputs[output];
+        return NULL;
+    return const_cast<OutputKnob*>(&m_outputs[output]);
+}
+RayShader::OutputKnob*
+RayShader::getOutputKnob(const std::string& output_name) const
+{
+    const int32_t output = getOutputIndex(output_name);
+    return (output < 0) ? NULL : const_cast<OutputKnob*>(&m_outputs[output]);
+}
+
+
+/*! Return a named input's index or -1 if not found.
+*/
+int32_t
+RayShader::getInputIndex(const std::string& input_name) const
+{
+    if (input_name.empty())
+        return -1;
+    const KnobNameMap::const_iterator it = m_input_name_map.find(input_name);
+    return (it == m_input_name_map.end()) ? -1 : it->second;
+}
+
+
+/*! Return a named output's index or -1 if not found.
+*/
+int32_t
+RayShader::getOutputIndex(const std::string& output_name) const
+{
+    if (output_name.empty())
+        return -1;
+    const KnobNameMap::const_iterator it = m_output_name_map.find(output_name);
+    return (it == m_output_name_map.end()) ? -1 : it->second;
 }
 
 
@@ -254,41 +828,11 @@ RayShader::getOutputKnob(uint32_t output) const
     May be NULL if there's no input or no connection.
 */
 RayShader*
-RayShader::getInput(uint32_t input) const
+RayShader::getInputShader(uint32_t input) const
 {
     if (input >= m_inputs.size())
         return NULL;
-    return getInputKnob(input).shader;
-}
-
-
-/*! Return a named input's index or -1 if not found.
-*/
-int32_t
-RayShader::getInputByName(const char* input_name) const
-{
-    if (!input_name || !input_name[0])
-        return -1;
-    const uint32_t nInputs = (uint32_t)m_inputs.size();
-    for (uint32_t i=0; i < nInputs; ++i)
-        if (strcmp(m_inputs[i].name, input_name)==0)
-            return i;
-    return -1;
-}
-
-
-/*! Return a named output's index or -1 if not found.
-*/
-int32_t
-RayShader::getOutputByName(const char* output_name) const
-{
-    if (!output_name || !output_name[0])
-        return -1;
-    const uint32_t nOutputs = (uint32_t)m_outputs.size();
-    for (uint32_t i=0; i < nOutputs; ++i)
-        if (strcmp(m_outputs[i].name, output_name)==0)
-            return i;
-    return -1;
+    return m_inputs[input].shader;
 }
 
 
@@ -306,7 +850,7 @@ RayShader::canConnectInputTo(uint32_t    input,
     if (!shader || shader == this || input >= m_inputs.size())
         return false;
 
-    const int output_index = shader->getOutputByName(output_name);
+    const int output_index = shader->getOutputIndex(output_name);
     if (output_index == -1)
         return false; // no output match
 
@@ -344,7 +888,7 @@ RayShader::connectInput(uint32_t    input,
         return false;
     }
 
-    const int output_index = shader->getOutputByName(output_name);
+    const int output_index = shader->getOutputIndex(output_name);
     if (output_index == -1)
     {
         //std::cout << "        " << m_name << "::connectInput(" << input << ") FAILED connection to '" << output_name << "'" << std::endl;
@@ -376,6 +920,32 @@ RayShader::_connectInput(uint32_t    input,
 }
 
 
+/*! Convenience method to assign the data value target of a named InputKnob.
+    If default value string is provided it's updated in knob.
+    If default value is non-null the assigned data pointer value is set to the
+    default_value.
+    Returns true if data pointer was assigned and set successfully.
+*/
+bool
+RayShader::assignInputKnob(const char* input_name,
+                           void*       data,
+                           const char* default_val)
+{
+    InputKnob* k = getInputKnob(input_name);
+    if (!k || !data)
+        return false;
+
+    if (default_val)
+        k->default_value = default_val;
+
+    k->data = data;
+    if (k->default_value)
+        k->setValue(k->default_value);
+
+    return true;
+}
+
+
 /*!
 */
 void
@@ -384,12 +954,7 @@ RayShader::setInputValue(uint32_t    input,
 {
     if (!value || input >= m_inputs.size())
         return; // don't crash
-
-    InputKnob& knob = m_inputs[input];
-    if (!knob.data)
-        return; // don't crash
-
-    knob.setValue(value);
+    m_inputs[input].setValue(value);
 }
 
 
@@ -399,9 +964,26 @@ void
 RayShader::setInputValue(const char* input_name,
                          const char* value)
 {
-    const int input_index = getInputByName(input_name);
-    if (input_index >= 0)
-        setInputValue(input_index, value);
+    InputKnob* knob = getInputKnob(input_name);
+    if (knob)
+        knob->setValue(value);
+}
+
+
+/*! Set input knob value from an Op knob, return true if achieved.
+
+    If the data type of the Op knob matches or can be converted
+    the value is copied.
+*/
+bool
+RayShader::setInputValue(const char*                     input_name,
+                         const DD::Image::Knob*          op_knob,
+                         const DD::Image::OutputContext& op_context)
+{
+    InputKnob* knob = getInputKnob(input_name);
+    if (knob)
+        return knob->setValue(op_knob, op_context);
+    return false;
 }
 
 
@@ -420,8 +1002,8 @@ RayShader::validateShader(bool                 for_real,
 
     const uint32_t nInputs = (uint32_t)m_inputs.size();
     for (uint32_t i=0; i < nInputs; ++i)
-        if (getInput(i))
-            getInput(i)->validateShader(for_real, rtx);
+        if (getInputShader(i))
+            getInputShader(i)->validateShader(for_real, rtx);
 
     m_valid = true;
 }
@@ -435,8 +1017,8 @@ RayShader::getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings
 {
     const uint32_t nInputs = (uint32_t)m_inputs.size();
     for (uint32_t i=0; i < nInputs; ++i)
-        if (getInput(i))
-            getInput(i)->getActiveTextureBindings(texture_bindings);
+        if (getInputShader(i))
+            getInputShader(i)->getActiveTextureBindings(texture_bindings);
 }
 
 
@@ -481,7 +1063,7 @@ RayShader::evaluateDisplacement(RayShaderContext& stx,
 class DsoMap
 {
   private:
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
     typedef std::map<std::string, const RayShader::ShaderDescription*> RayShaderDescMap;
 #else
     typedef std::unordered_map<std::string, const RayShader::ShaderDescription*> RayShaderDescMap;
@@ -567,7 +1149,7 @@ RayShader::create(const char* shader_class)
     RayShader* dso = desc->builder_method();
     if (!dso)
     {
-        //std::cerr << "zpr::RayShader::create(): error, cannot allocate new shader of type '" << shader_class << "'" << std::endl;
+        std::cerr << "zpr::RayShader::create(): error, cannot allocate new shader of type '" << shader_class << "'" << std::endl;
         return NULL;
     }
     //std::cerr << "loaded description '" << desc->shaderClass() << "', dso=" << dso << std::endl;
@@ -704,6 +1286,41 @@ RayShader::ShaderDescription::find(const char* shader_class)
 
 
 //-----------------------------------------------------------------------------
+
+
+/*! Calc avoidance factor to compensate for the shadow-terminator problem.
+    Adapted from the Lux project which implemented the paper
+    "Taming the Shadow Terminator"
+    https://www.yiningkarlli.com/projects/shadowterminator.html
+
+    * Ninterpolated is the linearly-interpolated vertex normal
+    * Nshading is the shading normal which may be bump-perturbed
+    * Ldir is a direction normal pointing to the light
+
+*/
+/*static*/
+float
+RayShader::getShadowTerminatorAvoidanceFactor(const Fsr::Vec3d& Ninterpolated,
+                                              const Fsr::Vec3d& Nshading,
+                                              const Fsr::Vec3d& Ldir)
+{
+    const double Ns_dot_Ldir = Nshading.dot(Ldir);
+    if (Ns_dot_Ldir <= 0.0)
+        return 0.0;
+
+    const double Ni_dot_Ns = Ninterpolated.dot(Nshading);
+    if (Ni_dot_Ns <= 0.0)
+        return 0.0;
+
+    const double G = std::min(10.0, Ninterpolated.dot(Ldir) / (Ns_dot_Ldir * Ni_dot_Ns));
+    if (G <= 0.0)
+        return 0.0;
+
+    const double G2 = G * G;
+    const double G3 = G2 * G;
+
+    return float(-G3 + G2 + G);
+}
 
 
 /*! Return the indirect diffuse illumination for surface point with normal N.

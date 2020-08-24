@@ -33,19 +33,20 @@ namespace zpr {
 
 
 static RayShader* shaderBuilder() { return new zprIopUVTexture(); }
-/*static*/ const RayShader::ShaderDescription zprIopUVTexture::description("zprIopUVTexture", shaderBuilder);
+/*static*/ const RayShader::ShaderDescription zprIopUVTexture::description("IopUVTexture", shaderBuilder);
 /*static*/ const RayShader::InputKnobList zprIopUVTexture::input_defs =
 {
-    {InputKnob("uv",       VEC2_KNOB)},
+    //{InputKnob("iop",      OP_KNOB)},
+    {InputKnob("uv",       VEC2_KNOB, "0.5 0.5")},
 };
 /*static*/ const RayShader::OutputKnobList zprIopUVTexture::output_defs =
 {
     {OutputKnob("rgb",     COLOR3_KNOB)},
     {OutputKnob("rgba",    COLOR4_KNOB)},
-    {OutputKnob("r",       DOUBLE_KNOB)},
-    {OutputKnob("g",       DOUBLE_KNOB)},
-    {OutputKnob("b",       DOUBLE_KNOB)},
-    {OutputKnob("a",       DOUBLE_KNOB)},
+    {OutputKnob("r",       FLOAT_KNOB )},
+    {OutputKnob("g",       FLOAT_KNOB )},
+    {OutputKnob("b",       FLOAT_KNOB )},
+    {OutputKnob("a",       FLOAT_KNOB )},
 };
 
 

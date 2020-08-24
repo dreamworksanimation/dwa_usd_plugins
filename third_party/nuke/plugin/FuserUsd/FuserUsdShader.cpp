@@ -481,10 +481,10 @@ std::cout << " ]";
 /*! Called before execution to allow node to update local data from args.
 */
 /*virtual*/ void
-FuserUsdShadeShaderNode::_validateState(const Fsr::NodeContext& args,
+FuserUsdShadeShaderNode::_validateState(const Fsr::NodeContext& exec_ctx,
                                         bool                    for_real)
 {
-    Fsr::ShaderNode::_validateState(args, for_real);
+    Fsr::ShaderNode::_validateState(exec_ctx, for_real);
 }
 
 
@@ -572,10 +572,10 @@ FuserUsdShadeNodeGraphNode::FuserUsdShadeNodeGraphNode(const Pxr::UsdStageRefPtr
 /*! Called before execution to allow node to update local data from args.
 */
 /*virtual*/ void
-FuserUsdShadeNodeGraphNode::_validateState(const Fsr::NodeContext& args,
+FuserUsdShadeNodeGraphNode::_validateState(const Fsr::NodeContext& exec_ctx,
                                            bool                    for_real)
 {
-    Fsr::MaterialNode::_validateState(args, for_real);
+    Fsr::MaterialNode::_validateState(exec_ctx, for_real);
 }
 
 
@@ -708,7 +708,7 @@ FuserUsdShadeMaterialNode::FuserUsdShadeMaterialNode(const Pxr::UsdStageRefPtr& 
         }
     }
 
-    if (1)//debug())
+    if (debug())
     {
         if (numChildren() > 0)
         {
@@ -728,10 +728,10 @@ FuserUsdShadeMaterialNode::FuserUsdShadeMaterialNode(const Pxr::UsdStageRefPtr& 
 /*! Called before execution to allow node to update local data from args.
 */
 /*virtual*/ void
-FuserUsdShadeMaterialNode::_validateState(const Fsr::NodeContext& args,
+FuserUsdShadeMaterialNode::_validateState(const Fsr::NodeContext& exec_ctx,
                                           bool                    for_real)
 {
-    FuserUsdShadeNodeGraphNode::_validateState(args, for_real);
+    FuserUsdShadeNodeGraphNode::_validateState(exec_ctx, for_real);
 }
 
 
