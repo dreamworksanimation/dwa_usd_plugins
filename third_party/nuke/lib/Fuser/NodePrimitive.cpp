@@ -205,7 +205,8 @@ NodePrimitive::copy(const NodePrimitive* b)
 /*static*/ int
 NodePrimitive::addGeometryToScene(const char*                      fuser_class,
                                   int                              creation_mode,
-                                  const Fsr::NodeContext&          node_args,
+                                  ArgSet&                          node_args,
+                                  Fsr::NodeContext&                exec_ctx,
                                   Fsr::GeoOpGeometryEngineContext& geo_ctx)
 {
     assert(geo_ctx.geo);
@@ -231,7 +232,8 @@ NodePrimitive::addGeometryToScene(const char*                      fuser_class,
         std::cout << ", rebuild_mask=0x" << std::hex << geo_ctx.geo->rebuild_mask() << std::dec;
         std::cout << ": reload_prims=" << reload_prims << ", reload_points=" << reload_points << ", reload_attribs=" << reload_attribs;
         std::cout << ", creation_mode=" << creation_mode;
-        //std::cout << " args[" << node_args.args() << "]";
+        //std::cout << ", args[" << node_args << "]";
+        //std::cout << ", exec-args[" << exec_ctx.args() << "]";
         std::cout << std::endl;
     }
 
@@ -239,7 +241,7 @@ NodePrimitive::addGeometryToScene(const char*                      fuser_class,
     // geometry data structures stored in the GeoOp. The GeoInfo caches
     // move around in memory as the GeometryList appends objects to it:
     Fsr::GeoInfoCacheRef geoinfo_cache;
-    geo_ctx.addObjectThreadSafe(node_args.args()[Arg::Scene::path], geoinfo_cache);
+    geo_ctx.addObjectThreadSafe(node_args[Arg::Scene::path], geoinfo_cache);
     assert(geoinfo_cache.obj >= 0);
 
     if (creation_mode == LOAD_IMMEDIATE)
@@ -260,7 +262,7 @@ NodePrimitive::addGeometryToScene(const char*                      fuser_class,
         // nodes in the SceneGraphPrimitive so they can be reused.
 
         // Attempt to instantiate the Fuser Node:
-        Fsr::Node* node = Fsr::Node::create(fuser_class, node_args.args(), NULL/*parent-node*/);
+        Fsr::Node* node = Fsr::Node::create(fuser_class, node_args, NULL/*parent-node*/);
         if (!node)
         {
             std::cerr << "Fuser::NodePrimitive::addGeometryToScene(): ";
@@ -269,8 +271,12 @@ NodePrimitive::addGeometryToScene(const char*                      fuser_class,
             return -1; // creation error
         }
 
+        // Pass the current object index as a hopefully-static object id value:
+        exec_ctx.setInt("object_id", geoinfo_cache.obj);
+
         // Execute node to generate geoemtry data. Calls validateState() on the Node automatically.
         node->execute(node_args,
+                      exec_ctx,
                       "GeoOpGeometryEngine"/*target-name*/,
                       &geo_ctx/*target-data*/);
         delete node;
@@ -314,7 +320,7 @@ NodePrimitive::addGeometryToScene(const char*                      fuser_class,
         {
             // Deferred mode - add the PuserPrim itself, the GeometryList
             // takes ownership of pointer:
-            fprim = geo_ctx.createFuserNodePrimitiveThreadSafe(fuser_class, node_args.args());
+            fprim = geo_ctx.createFuserNodePrimitiveThreadSafe(fuser_class, node_args);
             if (!fprim || !fprim->node())
             {
                 geo_ctx.geo->error("NodePrimitive::addGeometryToScene(): cannot create Fsr::Node of type '%s'", fuser_class);
@@ -344,7 +350,7 @@ NodePrimitive::addGeometryToScene(const char*                      fuser_class,
             {
                 std::stringstream err;
                 err << "Fsr::Node '" << fuser_class << "'";
-                err << "[" << node_args.args()[Arg::Scene::path] << "]";
+                err << "[" << node_args[Arg::Scene::path] << "]";
                 err << " disappeared!";
                 geo_ctx.geo->error("NodePrimitive::addGeometryToScene(): %s", err.str().c_str());
 
@@ -362,13 +368,13 @@ NodePrimitive::addGeometryToScene(const char*                      fuser_class,
         std::cout << "      NodePrimitive(node=" << fprim->node() << ")::deferred:";
         std::cout << " name='" << fprim->getName() << "'";
         std::cout << ", path='" << fprim->getPath() << "'";
-        std::cout << ", obj=" << obj << ", frame=" << node_args.frame();
+        std::cout << ", obj=" << obj << ", frame=" << exec_ctx.frame();
         //std::cout << " args[" << fprim->node()->args() << "]";
         std::cout << std::endl;
 #endif
 
         // Get the matrix and local bbox up to date:
-        fprim->node()->validateState(node_args, false/*for_real*/, false/*force*/);
+        fprim->node()->validateState(node_args, exec_ctx, false/*for_real*/, false/*force*/);
 
         // Get the *world-space* bbox for the bbox points, because the GeoInfo's
         // global matrix does not represent *this* prim's world-space xform,
@@ -819,7 +825,8 @@ NodePrimitive::tessellate(DD::Image::Scene*            render_scene,
 
     // Execute node to generate Nuke render prims:
     DDImageRenderSceneTessellateContext rtess_ctx(this, ptx, render_scene);
-    m_node->execute(Fsr::NodeContext()/*target_context*/,
+    m_node->execute(ArgSet()/*node_args*/,
+                    Fsr::NodeContext()/*target_context*/,
                     DDImageRenderSceneTessellateContext::name,
                     &rtess_ctx/*target*/);
 }
@@ -842,7 +849,10 @@ NodePrimitive::draw_wireframe(DD::Image::ViewerContext*    vtx,
     Fsr::PrimitiveViewerContext pv_ctx(vtx, ptx);
 
     // Execute node to draw geoemtry data:
-    m_node->execute(Fsr::NodeContext()/*target_context*/, "DRAW_GL_WIREFRAME", &pv_ctx/*target*/);
+    m_node->execute(ArgSet()/*node_args*/,
+                    Fsr::NodeContext()/*target_context*/,
+                    "DRAW_GL_WIREFRAME",
+                    &pv_ctx/*target*/);
 }
 
 
@@ -882,11 +892,17 @@ NodePrimitive::draw_solid(DD::Image::ViewerContext*    vtx,
     if (vtx->display3d(ptx->geoinfo()->display3d) >= DD::Image::DISPLAY_TEXTURED)
     {
         glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-        m_node->execute(Fsr::NodeContext()/*target_context*/, "DRAW_GL_TEXTURED", &pv_ctx/*target*/);
+        m_node->execute(ArgSet()/*node_args*/,
+                        Fsr::NodeContext()/*target_context*/,
+                        "DRAW_GL_TEXTURED",
+                        &pv_ctx/*target*/);
     }
     else
     {
-        m_node->execute(Fsr::NodeContext()/*target_context*/, "DRAW_GL_SOLID", &pv_ctx/*target*/);
+        m_node->execute(ArgSet()/*node_args*/,
+                        Fsr::NodeContext()/*target_context*/,
+                        "DRAW_GL_SOLID",
+                        &pv_ctx/*target*/);
     }
 }
 

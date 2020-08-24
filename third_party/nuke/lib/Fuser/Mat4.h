@@ -863,18 +863,18 @@ Mat4<T>::normalTransform(const Vec3<S>& n) const
 {
     if (isSameType<S,T>::value)
     {
-        return Vec3<S>(a00*n.x + a10*n.y + a20*n.z,
-                       a01*n.x + a11*n.y + a21*n.z,
-                       a02*n.x + a12*n.y + a22*n.z);
+        return Vec3<S>(S(a00*n.x + a10*n.y + a20*n.z),
+                       S(a01*n.x + a11*n.y + a21*n.z),
+                       S(a02*n.x + a12*n.y + a22*n.z));
     }
     else
     {
         const T x = T(n.x);
         const T y = T(n.y);
         const T z = T(n.z);
-        return Vec3<S>(a00*x + a10*y + a20*z,
-                       a01*x + a11*y + a21*z,
-                       a02*x + a12*y + a22*z);
+        return Vec3<S>(S(a00*x + a10*y + a20*z),
+                       S(a01*x + a11*y + a21*z),
+                       S(a02*x + a12*y + a22*z));
     }
 }
 

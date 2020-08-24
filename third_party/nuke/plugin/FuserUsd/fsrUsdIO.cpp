@@ -168,7 +168,7 @@ class FuserUsdGeomScope : public FuserUsdNode,
 
 
     //! Called before execution to allow node to update local data from args.
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real) {}
 
 

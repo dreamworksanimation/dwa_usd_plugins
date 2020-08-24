@@ -59,6 +59,10 @@ FuserUsdLight::FuserUsdLight(const Pxr::UsdStageRefPtr& stage,
     if (light_prim.IsValid() && light_prim.IsA<Pxr::UsdLuxLight>())
     {
         m_light_schema = Pxr::UsdLuxLight(light_prim);
+
+        // Lights can be affected by visibility:
+        getVisibility(light_prim, m_is_visible, m_has_animated_visibility);
+
         if (debug())
         {
             printPrimAttributes("  Light", light_prim, false/*verbose*/, std::cout);
@@ -81,11 +85,14 @@ FuserUsdLight::FuserUsdLight(const Pxr::UsdStageRefPtr& stage,
 /*! Called before execution to allow node to update local data from args.
 */
 /*virtual*/ void
-FuserUsdLight::_validateState(const Fsr::NodeContext& args,
+FuserUsdLight::_validateState(const Fsr::NodeContext& exec_ctx,
                               bool                    for_real)
 {
     // Get the time value up to date:
-    FuserUsdXform::_validateState(args, for_real);
+    FuserUsdXform::_validateState(exec_ctx, for_real);
+
+    //if (!m_is_visible)
+    //    return; // skip rest if light is not visible
 }
 
 
@@ -109,12 +116,20 @@ FuserUsdLight::_execute(const Fsr::NodeContext& target_context,
     {
         std::cout << "  FuserUsdLight::_execute(" << this << ") target='" << target_name << "'";
         std::cout << " Light";
+        if (!m_is_visible)
+            std::cout << "(INVISIBLE)";
         std::cout << " '" << getString(Arg::Scene::path) << "'";
         if (m_have_xform)
             std::cout << ", xform" << m_xform;
         else
             std::cout << ", xform disabled";
         std::cout << std::endl;
+    }
+
+    if (!m_is_visible)
+    {
+        // Skip light execute methods if not visible:
+        return FuserUsdXform::_execute(target_context, target_name, target, src0, src1);
     }
 
     // Redirect execution depending on target type:
@@ -182,20 +197,20 @@ FuserUsdLight::_execute(const Fsr::NodeContext& target_context,
 /*virtual*/
 void
 FuserUsdLight::importSceneOp(DD::Image::Op*     op,
-                             const Fsr::ArgSet& args)
+                             const Fsr::ArgSet& exec_args)
 {
     // Allow camera nodes to import their xforms into any AxisOp subclass:
     if (!dynamic_cast<DD::Image::AxisOp*>(op))
         return; // shouldn't happen...
 
-    const bool debug = args.getBool(Arg::Scene::read_debug, false);
+    const bool debug = exec_args.getBool(Arg::Scene::read_debug, false);
     if (debug)
         std::cout << "    FuserUsdLight::importSceneOp('" << op->node_name() << "')" << std::endl;
 
 const bool allow_anim = true;
 
     // Import the Xform data into the Axis_Knob:
-    FuserUsdXform::importSceneOp(op, args);
+    FuserUsdXform::importSceneOp(op, exec_args);
 
     DD::Image::LightOp* light = dynamic_cast<DD::Image::LightOp*>(op);
     if (!light)

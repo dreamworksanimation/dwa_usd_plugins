@@ -72,7 +72,7 @@ static const Fsr::KnobMap knob_map[] =
 //-------------------------------------------------------------------------
 
 
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
 typedef std::map<uint64_t, GeoSceneFileArchiveContext*> GeoSceneFileArchiveContextMap;
 #else
 typedef std::unordered_map<uint64_t, GeoSceneFileArchiveContext*> GeoSceneFileArchiveContextMap;
@@ -648,19 +648,23 @@ GeoSceneGraphReader::knob_changed(DD::Image::Knob* k)
         if (k->name() == "version")
         {
             // Execute but only send a cache-invalidate command:
-            Fsr::NodeContext node_ctx;
-            Fsr::NodeContext target_ctx;
-            //
-            node_ctx.setString(Arg::node_directive, Arg::Scene::file_archive_invalidate);
-            node_ctx.setString(Arg::Scene::file,    filePathForReader());
-            //
-            target_ctx.setString(Arg::Scene::file,             filePathForReader());
-            target_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
-            //
+            ArgSet           node_args;
+            Fsr::NodeContext exec_ctx;
+            {
+                //--------------------------------------------------------------
+                // Parameters to control creation of the Fuser execution node:
+                node_args.setString(Arg::node_directive, Arg::Scene::file_archive_invalidate);
+                node_args.setString(Arg::Scene::file,    filePathForReader());
+
+                //--------------------------------------------------------------
+                // Parameters then passed to execute(), validateState(), and _execute():
+                exec_ctx.setString(Arg::Scene::file,             filePathForReader());
+                exec_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
+            }
             Fsr::Node::executeImmediate(fuserIOClass(),                 /*node_class*/
-                                        node_ctx.args(),                /*node_attribs*/
-                                        NULL,                           /*node-parent*/
-                                        target_ctx,                     /*target_context*/
+                                        node_args,                      /*node_args*/
+                                        NULL,                           /*node_parent*/
+                                        exec_ctx,                       /*target_context*/
                                         Fsr::SceneArchiveContext::name  /*target_name*/);
 
             updateReaderUI();
@@ -970,15 +974,19 @@ GeoSceneGraphReader::_updateSceneGraph()
         const NodeDescription& desc = it->second;
         if (desc.type.empty())
         {
-            if (desc.path == "...")
+            if (desc.note == "PATH_TRUNCATED")
                 snprintf(path, 2048, "%s ...", desc_id.c_str());
+            else if (!desc.note.empty())
+                snprintf(path, 2048, "%s (%s)", desc_id.c_str(), desc.note.c_str());
             else
                 snprintf(path, 2048, "%s", desc_id.c_str());
         }
         else
         {
-            if (desc.path == "...")
+            if (desc.note == "PATH_TRUNCATED")
                 snprintf(path, 2048, "%s  (%s) ...", desc_id.c_str(), desc.type.c_str());
+            else if (!desc.note.empty())
+                snprintf(path, 2048, "%s (%s)  (%s)", desc_id.c_str(), desc.note.c_str(), desc.type.c_str());
             else
                 snprintf(path, 2048, "%s  (%s)", desc_id.c_str(), desc.type.c_str());
         }
@@ -1672,7 +1680,7 @@ GeoSceneGraphReader::buildNodeMasks(const char*               surface_mask,
 
 */
 /*virtual*/ void
-GeoSceneGraphReader::_appendNodeContextArgs(Fsr::NodeContext& node_ctx)
+GeoSceneGraphReader::_appendNodeContextArgs(ArgSet& node_args)
 {
     Fsr::GeoSceneFileArchiveContext* archive_ctx = sceneFileArchiveContext();
     assert(archive_ctx); // shouldn't happen!
@@ -1681,13 +1689,13 @@ GeoSceneGraphReader::_appendNodeContextArgs(Fsr::NodeContext& node_ctx)
     archive_ctx->updateAccessTime();
 #endif
 
-    node_ctx.setString(Arg::Scene::file, filePathForReader());
+    node_args.setString(Arg::Scene::file, filePathForReader());
 
-    node_ctx.setHash(Arg::Scene::node_filter_hash,    archive_ctx->node_filter_hash.value()   );
-    node_ctx.setHash(Arg::Scene::node_selection_hash, archive_ctx->selected_node_paths_hash.value());
+    node_args.setHash(Arg::Scene::node_filter_hash,    archive_ctx->node_filter_hash.value()   );
+    node_args.setHash(Arg::Scene::node_selection_hash, archive_ctx->selected_node_paths_hash.value());
 
-    node_ctx.setString(Arg::Scene::file_archive_context_id,   archive_ctx->archive_context_id        );
-    node_ctx.setHash(  Arg::Scene::file_archive_context_hash, archive_ctx->archive_context_hash.value());
+    node_args.setString(Arg::Scene::file_archive_context_id,   archive_ctx->archive_context_id        );
+    node_args.setHash(  Arg::Scene::file_archive_context_hash, archive_ctx->archive_context_hash.value());
 }
 
 
@@ -1772,37 +1780,43 @@ GeoSceneGraphReader::_openSceneFile()
     }
     else
     {
-        Fsr::NodeContext node_ctx;
-        node_ctx.setString(Arg::node_directive, Arg::Scene::file_archive_open);
-        _appendNodeContextArgs(node_ctx); // sets filename, hashes, etc
-#if 0
+        ArgSet           node_args;
+        Fsr::NodeContext exec_ctx;
         {
-            std::string population_masks; population_masks.reserve(4096);
-            for (size_t j=0; j < archive_ctx->populate_path_masks.size(); ++j)
+            //--------------------------------------------------------------
+            // Parameters to control creation of the Fuser execution node:
+            node_args.setString(Arg::node_directive, Arg::Scene::file_archive_open);
+            _appendNodeContextArgs(node_args); // sets filename, hashes, etc
+#if 0
             {
-                const std::string& mask = archive_ctx->populate_path_masks[j];
-                if (mask.size() == 0)
-                    continue;
-                if (!population_masks.empty())
-                    population_masks += ",";
-                population_masks += mask;
+                std::string population_masks; population_masks.reserve(4096);
+                for (size_t j=0; j < archive_ctx->populate_path_masks.size(); ++j)
+                {
+                    const std::string& mask = archive_ctx->populate_path_masks[j];
+                    if (mask.size() == 0)
+                        continue;
+                    if (!population_masks.empty())
+                        population_masks += ",";
+                    population_masks += mask;
+                }
+                exec_ctx.setString(buildStr("%s:archive:population_masks", fuserIOClass()), population_masks);
             }
-            target_ctx.setString(buildStr("%s:archive:population_masks", fuserIOClass()), population_masks);
-        }
 #endif
 
-        Fsr::NodeContext target_ctx;
-        target_ctx.setBool(Arg::Scene::read_debug,         debug);
-        target_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
-        //target_ctx.setBool(buildStr("%s:debug_archive_loading", fuserIOClass()), debug_archive);
+            //--------------------------------------------------------------
+            // Parameters then passed to execute(), validateState(), and _execute():
+            exec_ctx.setBool(Arg::Scene::read_debug,         debug);
+            exec_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
+            //exec_ctx.setBool(buildStr("%s:debug_archive_loading", fuserIOClass()), debug_archive);
 
-        archive_ctx->scene_file         = filePathForReader();
-        archive_ctx->scene_context_name = "";
+            archive_ctx->scene_file         = filePathForReader();
+            archive_ctx->scene_context_name = "";
+        }
 
         Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuserIOClass(),                        /*node_class*/
-                                                            node_ctx.args(),                       /*node_attribs*/
-                                                            NULL,                                  /*node-parent*/
-                                                            target_ctx,                            /*target_context*/
+                                                            node_args,                             /*node_args*/
+                                                            NULL,                                  /*node_parent*/
+                                                            exec_ctx,                              /*target_context*/
                                                             Fsr::GeoSceneFileArchiveContext::name, /*target_name*/
                                                             &archive_ctx->archive_context_id,      /*target*/
                                                             archive_ctx,                           /*src0*/
@@ -1865,25 +1879,29 @@ GeoSceneGraphReader::_openSceneFile()
         // for
         for (std::set<std::string>::const_iterator it=object_paths.begin(); it != object_paths.end(); ++it)
         {
-            Fsr::NodeContext node_ctx;
-            Fsr::NodeContext target_ctx;
-            //
-            node_ctx.setString(Arg::node_directive, Arg::NukeGeo::node_type_auto);
-            node_ctx.setString(Arg::Scene::file,    filePathForReader());
-            node_ctx.setString(Arg::node_name,      Fsr::fileNameFromPath(*it)); // not really a 'file' name in this context
-            node_ctx.setString(Arg::node_path,      *it); // TODO: this path may change to be different than Scene::path
-            node_ctx.setString(Arg::Scene::path,    *it);
-            node_ctx.setBool(  Arg::NukeGeo::read_debug, debug);
-            //
-            target_ctx.setString(Arg::Scene::path,         *it);
-            target_ctx.setBool(  Arg::Scene::read_debug,   true);
-            target_ctx.setBool(  Arg::NukeGeo::read_debug, true);
-            //
+            ArgSet           node_args;
+            Fsr::NodeContext exec_ctx;
+            {
+                //--------------------------------------------------------------
+                // Parameters to control creation of the Fuser execution node:
+                node_args.setString(Arg::node_directive, Arg::NukeGeo::node_type_auto);
+                node_args.setString(Arg::Scene::file,    filePathForReader());
+                node_args.setString(Arg::node_name,      Fsr::fileNameFromPath(*it)); // not really a 'file' name in this context
+                node_args.setString(Arg::node_path,      *it); // TODO: this path may change to be different than Scene::path
+                node_args.setString(Arg::Scene::path,    *it);
+                node_args.setBool(  Arg::NukeGeo::read_debug, debug);
+
+                //--------------------------------------------------------------
+                // Parameters then passed to execute(), validateState(), and _execute():
+                exec_ctx.setString(Arg::Scene::path,         *it);
+                exec_ctx.setBool(  Arg::Scene::read_debug,   true);
+                exec_ctx.setBool(  Arg::NukeGeo::read_debug, true);
+            }
             uint32_t topology_variance = Fsr::Node::ConstantTopology;
             Fsr::Node::executeImmediate(fuserIOClass(),                               /*node_class*/
-                                        node_ctx.args(),                              /*node_attribs*/
-                                        NULL,                                         /*node-parent*/
-                                        target_ctx,                                   /*target_context*/
+                                        node_args,                                    /*node_args*/
+                                        NULL,                                         /*node_parent*/
+                                        exec_ctx,                                     /*target_context*/
                                         Arg::NukeGeo::node_topology_variance.c_str(), /*target_name*/
                                         &topology_variance                            /*target*/);
 
@@ -1927,22 +1945,25 @@ GeoSceneGraphReader::_getNodeDescriptions(const char*              file,
     }
 
     // Build context (args) to pass to FuserPrims ctors:
-    Fsr::NodeContext node_ctx;
-    Fsr::NodeContext target_ctx;
+    ArgSet           node_args;
+    Fsr::NodeContext exec_ctx;
     {
-        // Fill in the arguments that the Fuser nodes need to build or update:
-        //node_ctx.setTime(reader_frame, m_options->k_frames_per_second);
+        //--------------------------------------------------------------
+        // Parameters to control creation of the Fuser execution node:
+        //node_args.setTime(reader_frame, m_options->k_frames_per_second);
 
-        node_ctx.setString(Arg::node_directive,          Arg::Scene::node_type_contents);
-        node_ctx.setString(Arg::Scene::file,             file);
-        node_ctx.setString(Arg::Scene::path,             "/"); // primary node path is root(the archive) in this case
-        node_ctx.setBool(  Arg::Scene::read_debug,       debug);
-        //node_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
-        //
-        target_ctx.setString(Arg::Scene::path,             (start_path_at) ? start_path_at : "/");
-        target_ctx.setInt(   Arg::Scene::path_max_depth,   path_max_depth);
-        target_ctx.setBool(  Arg::Scene::read_debug,       debug);
-        //target_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
+        node_args.setString(Arg::node_directive,            Arg::Scene::node_type_contents);
+        node_args.setString(Arg::Scene::file,               file);
+        node_args.setString(Arg::Scene::path,               "/"); // primary node path is root(the archive) in this case
+        node_args.setBool(  Arg::Scene::read_debug,         debug);
+        //node_args.setBool(  Arg::Scene::file_archive_debug, debug_archive);
+
+        //--------------------------------------------------------------
+        // Parameters then passed to execute(), validateState(), and _execute():
+        exec_ctx.setString(Arg::Scene::path,               (start_path_at) ? start_path_at : "/");
+        exec_ctx.setInt(   Arg::Scene::path_max_depth,     path_max_depth);
+        exec_ctx.setBool(  Arg::Scene::read_debug,         debug);
+        //exec_ctx.setBool(  Arg::Scene::file_archive_debug, debug_archive);
     }
 
     Fsr::ScenePathFilters scene_path_filters;
@@ -1952,9 +1973,9 @@ GeoSceneGraphReader::_getNodeDescriptions(const char*              file,
     scene_node_descriptions.node_description_map = &node_descriptions;
 
     Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuserIOClass(),               /*node_class*/
-                                                        node_ctx.args(),              /*node_args*/
-                                                        NULL,                         /*node-parent*/
-                                                        target_ctx,                   /*target_context*/
+                                                        node_args,                    /*node_args*/
+                                                        NULL,                         /*node_parent*/
+                                                        exec_ctx,                     /*target_context*/
                                                         scene_node_descriptions.name, /*target_name*/
                                                         &scene_node_descriptions,     /*target*/
                                                         &scene_path_filters           /*src0*/);
@@ -2073,13 +2094,19 @@ GeoSceneGraphReader::_getSelectedNodePaths(const Fsr::NodeFilterPatternList& nod
     }
     else
     {
-        Fsr::NodeContext node_ctx;
-        node_ctx.setString(Arg::node_directive, Arg::NukeGeo::node_type_contents);
-        _appendNodeContextArgs(node_ctx);
+        ArgSet           node_args;
+        Fsr::NodeContext exec_ctx;
+        {
+            //--------------------------------------------------------------
+            // Parameters to control creation of the Fuser execution node:
+            node_args.setString(Arg::node_directive, Arg::NukeGeo::node_type_contents);
+            _appendNodeContextArgs(node_args);
 
-        Fsr::NodeContext target_ctx;
-        target_ctx.setBool(Arg::Scene::read_debug,         debug);
-        target_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
+            //--------------------------------------------------------------
+            // Parameters then passed to execute(), validateState(), and _execute():
+            exec_ctx.setBool(Arg::Scene::read_debug,         debug);
+            exec_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
+        }
 
         Fsr::NodeFilterPatternList* filter_patterns =
             const_cast<Fsr::NodeFilterPatternList*>(&node_filter_patterns);
@@ -2090,9 +2117,9 @@ GeoSceneGraphReader::_getSelectedNodePaths(const Fsr::NodeFilterPatternList& nod
 
         // Save previous hash:
         Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuserIOClass(),              /*node_class*/
-                                                            node_ctx.args(),             /*node_args*/
-                                                            NULL,                        /*node-parent*/
-                                                            target_ctx,                  /*target_context*/
+                                                            node_args,                   /*node_args*/
+                                                            NULL,                        /*node_parent*/
+                                                            exec_ctx,                    /*target_context*/
                                                             Fsr::ScenePathFilters::name, /*target_name*/
                                                             &selections,                 /*target*/
                                                             filter_patterns              /*src0*/);

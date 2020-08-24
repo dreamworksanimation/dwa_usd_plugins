@@ -81,14 +81,16 @@ struct FSR_EXPORT NodeDescription
 {
     std::string     path;       //!< Full scene path ex. '/Scene/Foo/Bar'
     std::string     type;       //!< Type/Class of node ex. 'Camera'
+    std::string     note;       //!< Extra descriptive info
 
     NodeDescription() {}
 
     NodeDescription(const std::string& _path,
-                    const std::string& _type) : path(_path), type(_type) {}
+                    const std::string& _type,
+                    const std::string& _note="") : path(_path), type(_type), note(_note) {}
 
-    NodeDescription(const NodeDescription& b) : path(b.path), type(b.type) {}
-    NodeDescription& operator = (const NodeDescription& b) { path = b.path; type = b.type; return *this; }
+    NodeDescription(const NodeDescription& b) : path(b.path), type(b.type), note(b.note) {}
+    NodeDescription& operator = (const NodeDescription& b) { path = b.path; type = b.type; note = b.note; return *this; }
 
 };
 typedef std::vector<NodeDescription>           NodeDescriptionList;
@@ -250,7 +252,7 @@ class FSR_EXPORT Node
 
   protected:
     //! Called before execution to allow node to update local data from args. Base class does nothing.
-    virtual void _validateState(const Fsr::NodeContext& args,
+    virtual void _validateState(const Fsr::NodeContext& exec_ctx,
                                 bool                    for_real=false) { }
 
     //! Return abort (-1) on user-interrupt so processing can be interrupted.
@@ -370,7 +372,8 @@ class FSR_EXPORT Node
     bool isValid() const { return m_is_valid; }
 
     //! Called before execution to allow node to update local data from args.
-    void validateState(const Fsr::NodeContext& args,
+    void validateState(const ArgSet&           node_args,
+                       const Fsr::NodeContext& exec_ctx,
                        bool                    for_real,
                        bool                    force=false);
 
@@ -404,7 +407,8 @@ class FSR_EXPORT Node
         error, or -2 if an error occured.
         Use errorState() and errorMessage() to retrieve full error results.
     */
-    int execute(const Fsr::NodeContext& target_context,
+    int execute(const ArgSet&           node_args,
+                const Fsr::NodeContext& target_context,
                 const char*             target_name,
                 void*                   target=NULL,
                 void*                   src0=NULL,
@@ -565,7 +569,7 @@ class FSR_EXPORT ErrorNode : public Fsr::Node
     /*virtual*/ const char* fuserNodeClass() const { return "ErrorNode"; }
 
     //! Called before execution to allow node to update local data from args.
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real) {}
 
 

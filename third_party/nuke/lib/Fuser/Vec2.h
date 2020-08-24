@@ -225,6 +225,9 @@ class FSR_EXPORT Vec2
     Vec2<T>        lerpTo(const Vec2<T>& b,
                           S              t) const;
 
+    bool isZero()          const { return !notZero(); }
+    bool notZero()         const { return (x != (T)0 || y != (T)0); }
+    bool greaterThanZero() const { return !(x <= (T)0 || y <= (T)0); }
 
   private:
     template <typename R, typename S> struct isSameType       { enum {value = 0}; };

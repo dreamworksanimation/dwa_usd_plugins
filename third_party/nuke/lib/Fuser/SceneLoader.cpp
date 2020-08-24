@@ -43,6 +43,9 @@ const char* SceneLoaderRTTIKnob = "FsrSceneLoader";
 #endif
 
 
+#define SCENEGRAPH_MAX_DEPTH_DEFAULT 6
+
+
 //------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------
 
@@ -186,8 +189,13 @@ SceneLoader::SceneLoader(bool read_enabled) :
     //
     k_scene_ctls.node_path           = "";
     //
-    k_scene_ctls.set_frame           = 0.0;
-    k_scene_ctls.frames_per_second   = 24.0;
+    k_scene_ctls.lock_read_frame     = false;
+    k_scene_ctls.frame_offset        = 0.0;
+    k_scene_ctls.frame_origin        = 0.0;
+    k_scene_ctls.read_frame          = 0.0;
+    k_scene_ctls.frames_per_second   = 24.0; 
+    k_scene_ctls.lock_read_view      = false;
+    k_scene_ctls.read_view           = 0; // main
     //
     k_scene_ctls.decompose_xform_order = Fsr::SRT_ORDER;
     k_scene_ctls.decompose_rot_order   = Fsr::ZXY_ORDER;
@@ -359,7 +367,7 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
             DD::Image::Obsolete_knob(f, "fbx_node_name",  "knob scene_node [lindex $value [expr [lindex $value 0]+1]]; knob scene_loaded_legacy true");
             DD::Image::Obsolete_knob(f, "fbx_take_name",  "knob scene_loaded_legacy true");
             // TODO: move these to the FuserCameraOp class? They really aren't camera-only options...
-            DD::Image::Obsolete_knob(f, "frame_rate",     "knob scene_loaded_legacy true"); // CameraOps only
+            //DD::Image::Obsolete_knob(f, "frame_rate",     "knob scene_loaded_legacy true"); // CameraOps only
             DD::Image::Obsolete_knob(f, "use_frame_rate", "knob scene_loaded_legacy true"); // CameraOps only
 
         }
@@ -372,6 +380,19 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
             {
                 SetFlags(f, DD::Image::Knob::CLOSED);
 
+                int default_max_depth = SCENEGRAPH_MAX_DEPTH_DEFAULT;
+                DD::Image::Int_knob(f, &default_max_depth, "scenegraph_max_depth", "max depth");
+    	            DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE |
+                                           DD::Image::Knob::NO_MULTIVIEW |
+                                           DD::Image::Knob::NO_RERENDER);
+                    DD::Image::Tooltip(f, "Restricts the maximum node hierarchy depth to improve scene "
+                                          "loading speed.\n"
+                                          "\n"
+                                          "Nuke's scenegraph viewer does not allow progressive expansion "
+                                          "as a user gradually opens the hierarchy, so to speed up the "
+                                          "loading of large scenes this control helps limit the number "
+                                          "of nodes being loaded and potentially not displayed.");
+
                 int dummy_int = 0;
                 const char* empty_list = { 0 };
                 kSceneView = DD::Image::SceneView_knob(f, &dummy_int, &empty_list, "scene_file_nodes", "");
@@ -382,6 +403,74 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
                                            DD::Image::Knob::KNOB_CHANGED_ALWAYS |
                                            DD::Image::Knob::SINGLE_SELECTION_ONLY);
             }
+            DD::Image::EndGroup(f);
+        }
+
+        //----------------------------------------
+
+        if (1/*show_time_knobs*/)
+        {
+            DD::Image::BeginGroup(f, "scene_file_frame_ctrls", "frame / view options");
+            {
+                SetFlags(f, DD::Image::Knob::CLOSED);
+
+                DD::Image::Bool_knob(f, &k_scene_ctls.lock_read_frame, "lock_read_frame", "lock read frame");
+                    DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE);
+                    DD::Image::Tooltip(f, "If enabled lock the reader to use the manually-set frame number.");
+                DD::Image::Double_knob(f, &k_scene_ctls.read_frame, "read_frame", "");
+                    DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE |
+                                           DD::Image::Knob::DISABLED |
+                                           DD::Image::Knob::NO_MULTIVIEW);
+                    DD::Image::ClearFlags(f, DD::Image::Knob::SLIDER |
+                                             DD::Image::Knob::STARTLINE);
+                    DD::Image::Tooltip(f, "Use this frame number when 'lock read frame' is enabled.\n"
+                                          "This control can be animated to read any arbitrary frame speed curve.");
+                DD::Image::Newline(f);
+
+                DD::Image::Double_knob(f, &k_scene_ctls.frame_origin, "frame_origin", "frame: origin");
+                    DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE |
+                                           DD::Image::Knob::NO_MULTIVIEW |
+                                           DD::Image::Knob::NO_ANIMATION);
+                    DD::Image::ClearFlags(f, DD::Image::Knob::SLIDER);
+                    DD::Image::Tooltip(f, "Origin of the incoming frame range. Any frame rate change is scaled from this "
+                                          "point allowing it to remain unchanged on the output timeline.\n"
+                                          "This can be very useful to keep an important frame in a time-warped range from "
+                                          "shifting unexpectedly on the timeline. For example if shot animation begins at "
+                                          "frame 101 but there's some preroll keys at frames 50-100 then setting this "
+                                          "control to 101 will keep that frame from changing when a frame rate change is "
+                                          "applied, preserving the start of the shot.\n");
+                DD::Image::Double_knob(f, &k_scene_ctls.frames_per_second, DD::Image::IRange(1,96), "frame_rate", "rate");
+                    DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE |
+                                           DD::Image::Knob::NO_MULTIVIEW |
+                                           DD::Image::Knob::NO_ANIMATION);
+                    DD::Image::ClearFlags(f, DD::Image::Knob::SLIDER |
+                                             DD::Image::Knob::STARTLINE);
+                    DD::Image::Tooltip(f, "This is the frame rate (frames per second) used to sample the geometry file.\n"
+                                          "If this rate is lower than the rate encoded in the file the effect is to "
+                                          "slow down the animation. For example if the file was animated at 24 fps and "
+                                          "frame_rate is set to 12, the animation will read at half speed.");
+                DD::Image::Double_knob(f, &k_scene_ctls.frame_offset, "frame_offset", "output offset");
+                    DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE |
+                                           DD::Image::Knob::NO_MULTIVIEW |
+                                           DD::Image::Knob::NO_ANIMATION);
+                    DD::Image::ClearFlags(f, DD::Image::Knob::SLIDER |
+                                             DD::Image::Knob::STARTLINE);
+                    DD::Image::Tooltip(f, "Offset the incoming keyframes in time, applied after any frame rate change.\n"
+                                          "This will shift the final, possibly time-warped keyframes in the timeline.");
+                DD::Image::Newline(f);
+
+                DD::Image::Bool_knob(f, &k_scene_ctls.lock_read_view, "lock_read_view", "lock read view");
+                    DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE);
+                    DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
+                    DD::Image::Tooltip(f, "If enabled lock the reader to use the manually-set view.");
+                DD::Image::OneView_knob(f, &k_scene_ctls.read_view, "read_view", "");
+                    DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE |
+                                           DD::Image::Knob::DISABLED);
+                    DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
+                    DD::Image::Tooltip(f, "Use this view when 'lock view' is enabled.");
+
+            }
+            DD::Image::Divider(f);
             DD::Image::EndGroup(f);
         }
 
@@ -499,9 +588,12 @@ SceneLoader::knobChanged(DD::Image::Knob* k,
     assert(op);
 
     const bool scene_loader_enabled = isSceneLoaderEnabled();
+    const bool show_panel = (k == &DD::Image::Knob::showPanel);
 
-    if (k == &DD::Image::Knob::showPanel ||
-        k->name() == "read_from_file")
+    if (show_panel ||
+        k->name() == "read_from_file"  ||
+        k->name() == "lock_read_frame" ||
+        k->name() == "lock_read_view")
     {
         enableSceneLoaderKnobs(scene_loader_enabled);
         enableSceneLoaderExtraKnobs(scene_loader_enabled);
@@ -526,18 +618,22 @@ SceneLoader::knobChanged(DD::Image::Knob* k,
         {
             // Execute but only send a cache-invalidate command:
             Fsr::NodeContext node_ctx;
-            Fsr::NodeContext target_ctx;
-            //
-            node_ctx.setString(Arg::node_directive, Arg::Scene::file_archive_invalidate);
-            node_ctx.setString(Arg::Scene::file,    file_path);
-            //
-            target_ctx.setString(Arg::Scene::file,             file_path);
-            target_ctx.setBool(Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
-            //
+            Fsr::NodeContext exec_ctx;
+            {
+                //--------------------------------------------------------------
+                // Parameters to control creation of the Fuser execution node:
+                node_ctx.setString(Arg::node_directive, Arg::Scene::file_archive_invalidate);
+                node_ctx.setString(Arg::Scene::file,    file_path);
+
+                //--------------------------------------------------------------
+                // Parameters then passed to execute(), validateState(), and _execute():
+                exec_ctx.setString(Arg::Scene::file,             file_path);
+                exec_ctx.setBool(Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
+            }
             Fsr::Node::executeImmediate(plugin_type.c_str(),            /*node_class*/
                                         node_ctx.args(),                /*node_attribs*/
                                         NULL,                           /*node-parent*/
-                                        target_ctx,                     /*target_context*/
+                                        exec_ctx,                       /*target_context*/
                                         Fsr::SceneArchiveContext::name  /*target_name*/);
 
             updateSceneGraph();
@@ -555,7 +651,8 @@ SceneLoader::knobChanged(DD::Image::Knob* k,
     }
 #endif
     else if (k->name() == "scene_file" ||
-             k->name() == "scene_file_hierarchy")
+             k->name() == "scene_file_hierarchy" ||
+             k->name() == "scenegraph_max_depth")
     {
         // Possibly update the node path if the user is doing this
         // change in the gui:
@@ -600,7 +697,7 @@ SceneLoader::knobChanged(DD::Image::Knob* k,
         assert(scene_knob); // shouldn't happen...
 
         std::string item = scene_knob->getHighlightedItem();
-        std::cout << "  selected scene item '" << item << "'" << std::endl;
+        //std::cout << "  selected scene item '" << item << "'" << std::endl;
         if (!item.empty())
         {
             // Trim off a trailing '(<class>)' or trailing '/':
@@ -614,7 +711,7 @@ SceneLoader::knobChanged(DD::Image::Knob* k,
                 std::string node_path; node_path.reserve(item.size()+1);
                 node_path = "/";
                 node_path += item.c_str();
-                std::cout << "    node_path '" << node_path << "'" << std::endl;
+                //std::cout << "    node_path '" << node_path << "'" << std::endl;
                 op->knob("scene_node")->set_text(node_path.c_str());
             }
         }
@@ -781,6 +878,14 @@ SceneLoader::updateSceneNode(DD::Image::Hash&                hash,
         k = op->knob("euler_filter_enable"  ); if (k) k->store(DD::Image::BoolPtr,   &scene_ctrls.euler_filter_enable,   hash, *context);
         k = op->knob("parent_extract_enable"); if (k) k->store(DD::Image::BoolPtr,   &scene_ctrls.parent_extract_enable, hash, *context);
         //
+        k = op->knob("lock_read_frame"      ); if (k) k->store(DD::Image::BoolPtr,   &scene_ctrls.lock_read_frame,       hash, *context);
+        k = op->knob("read_frame"           ); if (k) k->store(DD::Image::DoublePtr, &scene_ctrls.read_frame,            hash, *context);
+        k = op->knob("frame_offset"         ); if (k) k->store(DD::Image::DoublePtr, &scene_ctrls.frame_offset,          hash, *context);
+        k = op->knob("frame_origin"         ); if (k) k->store(DD::Image::DoublePtr, &scene_ctrls.frame_origin,          hash, *context);
+        k = op->knob("frames_per_second"    ); if (k) k->store(DD::Image::DoublePtr, &scene_ctrls.frames_per_second,     hash, *context);
+        k = op->knob("lock_read_view"       ); if (k) k->store(DD::Image::BoolPtr,   &scene_ctrls.lock_read_view,        hash, *context);
+        k = op->knob("read_view"            ); if (k) k->store(DD::Image::IntPtr,    &scene_ctrls.read_view,             hash, *context);
+        //
         k = op->knob("scene_read_debug"     ); if (k) k->store(DD::Image::BoolPtr,   &scene_ctrls.read_debug,            hash, *context);
         k = op->knob("scene_archive_debug"  ); if (k) k->store(DD::Image::BoolPtr,   &scene_ctrls.archive_debug,         hash, *context);
     }
@@ -799,10 +904,18 @@ SceneLoader::updateSceneNode(DD::Image::Hash&                hash,
     load_hash.append(scene_ctrls.T_enable);
     load_hash.append(scene_ctrls.R_enable);
     load_hash.append(scene_ctrls.S_enable);
-    load_hash.append(scene_ctrls.euler_filter_enable);
+    load_hash.append(scene_ctrls.euler_filter_enable  );
     load_hash.append(scene_ctrls.parent_extract_enable);
     //
-    load_hash.append(scene_ctrls.read_debug);
+    load_hash.append(scene_ctrls.lock_read_frame  );
+    load_hash.append(scene_ctrls.read_frame       );
+    load_hash.append(scene_ctrls.frame_offset     );
+    load_hash.append(scene_ctrls.frame_origin     );
+    load_hash.append(scene_ctrls.frames_per_second);
+    load_hash.append(scene_ctrls.lock_read_view   );
+    load_hash.append(scene_ctrls.read_view        );
+    //
+    load_hash.append(scene_ctrls.read_debug   );
     load_hash.append(scene_ctrls.archive_debug);
 
     hash.append(load_hash);
@@ -908,30 +1021,34 @@ SceneLoader::updateSceneGraph(const Fsr::NodeDescriptionMap& node_descriptions,
     char path[2048];
 
     // Create the name list for the menu:
+    const size_t nDesc = node_descriptions.size();
     //int count = 0;
     for (Fsr::NodeDescriptionMap::const_iterator it=node_descriptions.begin(); it != node_descriptions.end(); ++it)
     {
+        //std::cout << "  '" << it->first << "':'" << it->second.type << "'" << std::endl;
         const std::string& desc_id = it->first;
-        if (desc_id.empty() || desc_id == "/")
-            continue; // skip root
+        if ((desc_id.empty() || desc_id == "/") && nDesc > 1)
+            continue; // skip root if there's more nodes
 
         const NodeDescription& desc = it->second;
         if (desc.type.empty())
         {
-            if (desc.path == "...")
+            if (desc.note == "PATH_TRUNCATED")
                 snprintf(path, 2048, "%s ...", desc_id.c_str());
+            else if (!desc.note.empty())
+                snprintf(path, 2048, "%s (%s)", desc_id.c_str(), desc.note.c_str());
             else
                 snprintf(path, 2048, "%s", desc_id.c_str());
         }
         else
         {
-            if (desc.path == "...")
+            if (desc.note == "PATH_TRUNCATED")
                 snprintf(path, 2048, "%s  (%s) ...", desc_id.c_str(), desc.type.c_str());
+            else if (!desc.note.empty())
+                snprintf(path, 2048, "%s (%s)  (%s)", desc_id.c_str(), desc.note.c_str(), desc.type.c_str());
             else
                 snprintf(path, 2048, "%s  (%s)", desc_id.c_str(), desc.type.c_str());
         }
-        //std::cout << "  " << count++ << " '" << desc_id << "':'" << desc.type << "'";
-        //std::cout << ", '" << path << "'" << std::endl;
         menu_list.push_back(std::string(path));
     }
     // Sort the node paths alphabetically:
@@ -971,6 +1088,12 @@ SceneLoader::enableSceneLoaderKnobs(bool scene_loader_enabled)
     k = op->knob("scene_file"      ); if (k) k->enable(scene_loader_enabled);
     k = op->knob("scene_file_nodes"); if (k) k->enable(scene_loader_enabled);
     k = op->knob("scene_node"      ); if (k) k->enable(scene_loader_enabled);
+
+    k = op->knob("read_frame"  ); if (k) k->enable(k_scene_ctls.lock_read_frame);
+    k = op->knob("frame_origin"); if (k) k->enable(!k_scene_ctls.lock_read_frame);
+    k = op->knob("frame_rate"  ); if (k) k->enable(!k_scene_ctls.lock_read_frame);
+
+    k = op->knob("read_view"); if (k) k->enable(k_scene_ctls.lock_read_view);
 }
 
 
@@ -1066,26 +1189,36 @@ SceneLoader::getNodeDescriptions(const char*              file,
         return false;
     }
 
-    // TODO: update these from a knob?
-    const char*    start_path_at  = "/";
-    const uint32_t path_max_depth = 7;
+    DD::Image::Op* op = sceneOp();
+#ifdef DEBUG
+    assert(op);
+#endif
+
+    uint32_t path_max_depth = SCENEGRAPH_MAX_DEPTH_DEFAULT;
+    if (op->knob("scenegraph_max_depth"))
+        path_max_depth = std::max(1, int(op->knob("scenegraph_max_depth")->get_value()));
+
+    // TODO: add scope path knob like in GeoSceneGraphReader?
+    const char* start_path_at  = "/";
 
     // Build context (args) to pass to FuserPrims ctors:
     Fsr::NodeContext node_ctx;
-    Fsr::NodeContext target_ctx;
+    Fsr::NodeContext exec_ctx;
     {
-        // Fill in the arguments that the Fuser nodes need to build or update:
-        node_ctx.setString(Arg::node_directive,          Arg::Scene::node_type_contents);
-        node_ctx.setString(Arg::Scene::file,             file_path);
-        node_ctx.setString(Arg::Scene::path,             "/"); // primary node path is root(the archive) in this case
-        node_ctx.setBool(  Arg::Scene::read_debug,       k_scene_ctls.read_debug);
-        node_ctx.setBool(Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
-        //
-        target_ctx.setString(Arg::Scene::path,             (start_path_at) ? start_path_at : "/");
-        target_ctx.setInt(   Arg::Scene::path_max_depth,   path_max_depth);
-        target_ctx.setBool(  Arg::Scene::read_debug,       k_scene_ctls.read_debug);
-        target_ctx.setBool(Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
+        //--------------------------------------------------------------
+        // Parameters to control creation of the Fuser execution node:
+        node_ctx.setString(Arg::node_directive,            Arg::Scene::node_type_contents);
+        node_ctx.setString(Arg::Scene::file,               file_path);
+        node_ctx.setString(Arg::Scene::path,               "/"); // primary node path is root(the archive) in this case
+        node_ctx.setBool(  Arg::Scene::read_debug,         k_scene_ctls.read_debug);
+        node_ctx.setBool(  Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
 
+        //--------------------------------------------------------------
+        // Parameters then passed to execute(), validateState(), and _execute():
+        exec_ctx.setString(Arg::Scene::path,               (start_path_at) ? start_path_at : "/");
+        exec_ctx.setInt(   Arg::Scene::path_max_depth,     path_max_depth);
+        exec_ctx.setBool(  Arg::Scene::read_debug,         k_scene_ctls.read_debug);
+        exec_ctx.setBool(  Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
     }
 
     Fsr::ScenePathFilters scene_path_filters;
@@ -1097,7 +1230,7 @@ SceneLoader::getNodeDescriptions(const char*              file,
     Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(plugin_type.c_str(),          /*node_class*/
                                                         node_ctx.args(),              /*node_args*/
                                                         NULL,                         /*node-parent*/
-                                                        target_ctx,                   /*target_context*/
+                                                        exec_ctx,                     /*target_context*/
                                                         scene_node_descriptions.name, /*target_name*/
                                                         &scene_node_descriptions,     /*target*/
                                                         &scene_path_filters           /*src0*/);
@@ -1177,20 +1310,22 @@ SceneLoader::_findDefaultNode(const std::string& scene_file_path,
 
     // Build context (args) to pass to FuserPrims ctors:
     Fsr::NodeContext node_ctx;
-    Fsr::NodeContext target_ctx;
+    Fsr::NodeContext exec_ctx;
     {
-        // Fill in the arguments that the Fuser nodes need to build or update:
-        //node_ctx.setTime(reader_frame, m_options->k_frames_per_second);
-        node_ctx.setString(Arg::node_directive,          Arg::Scene::node_find_first_valid);
-        node_ctx.setString(Arg::Scene::file,             scene_file_path);
-        node_ctx.setString(Arg::Scene::path,             "/"); // primary node path is root(the archive) in this case
-        node_ctx.setBool(  Arg::Scene::read_debug,       k_scene_ctls.read_debug);
-        node_ctx.setBool(Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
-        //
-        target_ctx.setString(Arg::Scene::path,             (start_path_at) ? start_path_at : "/");
-        target_ctx.setString(Arg::Scene::node_type,        default_node_type);
-        target_ctx.setBool  (Arg::Scene::read_debug,       k_scene_ctls.read_debug);
-        target_ctx.setBool(Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
+        //--------------------------------------------------------------
+        // Parameters to control creation of the Fuser execution node:
+        node_ctx.setString(Arg::node_directive,            Arg::Scene::node_find_first_valid);
+        node_ctx.setString(Arg::Scene::file,               scene_file_path);
+        node_ctx.setString(Arg::Scene::path,               "/"); // primary node path is root(the archive) in this case
+        node_ctx.setBool(  Arg::Scene::read_debug,         k_scene_ctls.read_debug);
+        node_ctx.setBool(  Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
+
+        //--------------------------------------------------------------
+        // Parameters then passed to execute(), validateState(), and _execute():
+        exec_ctx.setString(Arg::Scene::path,               (start_path_at) ? start_path_at : "/");
+        exec_ctx.setString(Arg::Scene::node_type,          default_node_type);
+        exec_ctx.setBool(  Arg::Scene::read_debug,         k_scene_ctls.read_debug);
+        exec_ctx.setBool(  Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
     }
 
     Fsr::NodeDescriptionMap found_nodes;
@@ -1201,7 +1336,7 @@ SceneLoader::_findDefaultNode(const std::string& scene_file_path,
     Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuser_plugin_type.c_str(),        /*node_class*/
                                                         node_ctx.args(),                  /*node_args*/
                                                         NULL,                             /*node-parent*/
-                                                        target_ctx,                       /*target_context*/
+                                                        exec_ctx,                         /*target_context*/
                                                         Fsr::SceneNodeDescriptions::name, /*target_name*/
                                                         &search_ctx                       /*target*/);
     // Set load error on execute failure, but not on user-abort:
@@ -1282,26 +1417,37 @@ SceneLoader::_readSceneNode(const std::string& scene_file_path,
                             const std::string& fuser_plugin_type,
                             bool               debug)
 {
-    // Build context (args) to pass to FuserPrims ctors:
-    Fsr::NodeContext node_ctx;
-    Fsr::NodeContext target_ctx;
+    Fsr::NodeContext node_ctx; // Context (args) to pass to FuserPrims ctors
+    Fsr::NodeContext exec_ctx; // Context (args) to pass to execute() method
     {
-        // Fill in the arguments that the Fuser nodes need to build or update:
-        node_ctx.setString(Arg::node_directive,          Arg::Scene::node_type_auto);
-        node_ctx.setString(Arg::Scene::file,             scene_file_path);
-        node_ctx.setString(Arg::Scene::path,             expanded_node_path);
-        node_ctx.setBool(  Arg::Scene::read_debug,       k_scene_ctls.read_debug);
-        node_ctx.setBool(Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
+        //--------------------------------------------------------------
+        // Parameters to control creation of the Fuser execution node:
+        node_ctx.setString(Arg::node_directive,            Arg::Scene::node_type_auto);
+        node_ctx.setString(Arg::Scene::file,               scene_file_path);
+        node_ctx.setString(Arg::Scene::path,               expanded_node_path);
+        node_ctx.setBool(  Arg::Scene::read_debug,         k_scene_ctls.read_debug);
+        node_ctx.setBool(  Arg::Scene::file_archive_debug, k_scene_ctls.archive_debug);
+
+        //--------------------------------------------------------------
+        // Parameters then passed to execute(), validateState(), and _execute():
+        exec_ctx.setBool(  "reader:lock_read_frame", k_scene_ctls.lock_read_frame  );
+        exec_ctx.setDouble("reader:read_frame",      k_scene_ctls.read_frame       );
+        exec_ctx.setDouble("reader:frame_offset",    k_scene_ctls.frame_offset     );
+        exec_ctx.setDouble("reader:frame_origin",    k_scene_ctls.frame_origin     );
+        exec_ctx.setDouble("reader:fps",             k_scene_ctls.frames_per_second);
         //
-        target_ctx.setInt( Arg::Scene::decompose_xform_order, k_scene_ctls.decompose_xform_order);
-        target_ctx.setInt( Arg::Scene::decompose_rot_order,   k_scene_ctls.decompose_rot_order  );
-        target_ctx.setBool(Arg::Scene::T_enable,              k_scene_ctls.T_enable             );
-        target_ctx.setBool(Arg::Scene::R_enable,              k_scene_ctls.R_enable             );
-        target_ctx.setBool(Arg::Scene::S_enable,              k_scene_ctls.S_enable             );
-        target_ctx.setBool(Arg::Scene::euler_filter_enable,   k_scene_ctls.euler_filter_enable  );
-        target_ctx.setBool(Arg::Scene::parent_extract_enable, k_scene_ctls.parent_extract_enable);
-        target_ctx.setBool(Arg::Scene::read_debug,            k_scene_ctls.read_debug           );
-        target_ctx.setBool(Arg::Scene::file_archive_debug,    k_scene_ctls.archive_debug);
+        exec_ctx.setBool(  "reader:lock_read_view",  k_scene_ctls.lock_read_view   );
+        exec_ctx.setString("reader:read_view",       DD::Image::OutputContext::viewname(k_scene_ctls.read_view));
+        //
+        exec_ctx.setInt( Arg::Scene::decompose_xform_order, k_scene_ctls.decompose_xform_order);
+        exec_ctx.setInt( Arg::Scene::decompose_rot_order,   k_scene_ctls.decompose_rot_order  );
+        exec_ctx.setBool(Arg::Scene::T_enable,              k_scene_ctls.T_enable             );
+        exec_ctx.setBool(Arg::Scene::R_enable,              k_scene_ctls.R_enable             );
+        exec_ctx.setBool(Arg::Scene::S_enable,              k_scene_ctls.S_enable             );
+        exec_ctx.setBool(Arg::Scene::euler_filter_enable,   k_scene_ctls.euler_filter_enable  );
+        exec_ctx.setBool(Arg::Scene::parent_extract_enable, k_scene_ctls.parent_extract_enable);
+        exec_ctx.setBool(Arg::Scene::read_debug,            k_scene_ctls.read_debug           );
+        exec_ctx.setBool(Arg::Scene::file_archive_debug,    k_scene_ctls.archive_debug);
     }
 
     Fsr::SceneOpImportContext scene_op_ctx(sceneOp(),
@@ -1310,7 +1456,7 @@ SceneLoader::_readSceneNode(const std::string& scene_file_path,
     Fsr::Node::ErrCtx err = Fsr::Node::executeImmediate(fuser_plugin_type.c_str(),       /*node_class*/
                                                         node_ctx.args(),                 /*node_args*/
                                                         NULL,                            /*node-parent*/
-                                                        target_ctx,                      /*target_context*/
+                                                        exec_ctx,                        /*target_context*/
                                                         Fsr::SceneOpImportContext::name, /*target_name*/
                                                         &scene_op_ctx                    /*target*/);
     // Set load error on execute failure, but not on user-abort:

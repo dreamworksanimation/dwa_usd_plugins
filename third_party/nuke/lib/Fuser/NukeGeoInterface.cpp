@@ -424,7 +424,7 @@ GeoOpGeometryEngineContext::GeoOpGeometryEngineContext(int                      
 {
     assert(geo); // shouldn't happen...
 
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
     typedef std::map<void*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
 #else
     typedef std::unordered_map<void*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;

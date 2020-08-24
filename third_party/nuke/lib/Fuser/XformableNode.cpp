@@ -83,11 +83,11 @@ XformableNode::~XformableNode()
 /*! Called before execution to allow node to update local data from args.
 */
 /*virtual*/ void
-XformableNode::_validateState(const Fsr::NodeContext& args,
+XformableNode::_validateState(const Fsr::NodeContext& exec_ctx,
                               bool                    for_real)
 {
     // Get the time value up to date:
-    Fsr::Node::_validateState(args, for_real);
+    Fsr::Node::_validateState(exec_ctx, for_real);
 
     if (0)//(debug())
     {
@@ -140,7 +140,7 @@ XformableNode::appendGlHash(DD::Image::Hash& hash)
 void
 XformableNode::buildGL()
 {
-    validateState(Fsr::NodeContext()/*args*/, false/*for_real*/);
+    validateState(ArgSet()/*args*/, false/*for_real*/);
 
     // Check the gl hash, if it's changed we need to rebuild the call lists:
     DD::Image::Hash new_hash;

@@ -82,12 +82,14 @@ class FSR_EXPORT FuserGeoReaderFormat : public DD::Image::GeoReaderFormat
     bool        k_translate_render_parts;   //!< Translate render-part enums to UDIM offsets TODO: DEPRECATE! 
     const char* k_attribute_mappings;       //!< Map file attrib names to nuke attrib names
     //
-    bool        k_read_on_each_frame;       //!< 
-    bool        k_sub_frame;                //!< 
-    double      k_velocity_scale;           //!< Scale the velocity channels - can also be used to invert them.
-    double      k_set_frame;                //!< Manually set the frame number
+    bool        k_lock_read_frame;          //!< Whether to use the manually-set frame number
+    double      k_read_frame;               //!< The manually-set frame number
+    bool        k_sub_frame;                //!< Whether to interpolate at subframe values
+    double      k_frame_offset;             //!< Offset the incoming frame range (after any frame rate change)
+    double      k_frame_origin;             //!< Origin of the incoming frame range
     double      k_frames_per_second;        //!< Change the speed of the incoming geometry
     //
+    double      k_velocity_scale;           //!< Scale the velocity channels - can also be used to invert them.
     int         k_points_mode;              //!< Translate points to what primitive type
     //
     int         k_subd_import_level;        //!< Subd level for importing meshes
@@ -100,7 +102,7 @@ class FSR_EXPORT FuserGeoReaderFormat : public DD::Image::GeoReaderFormat
     bool        k_color_facesets;           //!< Color the vertices in a faceset with random colors
     bool        k_color_objects;            //!< Color the separate meshes with random colors
     //
-    bool        k_apply_matrix;             //!<
+    bool        k_apply_xforms;             //!< Apply xform to objects
     int         k_prim_creation_mode;       //!< What types of prims to export?
     int         k_proxy_lod_mode;           //!< In deferred-mode how to display geometry
     //
@@ -306,13 +308,15 @@ class FSR_EXPORT FuserGeoReader : public DD::Image::GeoReader,
 
     //! Thread-safe object loader entry point called by a ThreadedGeometryEngine instance.
     bool readObject(const std::string&               path,
-                    Fsr::NodeContext&                node_ctx,
+                    Fsr::ArgSet&                     node_args,
+                    Fsr::NodeContext&                exec_ctx,
                     Fsr::GeoOpGeometryEngineContext& geo_ctx);
 
 
     //! Thread-safe object loader entry point called by a ThreadedGeometryEngine instance.
     bool readMaterial(const std::string&               path,
-                      Fsr::NodeContext&                node_ctx,
+                      Fsr::ArgSet&                     node_args,
+                      Fsr::NodeContext&                exec_ctx,
                       Fsr::GeoOpGeometryEngineContext& geo_ctx);
 
 

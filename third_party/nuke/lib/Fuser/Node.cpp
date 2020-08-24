@@ -262,20 +262,21 @@ Node::getChildByPath(const char* child_path) const
 
 /*! Called before execution to allow node to update local data from args.
     This method calls _validateState() on itself first, then calls validateState() on all its children.
-    Since the rNode tree is inverted the top-most rNode must be validated first before the
+    Since the Node tree is inverted the top-most Node must be validated first before the
     dependent children are.
 */
 void
-Node::validateState(const Fsr::NodeContext& args,
+Node::validateState(const ArgSet&           node_args,
+                    const Fsr::NodeContext& exec_ctx,
                     bool                    for_real,
                     bool                    force)
 {
     //std::cout << "-------------------------------------------------------------------" << std::endl;
-    //std::cout << "Fsr::Node::validateState('" << fuserNodeClass() << "') args[" << args.args() << "]" << std::endl;
+    //std::cout << "Fsr::Node::validateState('" << fuserNodeClass() << "') node-args[" << node_args << "]" << std::endl;
 
     // Validate parent first:
     if (m_parent)
-        m_parent->validateState(args, for_real, force);
+        m_parent->validateState(node_args, exec_ctx, for_real, force);
 
     if (force)
         m_is_valid = false;
@@ -286,15 +287,14 @@ Node::validateState(const Fsr::NodeContext& args,
         //std::cout << "  -------------------------------------------------------------------" << std::endl;
         //std::cout << "  Fsr::Node::validateState(" << this << ") current[" << m_args << "]" << std::endl;
 
-        const ArgSet& new_args = args.args();
-        if (new_args.size() == 0)
+        if (node_args.size() == 0)
         {
             m_is_valid = true; // no args to change
         }
         else
         {
-            //std::cout << "  Fsr::Node::validateState(" << this << ") new[" << new_args << "]" << std::endl;
-            for (ArgSet::const_iterator it=new_args.begin(); it != new_args.end(); ++it)
+            //std::cout << "  Fsr::Node::validateState(" << this << ") new[" << node_args << "]" << std::endl;
+            for (ArgSet::const_iterator it=node_args.begin(); it != node_args.end(); ++it)
             {
                 if (!hasArg(it->first) || getArg(it->first) != it->second)
                 {
@@ -309,7 +309,7 @@ Node::validateState(const Fsr::NodeContext& args,
     if (!m_is_valid)
     {
         // Get our local vars up to date:
-        _validateState(args, for_real);
+        _validateState(exec_ctx, for_real);
         m_is_valid = true;
     }
 }
@@ -323,7 +323,8 @@ Node::validateState(const Fsr::NodeContext& args,
     Use errorState() and errorMessage() to retrieve full execution results.
 */
 int
-Node::execute(const Fsr::NodeContext& target_context,
+Node::execute(const ArgSet&           node_args,
+              const Fsr::NodeContext& target_context,
               const char*             target_name,
               void*                   target,
               void*                   src0,
@@ -332,11 +333,12 @@ Node::execute(const Fsr::NodeContext& target_context,
     //std::cout << "  *****************************************************************" << std::endl;
     //std::cout << "  *****************************************************************" << std::endl;
     //std::cout << "  Fsr::Node::execute('" << fuserNodeClass() << "')";
-    //std::cout << " - execute_target_name='" << target_name << "'";
+    //std::cout << " - node-args[" << node_args << "]";
+    //std::cout << ", execute_target_name='" << target_name << "'";
     //std::cout << ", target args[" << target_context.args() << "]" << std::endl;
 
     // Validate the node then execute it:
-    validateState(target_context, true/*for_real*/, false/*force*/);
+    validateState(node_args, target_context, true/*for_real*/, false/*force*/);
 
     clearError();
     int ret = _execute(target_context,
@@ -430,7 +432,8 @@ Node::executeImmediate(const char*             node_class,
     else
     {
         // execute() will call validateState() on the Node:
-        result = node->execute(execute_target_context,
+        result = node->execute(ArgSet(),
+                               execute_target_context,
                                execute_target_name,
                                execute_target,
                                execute_src0,
@@ -570,7 +573,7 @@ Node::expandContents(const char* node_mask)
 class DsoMap
 {
   private:
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
     typedef std::map<std::string, const Node::Description*> NodeDescMap;
 #else
     typedef std::unordered_map<std::string, const Node::Description*> NodeDescMap;

@@ -132,7 +132,8 @@ class FSR_EXPORT NodePrimitive : public FuserPrimitive
     //!
     static int addGeometryToScene(const char*                      fuser_class,
                                   int                              creation_mode,
-                                  const Fsr::NodeContext&          node_args,
+                                  ArgSet&                          node_args,
+                                  Fsr::NodeContext&                exec_ctx,
                                   Fsr::GeoOpGeometryEngineContext& geo_ctx);
 
     //--------------------------------------------------------------------------

@@ -34,17 +34,19 @@
 #include <Fuser/XformableNode.h>
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
-#  include <pxr/base/gf/matrix4d.h>
+#include <pxr/base/gf/matrix4d.h>
 
-#  include <pxr/usd/usdGeom/xform.h>
-#  include <pxr/usd/usdGeom/primvar.h>
+#include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdGeom/primvar.h>
 
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
 
@@ -75,7 +77,7 @@ class FuserUsdXformableNode : public FuserUsdNode,
     /*! Called before evaluation starts to allow node to prep any data prior to rendering.
         Updates time value and possibly local transform.
     */
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real);
 
     //! Prints an unrecognized-target warning in debug mode and returns 0 (success).

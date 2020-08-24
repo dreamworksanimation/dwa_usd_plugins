@@ -264,7 +264,7 @@ class FSR_EXPORT GeoInfoCacheRef
 class FSR_EXPORT GeoOpGeometryEngineContext
 {
   public:
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
     typedef std::map<std::string, uint32_t> ObjectIndexMap;
 #else
     typedef std::unordered_map<std::string, uint32_t> ObjectIndexMap;

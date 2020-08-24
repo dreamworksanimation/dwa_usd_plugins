@@ -56,8 +56,8 @@ class FSR_EXPORT XformableNode : public Fsr::Node
 
   protected:
     //! Called before execution to allow node to update local data from args. Base class does nothing.
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
-                                    bool                    for_real=false);
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
+                                    bool                    for_real);
 
     //! Destroy the Node's contents - Xformable clears the xform and bbox.
     /*virtual*/ void _destroyContents();

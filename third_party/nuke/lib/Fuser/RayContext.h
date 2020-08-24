@@ -154,7 +154,10 @@ class FSR_EXPORT RayContext
 
     //!
     void    setOrigin(const Fsr::Vec3d& _origin) { origin = _origin; }
-    void setDirection(const Fsr::Vec3d& _dir)    { m_dir = _dir; _updateSlopes(); }
+    void setDirection(const Fsr::Vec3d& dir)     { m_dir = dir; _updateSlopes(); }
+    void setDirAndDistance(const Fsr::Vec3d& dir,
+                           double            min,
+                           double            max) { m_dir = dir; mindist = min; maxdist = max; _updateSlopes(); }
 
     //!
     Fsr::Vec3d getPositionAt(double t) const { return origin + (m_dir*t); }

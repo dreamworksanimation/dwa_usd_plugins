@@ -691,14 +691,15 @@ MeshPrimitive::fillVertexBuffers(const DDImageRenderSceneTessellateContext& rtes
 
         // TODO: should we simply copy all args prefixed with 'subd:' to
         // subd_args? Or just pass a copy of this Node's args?
-        Fsr::NodeContext subd_args;
-        subd_args.setInt(   "subd:current_level", subd_current_level);
-        subd_args.setInt(   "subd:target_level",  subd_render_level );
-        subd_args.setString("subd:scheme",        subd_scheme       );
-        //subd_args.setBool("subd:snap_to_limit", getBool("subd:snap_to_limit", false));
+        Fsr::NodeContext subd_exec_ctx;
+        subd_exec_ctx.setInt(   "subd:current_level", subd_current_level);
+        subd_exec_ctx.setInt(   "subd:target_level",  subd_render_level );
+        subd_exec_ctx.setString("subd:scheme",        subd_scheme       );
+        //subd_ctx.setBool("subd:snap_to_limit", getBool("subd:snap_to_limit", false));
 
         TessellateContext tessellate_ctx(this, &vbuffers);
-        int res = m_tessellator->execute(subd_args,           /*target_context*/
+        int res = m_tessellator->execute(ArgSet()             /*node_args*/,
+                                         subd_exec_ctx,       /*target_context*/
                                          tessellate_ctx.name, /*target_name*/
                                          &tessellate_ctx      /*target*/);
         if (res < 0)

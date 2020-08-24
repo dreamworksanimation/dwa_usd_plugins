@@ -33,15 +33,17 @@
 #include "FuserUsdXform.h"
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
-#  include <pxr/usd/usdGeom/camera.h>
-#  include <pxr/usd/usdGeom/scope.h>
+#include <pxr/usd/usdGeom/camera.h>
+#include <pxr/usd/usdGeom/scope.h>
 
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
 
@@ -77,7 +79,7 @@ class FuserUsdCamera : public FuserUsdXform
 
 
     //! Called before execution to allow node to update local data from args.
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real);
 
 
@@ -91,11 +93,11 @@ class FuserUsdCamera : public FuserUsdXform
 
     //! Import node attributes into a Nuke Op.
     /*virtual*/ void importSceneOp(DD::Image::Op*     op,
-                                   const Fsr::ArgSet& args);
+                                   const Fsr::ArgSet& exec_args);
 
     //! Specialization - import node attributes into a Nuke Iop.
     virtual void importIntoIop(DD::Image::Iop*    iop,
-                               const Fsr::ArgSet& args);
+                               const Fsr::ArgSet& exec_args);
 
 };
 

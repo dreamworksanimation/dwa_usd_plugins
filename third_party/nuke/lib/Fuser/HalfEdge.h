@@ -31,7 +31,7 @@
 
 #include "api.h"
 
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
 #  include <map>
 #else
 #  include <unordered_map>
@@ -557,7 +557,7 @@ HalfEdge::buildEdges(const std::vector<uint32_t>& verts_per_face,
     // On the 2nd pass we find any edge with the same point indices
     // but in the reverse order. If there's a match those two edges are
     // considered 'twins'.
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
     std::map<uint64_t, uint32_t> edge_map;
 #else
     std::unordered_map<uint64_t, uint32_t> edge_map;
@@ -569,7 +569,7 @@ HalfEdge::buildEdges(const std::vector<uint32_t>& verts_per_face,
         nEdges += verts_per_face[f];
     if (nEdges == 0)
         return false; // don't crash...
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
 #else
     edge_map.reserve(nEdges);
 #endif
@@ -630,7 +630,7 @@ HalfEdge::buildEdges(const std::vector<uint32_t>& verts_per_face,
             hash.reset();
             hash.append(vert_indices[vNext   ]);
             hash.append(vert_indices[vCurrent]);
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
             std::map<uint64_t, uint32_t>::const_iterator iter = edge_map.find(hash.value());
 #else
             std::unordered_map<uint64_t, uint32_t>::const_iterator iter = edge_map.find(hash.value());

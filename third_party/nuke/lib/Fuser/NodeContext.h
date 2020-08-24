@@ -110,6 +110,9 @@ class FSR_EXPORT NodeContext
     //virtual const char* purpose() const { return ""; }
 
 
+    bool hasArg(const std::string& key) const { return m_args.has(key); }
+    bool hasArg(const char*        key) const { return m_args.has(key); }
+
     //! Allow the ArgSet to be messed with.
     const ArgSet& args() const { return m_args; }
     ArgSet&       args()       { return m_args; }

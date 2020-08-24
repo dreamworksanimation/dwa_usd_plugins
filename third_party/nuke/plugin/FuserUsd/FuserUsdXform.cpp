@@ -41,26 +41,28 @@
 #include <DDImage/gl.h>
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
-   // Turn off the inclusion of python files in the usd lib:
-#  include <pxr/pxr.h> // << this is where the #define lives, include it first
-#  undef PXR_PYTHON_SUPPORT_ENABLED
+// Turn off the inclusion of python files in the usd lib:
+#include <pxr/pxr.h> // << this is where the #define lives, include it first
+#undef PXR_PYTHON_SUPPORT_ENABLED
 
-#  include <pxr/base/tf/token.h>
-#  include <pxr/base/gf/math.h>
-#  include <pxr/base/gf/matrix3d.h>
-#  include <pxr/base/gf/matrix4d.h>
-#  include <pxr/base/gf/vec3d.h>
-#  include <pxr/base/gf/transform.h>
-#  include <pxr/usd/usd/stage.h>
-#  include <pxr/usd/usdGeom/xformCache.h>
-#  include <pxr/usd/usdGeom/scope.h>
+#include <pxr/base/tf/token.h>
+#include <pxr/base/gf/math.h>
+#include <pxr/base/gf/matrix3d.h>
+#include <pxr/base/gf/matrix4d.h>
+#include <pxr/base/gf/vec3d.h>
+#include <pxr/base/gf/transform.h>
+#include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usdGeom/xformCache.h>
+#include <pxr/usd/usdGeom/scope.h>
 
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
 
@@ -104,26 +106,11 @@ FuserUsdXform::FuserUsdXform(const Pxr::UsdStageRefPtr& stage,
 /*! Called before execution to allow node to update local data from args.
 */
 /*virtual*/ void
-FuserUsdXform::_validateState(const Fsr::NodeContext& args,
+FuserUsdXform::_validateState(const Fsr::NodeContext& exec_ctx,
                               bool                    for_real)
 {
     // Get the time value up to date:
-    FuserUsdXformableNode::_validateState(args, for_real);
-
-    if (0)//(debug())
-    {
-        static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
-
-        std::cout << "============================================================================================" << std::endl;
-        std::cout << "FuserUsdXform::_validateState(" << this << "): for_real=" << for_real << ", m_time=" << m_time;
-        std::cout << ", m_local_bbox=" << m_local_bbox;
-        std::cout << ", m_have_xform=" << m_have_xform;
-        if (m_have_xform)
-            std::cout << ", xform" << m_xform;
-        if (debugAttribs())
-            std::cout << ", args[" << m_args << "]";
-        std::cout << std::endl;
-    }
+    FuserUsdXformableNode::_validateState(exec_ctx, for_real);
 }
 
 
@@ -387,7 +374,7 @@ FuserUsdXform::getXformOpAsRotations(const Pxr::UsdGeomXformOp& xform_op,
 /*virtual*/
 void
 FuserUsdXform::importSceneOp(DD::Image::Op*     op,
-                             const Fsr::ArgSet& args)
+                             const Fsr::ArgSet& exec_args)
 {
     if (!op)
         return; // shouldn't happen...
@@ -396,19 +383,32 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
     if (!xform_prim.IsValid())
         return; // don't crash...
 
-    const bool debug = args.getBool(Arg::Scene::read_debug, false);
+    const bool debug = exec_args.getBool(Arg::Scene::read_debug, false);
     //
-    const Fsr::XformOrder    decompose_xform_order =    (Fsr::XformOrder)args.getInt(Arg::Scene::decompose_xform_order, (int)Fsr::SRT_ORDER);
-    const Fsr::RotationOrder decompose_rot_order   = (Fsr::RotationOrder)args.getInt(Arg::Scene::decompose_rot_order,   (int)Fsr::ZXY_ORDER);
+    const Fsr::XformOrder    decompose_xform_order =    (Fsr::XformOrder)exec_args.getInt(Arg::Scene::decompose_xform_order, (int)Fsr::SRT_ORDER);
+    const Fsr::RotationOrder decompose_rot_order   = (Fsr::RotationOrder)exec_args.getInt(Arg::Scene::decompose_rot_order,   (int)Fsr::ZXY_ORDER);
     //
-    const bool T_enable = args.getBool(Arg::Scene::T_enable, true);
-    const bool R_enable = args.getBool(Arg::Scene::R_enable, true);
-    const bool S_enable = args.getBool(Arg::Scene::S_enable, true);
-    const bool euler_filter_enable   = args.getBool(Arg::Scene::euler_filter_enable,   true);
+    const bool T_enable            = exec_args.getBool(Arg::Scene::T_enable, true);
+    const bool R_enable            = exec_args.getBool(Arg::Scene::R_enable, true);
+    const bool S_enable            = exec_args.getBool(Arg::Scene::S_enable, true);
+    const bool euler_filter_enable = exec_args.getBool(Arg::Scene::euler_filter_enable,   true);
 
     const Pxr::UsdPrim parent_prim = xform_prim.GetParent();
     const bool have_parent_xform = (parent_prim.IsA<Pxr::UsdGeomXformable>());
-    const bool extract_parent_enable = (have_parent_xform && args.getBool(Arg::Scene::parent_extract_enable, true));
+    const bool extract_parent_enable = (have_parent_xform && exec_args.getBool(Arg::Scene::parent_extract_enable, true));
+
+    const bool   input_lock_read_frame = exec_args.getBool(  "reader:lock_read_frame", false);
+    const double input_read_frame      = exec_args.getDouble("reader:read_frame",       0.0 );
+    const double output_frame_offset   = exec_args.getDouble("reader:frame_offset",     0.0 );
+    const double output_frame_origin   = exec_args.getDouble("reader:frame_origin",     0.0 );
+    const double output_fps            = exec_args.getDouble("reader:fps",             24.0 );
+    //
+    const bool         input_lock_read_view = exec_args.getBool(  "reader:lock_read_view", false);
+    const std::string& input_read_view      = exec_args.getString("reader:read_view",      ""   );
+
+    const double input_fps          = getStage()->GetTimeCodesPerSecond();
+    const double input_frame_origin = (output_frame_origin / output_fps) * input_fps;
+
 
     // This list gets filled in with the final transforms:
     AxisKnobValsList axis_vals_list;
@@ -429,8 +429,8 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
 
     if (debug)
     {
-        std::cout << "      FuserUsdXform::importSceneOp('" << op->node_name() << "') ";
-        std::cout << args;
+        std::cout << "      FuserUsdXform::importSceneOp('" << op->node_name() << "') exec-args";
+        std::cout << exec_args;
         std::cout << std::endl;
 
         std::cout << "        T_enable=" << T_enable;
@@ -439,12 +439,33 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
         std::cout << ", euler_filter_enable=" << euler_filter_enable;
         std::cout << ", separate_parent_enabled=" << separate_parent_enabled;
         std::cout << std::endl;
+
+        std::cout << "        lock frame=" << input_lock_read_frame;
+        if (input_lock_read_frame)
+            std::cout << ": read frame=" << input_read_frame;
+        else
+        {
+            std::cout << ", frame_origin=" << output_frame_origin;
+            std::cout << ", frames_per_second=" << output_fps;
+        }
+        std::cout << ", frame_offset=" << output_frame_offset;
+        std::cout << ", lock view=" << input_lock_read_view;
+        if (input_lock_read_view)
+            std::cout << ": read view='" << input_read_view << "'";
+
+        std::cout << ", input_fps=" << input_fps;
+        std::cout << ", input_frame_origin=" << input_frame_origin;
+
+        std::cout << std::endl;
     }
 
 
     // Get unique set of concatenated times from top down to current prim:
     std::set<double> concat_times;
-    getConcatenatedXformOpTimeSamples(xform_prim, concat_times);
+    if (input_lock_read_frame)
+        concat_times.insert(input_read_frame);
+    else
+        getConcatenatedXformOpTimeSamples(xform_prim, concat_times);
 
     // If no samples set to default time:
     bool is_animated;
@@ -453,17 +474,39 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
         is_animated = false;
         axis_vals_list.resize(1);
         axis_vals_list[0].setToDefault(0.0);
+        //if (debug)
+        //    std::cout << "        times[0 - 0] - set to default" << std::endl;
+
+    }
+    else if (concat_times.size() == 1)
+    {
+        is_animated = true;
+        axis_vals_list.resize(1);
+        axis_vals_list[0].setToDefault(*concat_times.begin() + output_frame_offset);
+
     }
     else
     {
         is_animated = true;
         axis_vals_list.resize(concat_times.size());
+        //if (debug)
+        //    std::cout << "times:" << std::endl;
         int j = 0;
         for (std::set<double>::const_iterator it=concat_times.begin(); it != concat_times.end(); ++it, ++j)
-            axis_vals_list[j].setToDefault(*it);
+        {
+            const double input_frame = *it;
+
+            // Apply time warping:
+            const double input_time   = ((input_frame - output_frame_origin) / output_fps);
+            const double output_frame = (input_time * input_fps) + output_frame_origin + output_frame_offset;
+
+            axis_vals_list[j].setToDefault(output_frame);
+            //if (debug)
+            //    std::cout << "  " << j << ": in=" << input_frame << ", out=" << output_frame << std::endl;
+
+        }
+
     }
-    //if (debug)
-    //    std::cout << "        times[" << times[0] << " - " << times[concat_times.size()-1] << "]" << std::endl;
 
 
     // Handle parent-separate and parent-combined modes differently so we
@@ -480,12 +523,13 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
         int j = 0;
         for (std::set<double>::const_iterator it=concat_times.begin(); it != concat_times.end(); ++it, ++j)
         {
-            AxisKnobVals& axis_vals = axis_vals_list[j];
+            const double input_frame = *it;
 
             const Pxr::UsdTimeCode timecode = (is_animated) ?
-                                              Pxr::UsdTimeCode(axis_vals.time) :
+                                              Pxr::UsdTimeCode(input_frame) :
                                               Pxr::UsdTimeCode::Default();
 
+            AxisKnobVals& axis_vals = axis_vals_list[j];
             if (!axis_vals.extractFromMatrix(getConcatenatedMatrixAtPrim(parent_prim, timecode),
                                              T_enable, R_enable, S_enable,
                                              Fsr::XYZ_ORDER,

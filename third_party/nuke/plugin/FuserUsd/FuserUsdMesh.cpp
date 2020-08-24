@@ -46,22 +46,24 @@
 #endif
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
-#  include <pxr/base/tf/token.h>
-#  include <pxr/base/gf/math.h>
-#  include <pxr/base/gf/matrix3d.h>
-#  include <pxr/base/gf/matrix4d.h>
-#  include <pxr/base/gf/vec3d.h>
+#include <pxr/base/tf/token.h>
+#include <pxr/base/gf/math.h>
+#include <pxr/base/gf/matrix3d.h>
+#include <pxr/base/gf/matrix4d.h>
+#include <pxr/base/gf/vec3d.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 
-#  include <pxr/usd/usdShade/materialBindingAPI.h>
-
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
+
 
 // Poly-reduction values for OpenGL display
 #define STEP_THRESHOLD 1000
@@ -95,7 +97,8 @@ FuserUsdMesh::FuserUsdMesh(const Pxr::UsdStageRefPtr& stage,
                            Fsr::Node*                 parent) :
     FuserUsdXform(stage, mesh_prim, args, parent),
     m_topology_variance(ConstantTopology),
-    m_subdivider(NULL)
+    m_subdivider(NULL),
+    m_id_index(-1)
 {
     //std::cout << "  FuserUsdMesh::ctor(" << this << ") '" << mesh_prim.GetPath() << "'" << std::endl;
 
@@ -103,6 +106,9 @@ FuserUsdMesh::FuserUsdMesh(const Pxr::UsdStageRefPtr& stage,
     if (mesh_prim.IsValid() && mesh_prim.IsA<Pxr::UsdGeomPointBased>())
     {
         m_ptbased_schema = Pxr::UsdGeomPointBased(mesh_prim);
+
+        // Meshes can be affected by visibility:
+        getVisibility(mesh_prim, m_is_visible, m_has_animated_visibility);
 
         // Bind the USD mesh object:
         const Pxr::UsdGeomMesh usd_mesh(m_ptbased_schema.GetPrim());
@@ -126,7 +132,7 @@ FuserUsdMesh::FuserUsdMesh(const Pxr::UsdStageRefPtr& stage,
         //    m_topology_variance |= PrimitiveVaryingTopology;
 #else
         // Unfortunately poorly-authored prims originating from Alembic files may have per-frame
-        // vertex count/index data even the the meshes are topogically constant. So the simple
+        // vertex count/index data even if the meshes are topogically constant. So the simple
         // test of ValueMightBeTimeVarying() does not correctly catch this case.
 
         // Replicate the logic in the Alembic lib that correctly determines the
@@ -178,6 +184,9 @@ FuserUsdMesh::FuserUsdMesh(const Pxr::UsdStageRefPtr& stage,
             static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
 
             std::cout << "  FuserUsdMesh::ctor('" << mesh_prim.GetPath() << "')";
+            std::cout << " is_visible=" << m_is_visible;
+            if (m_has_animated_visibility)
+                std::cout << "(animating)";
             std::cout << " topo_variance=" << m_topology_variance;
 
             std::cout << ", material=";
@@ -290,29 +299,28 @@ FuserUsdMesh::getPrimvarForNukeAttrib(const char* nuke_attrib_name,
 /*! Called before execution to allow node to update local data from args.
 */
 /*virtual*/ void
-FuserUsdMesh::_validateState(const Fsr::NodeContext& args,
+FuserUsdMesh::_validateState(const Fsr::NodeContext& exec_ctx,
                              bool                    for_real)
 {
     // Get the time value up to date:
-    FuserUsdXform::_validateState(args, for_real);
+    FuserUsdXform::_validateState(exec_ctx, for_real);
     //std::cout << "FuserUsdMesh::_validateState(" << this << ") '" << m_ptbased_schema.GetPath() << "'" << std::endl;
+
+    if (!m_is_visible)
+        return; // skip rest if mesh is not visible
 
     // Bind the USD mesh object:
     const Pxr::UsdGeomMesh usd_mesh(m_ptbased_schema.GetPrim());
 
-    const double time = getDouble("frame");//(getDouble("frame") / getDouble("fps"));
-
-    // These args are defined in the GeoReader plugin - support them:
-    //m_translate_render_parts =   getBool("reader:translate_render_parts");
-    //m_points_render_mode     = getString("reader:points_render_mode"    );
-
+    // Object identifier index is passed in, usually comes from Nuke geometry object index:
+    m_id_index = exec_ctx.getInt("object_id", -1);
 
     //---------------------------------------------------------------------------
     // Get attibute name mappings from 'reader:attribute_mappings' arg.
     //      ex string. 'color=Cf Cd=Cf UV=uv pscale=size  subd::hi=subd_hi subd::display=subd_display'
     m_primvar_to_nuke.clear();
     m_nuke_to_primvar.clear();
-    FuserGeoReader::buildAttributeMappings(getString("reader:attribute_mappings").c_str(),
+    FuserGeoReader::buildAttributeMappings(exec_ctx.getString("reader:attribute_mappings").c_str(),
                                            m_primvar_to_nuke,
                                            m_nuke_to_primvar);
 
@@ -329,14 +337,28 @@ FuserUsdMesh::_validateState(const Fsr::NodeContext& args,
     //std::cout << "  m_velocities_primvar_name='" << m_velocities_primvar_name << "'" << std::endl;
 
     //---------------------------------------------------------------------------
+    // Copy some other params set by reader into local args:
+    //
+    setString("enabled_facesets",   exec_ctx.getString("reader:enabled_facesets", "*"));
+    //setString("points_render_mode", exec_ctx.getString("reader:point_render_mode", ""));
+    //
+    setBool("use_geometry_colors", exec_ctx.getBool("reader:use_geometry_colors", true ));
+    setBool("color_objects",       exec_ctx.getBool("reader:color_objects",       false));
+    setBool("color_facesets",      exec_ctx.getBool("reader:color_facesets",      false));
+    //"reader:creation_mode"      }, // CREATION_MODE_KNOB,
+    //
+    setString("proxy_lod",  exec_ctx.getString("reader:proxy_lod",  ""));
+    setString("render_lod", exec_ctx.getString("reader:render_lod", ""));
+
+    //---------------------------------------------------------------------------
     // Translate subd options usually set by the GeoReader on import.
     // These are mapped to the 'subd:*' attributes if those attributes don't
     // exist yet:
-    const std::string& reader_subd_import_level  = getString("reader:subd_import_level");
-    const std::string& reader_subd_render_level  = getString("reader:subd_render_level");
-    const bool         reader_subd_force_enable  = getBool(  "reader:subd_force_enable",  false);
-    const bool         reader_subd_snap_to_limit = getBool(  "reader:subd_snap_to_limit", false);
-    const std::string& reader_subd_tessellator   = getString("reader:subd_tessellator" );
+    const std::string& reader_subd_import_level  = exec_ctx.getString("reader:subd_import_level");
+    const std::string& reader_subd_render_level  = exec_ctx.getString("reader:subd_render_level");
+    const bool         reader_subd_force_enable  = exec_ctx.getBool(  "reader:subd_force_enable",  false);
+    const bool         reader_subd_snap_to_limit = exec_ctx.getBool(  "reader:subd_snap_to_limit", false);
+    const std::string& reader_subd_tessellator   = exec_ctx.getString("reader:subd_tessellator" );
     if (!reader_subd_import_level.empty() && !hasArg("subd:current_level"))
     {
         // Mesh has not been subdivided yet, get reader import setting:
@@ -367,7 +389,7 @@ FuserUsdMesh::_validateState(const Fsr::NodeContext& args,
     if (extents_attrib)
     {
         Pxr::VtArray<Pxr::GfVec3f> extent;
-        extents_attrib.Get(&extent, time);
+        extents_attrib.Get(&extent, m_input_time);
         // Handle empty extents:
         if (extent.size() == 2)
         {
@@ -378,7 +400,7 @@ FuserUsdMesh::_validateState(const Fsr::NodeContext& args,
         }
     }
 
-    m_xform = getConcatenatedMatrixAtPrim(getPrim(), time);
+    m_xform = getConcatenatedMatrixAtPrim(getPrim(), m_input_time);
     m_have_xform = !m_xform.isIdentity();
 
     if (debug())
@@ -386,7 +408,7 @@ FuserUsdMesh::_validateState(const Fsr::NodeContext& args,
         static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
 
         std::cout << "--------------------------------------------------------------------------------------" << std::endl;
-        std::cout << "FuserUsdMesh::_validateState(" << this << "): for_real=" << for_real << ", time=" << time;
+        std::cout << "FuserUsdMesh::_validateState(" << this << "): for_real=" << for_real << ", m_input_time=" << m_input_time;
         std::cout << ", m_local_bbox=" << m_local_bbox;
         std::cout << ", m_have_xform=" << m_have_xform;
         if (m_have_xform)
@@ -417,12 +439,20 @@ FuserUsdMesh::_execute(const Fsr::NodeContext& target_context,
 
         std::cout << "  FuserUsdMesh::_execute(" << this << ") target='" << target_name << "'";
         std::cout << " Mesh";
+        if (!m_is_visible)
+            std::cout << "(INVISIBLE)";
         std::cout << " '" << getString(Arg::Scene::path) << "'";
         if (m_have_xform)
             std::cout << ", xform" << m_xform;
         else
             std::cout << ", xform disabled";
         std::cout << std::endl;
+    }
+
+    if (!m_is_visible)
+    {
+        // Skip mesh execute methods if not visible ever:
+        return FuserUsdXform::_execute(target_context, target_name, target, src0, src1);
     }
 
     // Redirect execution depending on target type:
@@ -584,12 +614,12 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
 #if 0
     // Get list of enabled facesets if it's changed:
     //DD::Image::Hash new_hash;
-    //new_hash.append(getString("reader:enabled_facesets").c_str());
+    //new_hash.append(getString("enabled_facesets").c_str());
     if (1)//(new_hash != m_faceset_hash)
     {
         //m_faceset_hash = new_hash;
         std::vector<std::string> tokens; tokens.reserve(5);
-        stringSplit(getString("reader:enabled_facesets"), " ", tokens);
+        stringSplit(getString("enabled_facesets"), " ", tokens);
         m_enabled_facesets.clear();
         for (size_t i=0; i < tokens.size(); ++i)
         {
@@ -823,7 +853,8 @@ FuserUsdMesh::initializeMeshSample(MeshSample&    mesh,
             if (mesh.velocities.size() > 0)
                 tessellate_ctx.vert_vec3_attribs.push_back(&mesh.velocities);
 
-            int res = m_subdivider->execute(subd_args,           /*target_context*/
+            int res = m_subdivider->execute(Fsr::ArgSet(),       /*node_args*/
+                                            subd_args,           /*target_context*/
                                             tessellate_ctx.name, /*target_name*/
                                             &tessellate_ctx      /*target*/);
             if (res < 0)
@@ -1144,7 +1175,7 @@ FuserUsdMesh::getVertexColors(const MeshSample&   mesh,
     if (mesh.nVerts == 0 || (colors_primvar_name.IsEmpty() && opacities_primvar_name.IsEmpty()))
         return; // don't crash...
 
-    if (getBool("reader:use_geometry_colors"))
+    if (getBool("use_geometry_colors"))
     {
         // Note the GetPrimvar() method automatically prefixes 'primvar:' to attribute name:
         const Pxr::UsdGeomPrimvar& color_primvar   = m_ptbased_schema.GetPrimvar(colors_primvar_name);
@@ -1293,7 +1324,7 @@ FuserUsdMesh::getVertexColors(const MeshSample&   mesh,
             return; // assigned colors or opacities
     }
 
-    if (getBool("reader:color_objects"))
+    if (getBool("color_objects"))
     {
         // Set all vertex colors the same:
         const int object_index = mesh.id_index;
@@ -1312,7 +1343,7 @@ FuserUsdMesh::getVertexColors(const MeshSample&   mesh,
         return;
     }
 
-    if (getBool("reader:color_facesets"))
+    if (getBool("color_facesets"))
     {
         // Set the vertex color to a random value by faceset id, overwriting default:
         // TODO: implement, we need the GeomSubsets...!
@@ -1374,15 +1405,15 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
         return; // don't crash...
     }
 
-    const Fsr::TimeValue time = getDouble("frame");//(getDouble("frame") / getDouble("fps"));
+    // Convert output read time to input authored time:
     const int subd_import_level = getInt("subd:import_level", 0);
 
     //-------------------------------------------------------
     // Fill in the MeshSample for the scene time:
     MeshSample mesh;
     if (!initializeMeshSample(mesh,
-                              time,
-                              0/*id_index*/,
+                              m_input_time,
+                              m_id_index/*id_index*/,
                               subd_import_level/*target_subd_level*/,
                               true/*get_uvs*/,
                               true/*get_normals*/,
@@ -1408,7 +1439,7 @@ FuserUsdMesh::geoOpGeometryEngine(Fsr::GeoOpGeometryEngineContext& geo_ctx)
 
         std::cout << "  --------------------------------------------------------------------------------------" << std::endl;
         std::cout << "  FuserUsdMesh::geoOpGeometryEngine(" << this << "):";
-        std::cout << " obj=" << obj << ", time=" << time;
+        std::cout << " obj=" << obj << ", m_input_time=" << m_input_time;
         std::cout << ", name='" << Fsr::Node::getName() << "'";
         std::cout << ", path='" << Fsr::Node::getPath() << "'";
         std::cout << ", '" << getString(Arg::Scene::file) << "'";
@@ -1691,8 +1722,6 @@ FuserUsdMesh::tessellateToRenderScene(Fsr::FuserPrimitive::DDImageRenderSceneTes
     // TODO: figure out motionblur logic that works with ScanlineRender. I think we just need
     // to make a single sample at the Node's time.
 
-    const Fsr::TimeValue time = getDouble("frame");//(getDouble("frame") / getDouble("fps"));
-
     // Subd options:
     const int  subd_current_level =  getInt("subd:current_level", 0);
     const int  subd_render_level  =  getInt("subd:render_level",  0);
@@ -1702,8 +1731,8 @@ FuserUsdMesh::tessellateToRenderScene(Fsr::FuserPrimitive::DDImageRenderSceneTes
     // Fill in the MeshSample for the scene time:
     MeshSample mesh;
     if (!initializeMeshSample(mesh,
-                              time,
-                              0/*id_index*/,
+                              m_input_time,
+                              m_id_index/*id_index*/,
                               subd_render_level/*target_subd_level*/,
                               true/*get_uvs*/,
                               true/*get_normals*/,
@@ -1730,7 +1759,7 @@ FuserUsdMesh::tessellateToRenderScene(Fsr::FuserPrimitive::DDImageRenderSceneTes
 
         std::cout << "  --------------------------------------------------------------------------------------" << std::endl;
         std::cout << "  FuserUsdMesh::tessellateToRenderScene(" << this << "):";
-        std::cout << " time=" << time;
+        std::cout << " m_input_time=" << m_input_time;
         std::cout << ", name='" << Fsr::Node::getName() << "'";
         std::cout << ", path='" << Fsr::Node::getPath() << "'";
         std::cout << ", '" << getString(Arg::Scene::file) << "'";
@@ -1865,7 +1894,6 @@ FuserUsdMesh::drawMesh(DD::Image::ViewerContext*    vtx,
     assert(vtx);
     assert(ptx);
 
-    const Fsr::TimeValue time = getDouble("frame");//(getDouble("frame") / getDouble("fps"));
     const int subd_import_level = getInt("subd:import_level", 0);
 
     const bool get_normals   = (draw_mode == Fsr::NodeContext::DRAW_GL_SOLID ||
@@ -1878,8 +1906,8 @@ FuserUsdMesh::drawMesh(DD::Image::ViewerContext*    vtx,
     // Fill in a MeshSample for the gui/OpenGL time:
     MeshSample mesh;
     if (!initializeMeshSample(mesh,
-                              time,
-                              0/*id_index*/,
+                              m_input_time,
+                              m_id_index/*id_index*/,
                               subd_import_level/*target_subd_level*/,
                               get_uvs,
                               get_normals,
@@ -1938,9 +1966,9 @@ FuserUsdMesh::drawMesh(DD::Image::ViewerContext*    vtx,
 
     // Calc possible face-skipping step factor:
     size_t face_step = 1;
-    if (getString("reader:proxy_lod") == Fsr::NodePrimitive::lod_modes[Fsr::NodePrimitive::LOD_PROXY])
+    if (getString("proxy_lod") == Fsr::NodePrimitive::lod_modes[Fsr::NodePrimitive::LOD_PROXY])
         face_step = (mesh.nFaces > STEP_THRESHOLD)?std::max((size_t)1, (mesh.nFaces / STEP_DIVISOR)):1;
-    else if (getString("reader:proxy_lod") == Fsr::NodePrimitive::lod_modes[Fsr::NodePrimitive::LOD_RENDER])
+    else if (getString("proxy_lod") == Fsr::NodePrimitive::lod_modes[Fsr::NodePrimitive::LOD_RENDER])
         face_step = 1;
 
     if (draw_mode == Fsr::NodeContext::DRAW_GL_WIREFRAME)

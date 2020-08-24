@@ -97,6 +97,9 @@ enum
     SURFACE_MASK_KNOB,
     ATTRIBUTE_MAPPINGS_KNOB,
     VELOCITY_SCALE_KNOB,
+    //
+    FRAME_OFFSET_KNOB,
+    FRAME_ORIGIN_KNOB,
     FPS_KNOB,
     //
     SUBD_IMPORT_LEVEL_KNOB,
@@ -109,7 +112,7 @@ enum
     USE_COLORS_KNOB,
     COLOR_FACESETS_KNOB,
     COLOR_OBJECTS_KNOB,
-    APPLY_MATRIX_KNOB,
+    APPLY_XFORMS_KNOB,
     CREATION_MODE_KNOB,
     //
     PREVIEW_LOD_KNOB,
@@ -125,6 +128,9 @@ static const KnobMap knob_map[] =
     { "surface_mask",         "reader:surface_mask"       }, // SURFACE_MASK_KNOB,
     { "attribute_mappings",   "reader:attribute_mappings" }, // ATTRIBUTE_MAPPINGS_KNOB,
     { "velocity_scale",       "reader:velocity_scale"     }, // VELOCITY_SCALE_KNOB,
+    //
+    { "frame_offset",         "reader:frame_offset"       }, // FRAME_OFFSET_KNOB
+    { "frame_origin",         "reader:frame_origin"       }, // FRAME_ORIGIN_KNOB,
     { "frame_rate",           "reader:fps"                }, // FPS_KNOB,
     //
     { "subd_import_level",    "reader:subd_import_level"  }, // SUBD_IMPORT_LEVEL_KNOB,
@@ -137,11 +143,11 @@ static const KnobMap knob_map[] =
     { "use_geometry_colors",  "reader:use_geometry_colors"}, // USE_COLORS_KNOB,
     { "color_facesets",       "reader:color_facesets"     }, // COLOR_FACESETS_KNOB,
     { "color_objects",        "reader:color_objects"      }, // COLOR_OBJECTS_KNOB,
-    { "apply_matrix",         "reader:apply_matrix"       }, // APPLY_MATRIX_KNOB,
+    { "apply_xforms",         "reader:apply_xforms"       }, // APPLY_XFORMS_KNOB,
     { "prim_creation_mode",   "reader:creation_mode"      }, // CREATION_MODE_KNOB,
     //
-    { "proxy_lod_mode",       "reader:proxy_lod_mode"     }, // PREVIEW_LOD_KNOB,
-    { "render_lod_mode",      "reader:render_lod_mode"    }, // RENDER_LOD_KNOB,
+    { "proxy_lod_mode",       "reader:proxy_lod"          }, // PREVIEW_LOD_KNOB,
+    { "render_lod_mode",      "reader:render_lod"         }, // RENDER_LOD_KNOB,
     //
     { "debug",                "reader:debug"              }, // DEBUG_KNOB,
     { "debug_attribs",        "reader:debug_attribs"      }, // DEBUG_ATTRIBS_KNOB
@@ -162,11 +168,13 @@ FuserGeoReaderFormat::FuserGeoReaderFormat(ReadGeo* geo)
     k_translate_render_parts = true; // TODO: DEPRECATE!
     k_attribute_mappings    = default_attribute_mappings;
     //
-    k_read_on_each_frame    = true;
+    k_lock_read_frame       = false;
+    k_read_frame            = 1.0;
     k_sub_frame             = true;
     k_velocity_scale        = 1.0;
-    k_set_frame             = 1.0;
-    k_frames_per_second     = 24.0; // This should be a user knob?  Can we get this from the root somehow...?
+    k_frame_offset          = 0.0;
+    k_frame_origin          = 0.0;
+    k_frames_per_second     = 24.0; // Can we default this from the root somehow...?
     //
     k_points_mode           = POINTS_ARE_POINTCLOUD_SPHERES;
     //
@@ -180,7 +188,7 @@ FuserGeoReaderFormat::FuserGeoReaderFormat(ReadGeo* geo)
     k_color_facesets        = false;
     k_color_objects         = false;
     //
-    k_apply_matrix          = true;
+    k_apply_xforms          = true;
     k_prim_creation_mode    = Fsr::NodePrimitive::LOAD_IMMEDIATE;
     k_proxy_lod_mode        = Fsr::NodePrimitive::LOD_PROXY;
     //
@@ -210,23 +218,54 @@ FuserGeoReaderFormat::knobs(Knob_Callback f)
 /*virtual*/ void
 FuserGeoReaderFormat::addTimeOptionsKnobs(Knob_Callback f)
 {
-    Bool_knob(f, &k_read_on_each_frame, "read_on_each_frame", "lock frame");
-        SetFlags(f, Knob::EARLY_STORE);
-        Tooltip(f, "If true update the geometry from the file on each frame.");
-    Bool_knob(f, &k_sub_frame, "sub_frame", "sub frame");
-        SetFlags(f, Knob::EARLY_STORE);
+    Bool_knob(f, &k_lock_read_frame, "lock_read_frame", "lock read frame:");
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY);
+        Tooltip(f, "If enabled lock the reader to use the manually-set frame number.");
+    Double_knob(f, &k_read_frame, "read_frame", "");
+        SetFlags(f, Knob::DISABLED |
+                    Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY |
+                    Knob::NO_MULTIVIEW);
+        ClearFlags(f, Knob::SLIDER |
+                      Knob::STARTLINE);
+        Tooltip(f, "Use this frame number when 'lock read frame' is enabled.\n"
+                   "This control can be animated to read any arbitrary frame speed curve.");
+    Obsolete_knob(f, "lock_frame", "knob read_frame $value");
+    Newline(f);
+
+    Double_knob(f, &k_frame_origin, knob_map[FRAME_ORIGIN_KNOB].readerKnob, "frame: origin");
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY |
+                    Knob::NO_MULTIVIEW |
+                    Knob::NO_ANIMATION);
+        ClearFlags(f, Knob::SLIDER);
+        Tooltip(f, "Origin of the incoming frame range. Any frame rate change is scaled from this point.");
+    Double_knob(f, &k_frames_per_second, IRange(1,96), knob_map[FPS_KNOB].readerKnob, "rate");
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY |
+                    Knob::NO_MULTIVIEW |
+                    Knob::NO_ANIMATION);
+        ClearFlags(f, Knob::SLIDER |
+                      Knob::STARTLINE);
+        Tooltip(f, "This is the frame rate (frames per second) used to sample the geometry file.\n"
+                   "If this rate is lower than the rate encoded in the file the effect is to "
+                   "slow down the animation. For example if the file was animated at 24 fps and "
+                   "frame_rate is set to 12, the animation will read at half speed.");
+    Double_knob(f, &k_frame_offset, knob_map[FRAME_OFFSET_KNOB].readerKnob, "output offset");
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY |
+                    Knob::NO_MULTIVIEW |
+                    Knob::NO_ANIMATION);
+        ClearFlags(f, Knob::SLIDER |
+                      Knob::STARTLINE);
+        Tooltip(f, "Offset the incoming frame range, applied after any frame rate change");
+    Bool_knob(f, &k_sub_frame, "sub_frame", "sub-frame interp");
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY);
+        ClearFlags(f, Knob::STARTLINE);
         Tooltip(f,  "If true allow non-integer frame samples to be read from file.\n"
                     "Only available if we're not manually setting the frame.");
-    Newline(f);
-    Double_knob(f, &k_set_frame, "set_frame", "set read frame");
-        SetFlags(f, Knob::EARLY_STORE | Knob::NO_MULTIVIEW); ClearFlags(f, Knob::SLIDER);
-        ClearFlags(f, Knob::LOG_SLIDER);
-        Tooltip(f, "Use this frame number when 'read on each frame' is false.");
-    Obsolete_knob(f, "lock_frame", "knob set_frame $value");
-
-    Double_knob(f, &k_frames_per_second, IRange(1,96), knob_map[FPS_KNOB].readerKnob, "frame rate");
-        SetFlags(f, Knob::EARLY_STORE | Knob::NO_MULTIVIEW | Knob::NO_ANIMATION); ClearFlags(f, Knob::SLIDER | Knob::STARTLINE);
-        Tooltip(f, "This is the frame rate (frames per second) used to sample the geometry file.");
 }
 
 
@@ -236,7 +275,9 @@ FuserGeoReaderFormat::addTimeOptionsKnobs(Knob_Callback f)
 FuserGeoReaderFormat::addImportOptionsKnobs(Knob_Callback f)
 {
     Enumeration_knob(f, &k_prim_creation_mode, Fsr::NodePrimitive::load_modes, knob_map[CREATION_MODE_KNOB].readerKnob, "prim creation");
-        SetFlags(f, Knob::STARTLINE | Knob::EARLY_STORE);
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY |
+                    Knob::STARTLINE);
         Tooltip(f,  "Geometry data creation mode:\n"
                     " <b>immediate</b> - add Nuke geometry primitives, immediately loading all vertex and point data.\n"
                     " <b>deferred</b> - add Fuser primitives with only object attributes loaded (no vertex or point data)\n"
@@ -244,8 +285,10 @@ FuserGeoReaderFormat::addImportOptionsKnobs(Knob_Callback f)
 
     //------------------------------------
     Bool_knob(f, &k_ignore_unrenderable, "ignore_unrenderable", "ignore unrenderable");
-        SetFlags(f, Knob::EARLY_STORE);
-        SetFlags(f, Knob::STARTLINE);
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY |
+                    Knob::STARTLINE);
+SetFlags(f, Knob::DISABLED);
         Tooltip(f,  "Don't show unrenderable objects as available in object lists.  The current "
                     "node types considered unrenderable are:\n"
                     " <b>Xform</b>\n"
@@ -254,16 +297,24 @@ FuserGeoReaderFormat::addImportOptionsKnobs(Knob_Callback f)
                     " <b>Curves</b>\n"
                     " <b>NuPatch(alembic)</b>\n"
                     );
-    Bool_knob(f, &k_apply_matrix, knob_map[APPLY_MATRIX_KNOB].readerKnob, "apply matrix");
-        Tooltip(f,  "Enable/disble the application of matrices to objects.\n"
+    Bool_knob(f, &k_apply_xforms, knob_map[APPLY_XFORMS_KNOB].readerKnob, "apply xforms");
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY);
+        Tooltip(f,  "Enable/disble the application of transform matrices to objects.\n"
                     "Objects with a transform hierarchy will usually end up at the "
-                    "origin (0,0,0) when this is off.");
+                    "origin (0,0,0) when this is off.\n"
+                    "\n"
+                    "Note - this may not work in the current ReadGeo system which does "
+                    "not appear to allow geometry readers this level of control.");
+    Obsolete_knob(f, "apply_matrix", "knob apply_xforms $value");
 
 #ifdef DWA_INTERNAL_BUILD
     //------------------------------------
     // TODO: DEPRECATE!
     Bool_knob(f, &k_translate_render_parts, "translate_render_parts", "translate render parts to UDIMs");
-        SetFlags(f, Knob::EARLY_STORE);
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY);
+SetFlags(f, Knob::DISABLED);
         Tooltip(f,  "Translate legacy render-part enums to UDIM-style UV faceset offsets.\n"
                     "Use the 'UVTile' material node to assign a texture to a faceset (render-part.) "
                     "Multiple facesets can be assigned by using the 'MergeMat' node where each "
@@ -272,8 +323,10 @@ FuserGeoReaderFormat::addImportOptionsKnobs(Knob_Callback f)
 
     //------------------------------------
     Enumeration_knob(f, &k_proxy_lod_mode, Fsr::NodePrimitive::lod_modes, knob_map[PREVIEW_LOD_KNOB].readerKnob, "proxy lod mode");
-        SetFlags(f, Knob::EARLY_STORE);
-        SetFlags(f, Knob::STARTLINE);
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY |
+                    Knob::STARTLINE);
+SetFlags(f, Knob::DISABLED);
         Tooltip(f,  "In deferred mode how to display geometry:\n"
                     "bbox - display the bounding-box extents\n"
                     " <b>standin</b> - TODO\n"
@@ -292,27 +345,33 @@ FuserGeoReaderFormat::addPrimOptionsKnobs(Knob_Callback f)
     //------------------------------------
     Newline(f, "subds:");
     Enumeration_knob(f, &k_subd_import_level, subd_levels, knob_map[SUBD_IMPORT_LEVEL_KNOB].readerKnob, "import level");
+        SetFlags(f, Knob::MODIFIES_GEOMETRY);
         ClearFlags(f, Knob::STARTLINE);
         Tooltip(f,  "Subdivision level to use for <b>importing</b>\n"
                     "In immediate load mode this will create mesh primitives with subdivided faces/verts.\n"
                     "In deferred mode this will affect the OpenGL preview display.\n"
                     SUBD_KNOB_HELP);
     Enumeration_knob(f, &k_subd_render_level, subd_levels, knob_map[SUBD_RENDER_LEVEL_KNOB].readerKnob, "render level");
+        SetFlags(f, Knob::MODIFIES_GEOMETRY);
         ClearFlags(f, Knob::STARTLINE);
         Tooltip(f,  "Subdivision level to use for <b>rendering</b> (will not affect OpenGL display)\n"
                     SUBD_KNOB_HELP);
     Bool_knob(f, &k_subd_force_enable, knob_map[SUBD_FORCE_ENABLE_KNOB].readerKnob, "all meshes");
+        SetFlags(f, Knob::MODIFIES_GEOMETRY);
         ClearFlags(f, Knob::STARTLINE);
         Tooltip(f, "Enable subdivision on meshes even though they may not be tagged as subds in the file.");
     Bool_knob(f, &k_subd_snap_to_limit, knob_map[SUBD_SNAP_TO_LIMIT_KNOB].readerKnob, "snap to limit");
+SetFlags(f, Knob::DISABLED);
+        SetFlags(f, Knob::MODIFIES_GEOMETRY |
+                    Knob::ENDLINE);
         ClearFlags(f, Knob::STARTLINE);
-        SetFlags(f, Knob::ENDLINE);
         Tooltip(f,  "After subdividing to the target level snap the resulting points to the limit surface.\n"
                     "\n"
                     "The will make the resulting mesh more accurate to the ideal subd surface profile "
                     "(the 'limit surface') but will not allow the mesh to be further subdivided properly "
                     "since the point locations are no longer aligned with the original cage.");
     Enumeration_knob(f, &k_subd_tessellator, subd_tessellators, knob_map[SUBD_TESSELLATOR_KNOB].readerKnob, "tessellator");
+        SetFlags(f, Knob::MODIFIES_GEOMETRY);
         ClearFlags(f, Knob::STARTLINE);
         Tooltip(f,  "Tessellator scheme to use for subdividing\n"
                     "OpenSubdiv (default, uses the OpenSubdiv library)\n"
@@ -322,13 +381,17 @@ FuserGeoReaderFormat::addPrimOptionsKnobs(Knob_Callback f)
     Obsolete_knob(f, "render_subd_level", "knob subd_render_level $value");
     //------------------------------------
     Enumeration_knob(f, &k_points_mode, points_modes, knob_map[POINTS_MODE_KNOB].readerKnob, "render points as");
+SetFlags(f, Knob::DISABLED);
+        SetFlags(f, Knob::MODIFIES_GEOMETRY);
         Tooltip(f,  "Sets the preferred render mode attribute 'point_render_mode' for point cloud primitives.\n"
                     "Note - this may not be supported by all renderers.");
     //------------------------------------
     Double_knob(f, &k_velocity_scale, knob_map[VELOCITY_SCALE_KNOB].readerKnob, "velocity scale");
-        SetFlags(f, Knob::EARLY_STORE | Knob::NO_MULTIVIEW);
-        ClearFlags(f, Knob::STARTLINE);
-        ClearFlags(f, Knob::SLIDER);
+        SetFlags(f, Knob::EARLY_STORE |
+                    Knob::MODIFIES_GEOMETRY |
+                    Knob::NO_MULTIVIEW);
+        ClearFlags(f, Knob::STARTLINE |
+                      Knob::SLIDER);
         Tooltip(f,  "If the geometry contains point velocity data, apply this scale factor to it.\n"
                     "\n"
                     "Point velocity vectors are often used to produce motionblur for geometry that has "
@@ -346,10 +409,14 @@ FuserGeoReaderFormat::addPrimOptionsKnobs(Knob_Callback f)
     //------------------------------------
     Newline(f);
     Bool_knob(f, &k_use_colors, knob_map[USE_COLORS_KNOB].readerKnob, "use geometry colors");
+        SetFlags(f, Knob::MODIFIES_GEOMETRY);
         Tooltip(f, "");
     Bool_knob(f, &k_color_facesets, knob_map[COLOR_FACESETS_KNOB].readerKnob, "color facesets");
+        SetFlags(f, Knob::MODIFIES_GEOMETRY);
+SetFlags(f, Knob::DISABLED);
         Tooltip(f, "Set the color of the faces in each faceset to a random color for identification.");
     Bool_knob(f, &k_color_objects, knob_map[COLOR_OBJECTS_KNOB].readerKnob, "color objects");
+        SetFlags(f, Knob::MODIFIES_GEOMETRY);
         Tooltip(f,  "Set the color of each object to a random color for identification.\n"
                     "To see the colors in the OpenGL 3D display set the 'display' knob below to 'solid'.");
     //------------------------------------
@@ -371,6 +438,7 @@ FuserGeoReaderFormat::extraKnobs(Knob_Callback f)
     Text_knob(f, "mapping syntax: '<file attrib name>=<out attrib name>'");
     Newline(f);
     Multiline_String_knob(f, &k_attribute_mappings, knob_map[ATTRIBUTE_MAPPINGS_KNOB].readerKnob, "attribute mappings", 10/*lines*/);
+        SetFlags(f, Knob::MODIFIES_GEOMETRY);
         SetFlags(f, Knob::EARLY_STORE);
 }
 
@@ -397,10 +465,12 @@ FuserGeoReaderFormat::append(DD::Image::Hash& hash)
     hash.append(k_ignore_unrenderable);
     hash.append(k_attribute_mappings);
     //
-    hash.append(k_read_on_each_frame);
+    hash.append(k_lock_read_frame);
     hash.append(k_sub_frame);
     hash.append(k_velocity_scale);
-    hash.append(k_set_frame);
+    hash.append(k_read_frame);
+    hash.append(k_frame_offset);
+    hash.append(k_frame_origin);
     hash.append(k_frames_per_second);
     //
     hash.append(k_subd_import_level);
@@ -415,7 +485,7 @@ FuserGeoReaderFormat::append(DD::Image::Hash& hash)
     hash.append(k_color_facesets);
     hash.append(k_color_objects);
     //
-    hash.append(k_apply_matrix);
+    hash.append(k_apply_xforms);
     hash.append(k_prim_creation_mode);
     hash.append(k_proxy_lod_mode);
     //
@@ -437,7 +507,6 @@ FuserGeoReader::FuserGeoReader(ReadGeo* geo, int fd) :
 {
 #if 0
     const FuserGeoReaderFormat* options = dynamic_cast<FuserGeoReaderFormat*>(geo->handler());
-    const double set_frame         = (options)?options->k_set_frame:1.0;
     const double frames_per_second = (options)?options->k_frames_per_second:24.0;
     const bool   debug             = (options)?options->k_debug:false;
     const bool   debug_attribs     = (options)?options->k_debug_attribs:false;
@@ -531,11 +600,13 @@ FuserGeoReader::knob_changed(Knob* k)
     int ret = 0;
 
     if (show_panel ||
-        k->name() == "read_on_each_frame")
+        k->name() == "lock_read_frame")
     {
-        const bool read_on_each_frame = (options)?options->k_read_on_each_frame:true;
-        geo->knob("sub_frame")->enable(read_on_each_frame);
-        geo->knob("lock_frame")->enable(!read_on_each_frame);
+        const bool lock_read_frame = (options) ? options->k_lock_read_frame : false;
+        geo->knob("read_frame")->enable(lock_read_frame);
+        geo->knob(knob_map[FRAME_ORIGIN_KNOB].readerKnob)->enable(!lock_read_frame);
+        geo->knob(knob_map[FPS_KNOB         ].readerKnob)->enable(!lock_read_frame);
+        geo->knob("sub_frame")->enable(!lock_read_frame);
         ret = 1; // we want to be called again
     }
 
@@ -594,10 +665,12 @@ FuserGeoReader::get_geometry_hash(DD::Image::Hash* geo_hashes)
         knob_hash.append(options->k_translate_render_parts); // TODO: DEPRECATE!
         knob_hash.append(options->k_ignore_unrenderable);
         //
-        knob_hash.append(options->k_read_on_each_frame);
+        knob_hash.append(options->k_lock_read_frame);
+        knob_hash.append(options->k_read_frame);
         knob_hash.append(options->k_sub_frame);
         knob_hash.append(options->k_velocity_scale);
-        knob_hash.append(options->k_set_frame);
+        knob_hash.append(options->k_frame_offset);
+        knob_hash.append(options->k_frame_origin);
         knob_hash.append(options->k_frames_per_second);
         //
         knob_hash.append(options->k_subd_import_level);
@@ -612,7 +685,7 @@ FuserGeoReader::get_geometry_hash(DD::Image::Hash* geo_hashes)
         knob_hash.append(options->k_color_facesets);
         knob_hash.append(options->k_color_objects);
         //
-        knob_hash.append(options->k_apply_matrix);
+        knob_hash.append(options->k_apply_xforms);
         knob_hash.append(options->k_prim_creation_mode);
         knob_hash.append(options->k_proxy_lod_mode);
         //
@@ -620,7 +693,7 @@ FuserGeoReader::get_geometry_hash(DD::Image::Hash* geo_hashes)
         knob_hash.append(options->k_debug_attribs);
         knob_hash.append(options->k_attribute_mappings);
         //
-        if (options->k_read_on_each_frame)
+        if (!options->k_lock_read_frame)
         {
             // Make sure we rebuild points or geometry on frame changes since the filename
             // normally doesn't change with an alembic file.
@@ -873,12 +946,13 @@ FuserGeoReader::getNukeToFileAttribMappings(const char*                  nuke_at
 */
 struct GeometryEngineThreadContext
 {
-    FuserGeoReader*                 reader;         //!
-    Fsr::NodeContext                node_ctx;       //!
-    Fsr::GeoOpGeometryEngineContext geo_ctx;        //!
+    FuserGeoReader*                 reader;         //!<
+    Fsr::ArgSet                     node_args;      //!< Args for Fuser node creation
+    Fsr::NodeContext                exec_ctx;       //!< Execution context args
+    Fsr::GeoOpGeometryEngineContext geo_ctx;        //!<
 
-    std::set<std::string>::const_iterator next;     //! Next object id to operate on
-    std::set<std::string>::const_iterator end;      //! Last object id
+    std::set<std::string>::const_iterator next;     //!< Next object id to operate on
+    std::set<std::string>::const_iterator end;      //!< Last object id
 
     //!
     GeometryEngineThreadContext(FuserGeoReader*   geo_reader,
@@ -968,14 +1042,15 @@ static void thread_proc_cb(unsigned thread_index, unsigned num_threads, void* p)
             //std::cout << ", path='" << *it << "'" << std::endl;
 
             // Make a local node_ctx copy to avoid other threads conflicting:
-            Fsr::NodeContext node_ctx(otx->node_ctx);
-            otx->reader->readObject(*it, node_ctx, otx->geo_ctx);
+            Fsr::ArgSet      node_args(otx->node_args);
+            Fsr::NodeContext exec_ctx(otx->exec_ctx);
+            otx->reader->readObject(*it, node_args, exec_ctx, otx->geo_ctx);
         }
         else
         {
             const std::set<std::string>::const_iterator it = otx->next++;
             //std::cout << "  path='" << *it << "'" << std::endl;
-            otx->reader->readObject(*it, otx->node_ctx, otx->geo_ctx);
+            otx->reader->readObject(*it, otx->node_args, otx->exec_ctx, otx->geo_ctx);
         }
     }
 }
@@ -986,7 +1061,8 @@ static void thread_proc_cb(unsigned thread_index, unsigned num_threads, void* p)
 */
 bool
 FuserGeoReader::readObject(const std::string&               path,
-                           Fsr::NodeContext&                node_ctx,
+                           Fsr::ArgSet&                     node_args,
+                           Fsr::NodeContext&                exec_ctx,
                            Fsr::GeoOpGeometryEngineContext& geo_ctx)
 {
     //std::cout << "      FuserGeoReader::readObject(" << this << ") thread=" << std::hex << DD::Image::Thread::GetThreadId() << std::dec;
@@ -1000,33 +1076,29 @@ FuserGeoReader::readObject(const std::string&               path,
         return true;  // don't crash...
     const int prim_creation_mode = options->k_prim_creation_mode;
 
-    node_ctx.setString(Arg::node_name,   Fsr::fileNameFromPath(path));
-    node_ctx.setString(Arg::node_path,   path); // TODO: this path may change to be different than Scene::path
-    node_ctx.setString(Arg::Scene::path, path);
+    node_args.setString(Arg::node_name,   Fsr::fileNameFromPath(path));
+    node_args.setString(Arg::node_path,   path); // TODO: this path may change to be different than Scene::path
+    node_args.setString(Arg::Scene::path, path);
 
 #if 0
-    node_ctx.setInt("object_index", geo_ctx.obj_index_start);
-
-    node_ctx.setString("enabled_facesets", enabled_facesets);
-    node_ctx.setInt("faceset_index_offset", faceset_index_offset);
-
     // Add the arguments that controls what kind of Fuser Scene Node will get
     // constructed by the fsrAbcIO plugin.
     //
     // Some of these node class names are semi-Alembic specific, like 'Subd' and 'NuPatch',
     // while most are generic like 'Camera', 'Xform', and 'Light':
 
-    node_ctx.setString("fsrUsdIO:node:class", ref.nodeName());
+    node_args.setString("fsrUsdIO:node:class", ref.nodeName());
 #endif
 
-    //std::cout << "FuserGeoReader: args: " << node_ctx.args() << std::endl;
+    //std::cout << "FuserGeoReader: args: " << node_args << std::endl;
 
     // TODO: shouldn't need to pass in plugin name 'AbcIO' here, it should be extracted
     // from 'scene:file' and cached by the Fsr::NodePrimitive.
     // Adds DD::Image::Primitives to GeometryList, and updates animating info:
     int added_objects = Fsr::NodePrimitive::addGeometryToScene(fuserIOClass(),     /* .so plugin name */
                                                                prim_creation_mode, /* immediate/deferred */
-                                                               node_ctx,
+                                                               node_args,
+                                                               exec_ctx,
                                                                geo_ctx);
     if (added_objects < 0)
     {
@@ -1043,7 +1115,8 @@ FuserGeoReader::readObject(const std::string&               path,
 */
 bool
 FuserGeoReader::readMaterial(const std::string&               path,
-                             Fsr::NodeContext&                node_ctx,
+                             Fsr::ArgSet&                     node_args,
+                             Fsr::NodeContext&                exec_ctx,
                              Fsr::GeoOpGeometryEngineContext& geo_ctx)
 {
     //std::cout << "      FuserGeoReader::readObject(" << this << ") thread=" << std::hex << DD::Image::Thread::GetThreadId() << std::dec;
@@ -1057,33 +1130,29 @@ FuserGeoReader::readMaterial(const std::string&               path,
         return true;  // don't crash...
     const int prim_creation_mode = options->k_prim_creation_mode;
 
-    node_ctx.setString(Arg::node_name,   Fsr::fileNameFromPath(path));
-    node_ctx.setString(Arg::node_path,   path); // TODO: this path may change to be different than Scene::path
-    node_ctx.setString(Arg::Scene::path, path);
+    node_args.setString(Arg::node_name,   Fsr::fileNameFromPath(path));
+    node_args.setString(Arg::node_path,   path); // TODO: this path may change to be different than Scene::path
+    node_args.setString(Arg::Scene::path, path);
 
 #if 0
-    node_ctx.setInt("object_index", geo_ctx.obj_index_start);
-
-    node_ctx.setString("enabled_facesets", enabled_facesets);
-    node_ctx.setInt("faceset_index_offset", faceset_index_offset);
-
     // Add the arguments that controls what kind of Fuser Scene Node will get
     // constructed by the fsrAbcIO plugin.
     //
     // Some of these node class names are semi-Alembic specific, like 'Subd' and 'NuPatch',
     // while most are generic like 'Camera', 'Xform', and 'Light':
 
-    node_ctx.setString("fsrUsdIO:node:class", ref.nodeName());
+    node_args.setString("fsrUsdIO:node:class", ref.nodeName());
 #endif
 
-    //std::cout << "FuserGeoReader: args: " << node_ctx.args() << std::endl;
+    //std::cout << "FuserGeoReader: args: " << node_args << std::endl;
 
     // TODO: shouldn't need to pass in plugin name 'AbcIO' here, it should be extracted
     // from 'scene:file' and cached by the Fsr::NodePrimitive.
     // Adds DD::Image::Primitives to GeometryList, and updates animating info:
     int added_objects = Fsr::NodePrimitive::addGeometryToScene(fuserIOClass(),     /* .so plugin name */
                                                                prim_creation_mode, /* immediate/deferred */
-                                                               node_ctx,
+                                                               node_args,
+                                                               exec_ctx,
                                                                geo_ctx);
     if (added_objects < 0)
     {
@@ -1141,10 +1210,9 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
         return;  // don't crash...
     }
 
-    const bool   read_on_each_frame = options->k_read_on_each_frame;
-    const double set_frame          = options->k_set_frame;
-    const bool   sub_frame          = options->k_sub_frame;
-    const bool   debug              = options->k_debug;
+    const bool   lock_read_frame = options->k_lock_read_frame;
+    const bool   sub_frame       = options->k_sub_frame;
+    const bool   debug           = options->k_debug;
 
     const bool   reload_points = (geo->rebuild_mask() & Mask_Points);
     const bool   reload_prims  = (geo->rebuild(Mask_Primitives) ||
@@ -1171,21 +1239,20 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
 
     // We need a frame for the output primitive so that the renderer can
     // interpolate, which must be in the output frame range (non-timewarped):
-    double output_frame = geo->outputContext().frame(); // use Op's frame
-    if (!read_on_each_frame)
-        output_frame = set_frame;
+    double output_frame = geo->outputContext().frame(); // get Op's outputContext frame
 
-    // If not using a subframe value, determine whether to round up or
-    // down depending on which shutter-scene this is.
-    // We don't bother rounding if the frame is manually set:
-    if (read_on_each_frame && !sub_frame)
+    // If not using a subframe value determine whether to round the output frame up or down
+    // depending on which shutter scene this is.
+    // (we don't bother rounding if the frame is manually set)
+    // TODO: check that this scene ID trick still works....!
+    if (!sub_frame && !lock_read_frame)
     {
         // If the current frame is not at an integer value then we either need
         // to round up or down:
         const double frameFloor = floor(output_frame);
 
-        //if (debug)
-        //   std::cout << "   output_frame=" << output_frame << ", mb_offset=" << (output_frame - frameFloor) << ", scene.sceneId()=" << scene.sceneId() << std::endl;
+        if (debug)
+            std::cout << "    output_frame=" << output_frame << ", mb_offset=" << (output_frame - frameFloor) << ", scene.sceneId()=" << scene.sceneId() << std::endl;
         if ((output_frame - frameFloor) > 0.0001)
         {
             // Use the Scene's sceneId var as the motion-sample.  If it's negative then
@@ -1198,11 +1265,14 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
     }
 
     // Use the output frame for the reader, or the manually set one?
+    //
     // This is the frame number used to index the geometry in the file, which
     // may be timewarped by an animation curve:
     double reader_frame = output_frame;
-    if (!read_on_each_frame && options)
-        reader_frame = geo->knob("lock_frame")->get_value_at(output_frame);
+    if (lock_read_frame && options)
+        reader_frame = geo->knob("read_frame")->get_value_at(output_frame);
+
+    reader_frame -= options->k_frame_offset;
 
     // openSceneFile returns fast on repeat calls:
     if (!openSceneFile())
@@ -1262,16 +1332,21 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
 
     // Build context (args) to pass to Fsr::NodePrimitives ctors:
     {
-        Fsr::NodeContext& node_ctx = geo_thread_ctx.node_ctx;
+        ArgSet&           node_args = geo_thread_ctx.node_args;
+        Fsr::NodeContext& exec_ctx  = geo_thread_ctx.exec_ctx;
 
         // Fill in the arguments that the Fuser nodes need to build or update:
-        node_ctx.setTime(reader_frame, options->k_frames_per_second);
-        //
-        node_ctx.setString(Arg::node_directive,      Arg::NukeGeo::node_type_auto);
-        node_ctx.setString(Arg::Scene::file,         filePathForReader());
-        node_ctx.setDouble("output_frame",           output_frame);
-        node_ctx.setBool(  Arg::NukeGeo::read_debug, debug);
+        node_args.setString(Arg::node_directive,      Arg::NukeGeo::node_type_auto);
+        node_args.setString(Arg::Scene::file,         filePathForReader());
+        node_args.setDouble("output_frame",           output_frame);
+        node_args.setBool(  Arg::NukeGeo::read_debug, debug);
 
+        // Let subclasses add their local args:
+        _appendNodeContextArgs(node_args);
+
+        exec_ctx.setTime(reader_frame, options->k_frames_per_second);
+
+        // Get reader-specific options for execution context:
         if (options)
         {
             // Get raw text from String knobs:
@@ -1282,7 +1357,7 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
                 if (k && k->get_text())
                     mask = k->get_text();
                 stringReplaceAll(mask, "\n", " ");
-                node_ctx.setString(knob_map[SURFACE_MASK_KNOB].fuserPrimAttrib, mask);
+                exec_ctx.setString(knob_map[SURFACE_MASK_KNOB].fuserPrimAttrib, mask);
             }
             //
             {
@@ -1290,36 +1365,39 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
                 if (k && k->get_text())
                     mappings = k->get_text();
                 stringReplaceAll(mappings, "\n", " ");
-                node_ctx.setString(knob_map[ATTRIBUTE_MAPPINGS_KNOB].fuserPrimAttrib, mappings);
+                exec_ctx.setString(knob_map[ATTRIBUTE_MAPPINGS_KNOB].fuserPrimAttrib, mappings);
             }
             //
-            node_ctx.setString(knob_map[CREATION_MODE_KNOB ].fuserPrimAttrib, Fsr::NodePrimitive::load_modes[options->k_prim_creation_mode]);
+            exec_ctx.setString(knob_map[CREATION_MODE_KNOB ].fuserPrimAttrib, Fsr::NodePrimitive::load_modes[options->k_prim_creation_mode]);
             //
-            node_ctx.setDouble(knob_map[VELOCITY_SCALE_KNOB].fuserPrimAttrib, options->k_velocity_scale   );
-            node_ctx.setDouble(knob_map[FPS_KNOB           ].fuserPrimAttrib, options->k_frames_per_second);
+            exec_ctx.setDouble(knob_map[VELOCITY_SCALE_KNOB].fuserPrimAttrib, options->k_velocity_scale   );
+            //
+            //exec_ctx.setDouble(knob_map[FRAME_OFFSET_KNOB  ].fuserPrimAttrib, options->k_frame_offset     );
+            exec_ctx.setDouble(knob_map[FRAME_ORIGIN_KNOB  ].fuserPrimAttrib, options->k_frame_origin     );
+            exec_ctx.setDouble(knob_map[FPS_KNOB           ].fuserPrimAttrib, options->k_frames_per_second);
             //
             // Map import/render subd level selections to standard level count:
-            node_ctx.setString(knob_map[SUBD_IMPORT_LEVEL_KNOB ].fuserPrimAttrib, subd_levels[options->k_subd_import_level]);
-            node_ctx.setString(knob_map[SUBD_RENDER_LEVEL_KNOB ].fuserPrimAttrib, subd_levels[options->k_subd_render_level]);
-            node_ctx.setBool(  knob_map[SUBD_FORCE_ENABLE_KNOB ].fuserPrimAttrib, options->k_subd_force_enable );
-            node_ctx.setBool(  knob_map[SUBD_SNAP_TO_LIMIT_KNOB].fuserPrimAttrib, options->k_subd_snap_to_limit);
-            node_ctx.setString(knob_map[SUBD_TESSELLATOR_KNOB  ].fuserPrimAttrib, subd_tessellators[options->k_subd_tessellator]);
+            exec_ctx.setString(knob_map[SUBD_IMPORT_LEVEL_KNOB ].fuserPrimAttrib, subd_levels[options->k_subd_import_level]);
+            exec_ctx.setString(knob_map[SUBD_RENDER_LEVEL_KNOB ].fuserPrimAttrib, subd_levels[options->k_subd_render_level]);
+            exec_ctx.setBool(  knob_map[SUBD_FORCE_ENABLE_KNOB ].fuserPrimAttrib, options->k_subd_force_enable );
+            exec_ctx.setBool(  knob_map[SUBD_SNAP_TO_LIMIT_KNOB].fuserPrimAttrib, options->k_subd_snap_to_limit);
+            exec_ctx.setString(knob_map[SUBD_TESSELLATOR_KNOB  ].fuserPrimAttrib, subd_tessellators[options->k_subd_tessellator]);
             //
-            node_ctx.setString(knob_map[POINTS_MODE_KNOB   ].fuserPrimAttrib, points_modes[options->k_points_mode]);
-            node_ctx.setBool(  knob_map[USE_COLORS_KNOB    ].fuserPrimAttrib, options->k_use_colors    );
-            node_ctx.setBool(  knob_map[COLOR_FACESETS_KNOB].fuserPrimAttrib, options->k_color_facesets);
-            node_ctx.setBool(  knob_map[COLOR_OBJECTS_KNOB ].fuserPrimAttrib, options->k_color_objects );
-            node_ctx.setBool(  knob_map[APPLY_MATRIX_KNOB  ].fuserPrimAttrib, options->k_apply_matrix  );
+            exec_ctx.setString(knob_map[POINTS_MODE_KNOB   ].fuserPrimAttrib, points_modes[options->k_points_mode]);
+            exec_ctx.setBool(  knob_map[USE_COLORS_KNOB    ].fuserPrimAttrib, options->k_use_colors    );
+            exec_ctx.setBool(  knob_map[COLOR_FACESETS_KNOB].fuserPrimAttrib, options->k_color_facesets);
+            exec_ctx.setBool(  knob_map[COLOR_OBJECTS_KNOB ].fuserPrimAttrib, options->k_color_objects );
+            exec_ctx.setBool(  knob_map[APPLY_XFORMS_KNOB  ].fuserPrimAttrib, options->k_apply_xforms  );
             //
-            node_ctx.setString(knob_map[PREVIEW_LOD_KNOB].fuserPrimAttrib, Fsr::NodePrimitive::lod_modes[options->k_proxy_lod_mode]);
-            //node_ctx.setString(knob_map[RENDER_LOD_KNOB ].fuserPrimAttrib, Fsr::NodePrimitive::lod_modes[options->k_render_lod_mode]);
+            exec_ctx.setString(knob_map[PREVIEW_LOD_KNOB].fuserPrimAttrib, Fsr::NodePrimitive::lod_modes[options->k_proxy_lod_mode]);
+            //exec_ctx.setString(knob_map[RENDER_LOD_KNOB ].fuserPrimAttrib, Fsr::NodePrimitive::lod_modes[options->k_render_lod_mode]);
             //
-            node_ctx.setBool(knob_map[DEBUG_KNOB         ].fuserPrimAttrib, options->k_debug);
-            node_ctx.setBool(knob_map[DEBUG_ATTRIBS_KNOB ].fuserPrimAttrib, options->k_debug_attribs);
-        }
+            exec_ctx.setBool(knob_map[DEBUG_KNOB         ].fuserPrimAttrib, options->k_debug);
+            exec_ctx.setBool(knob_map[DEBUG_ATTRIBS_KNOB ].fuserPrimAttrib, options->k_debug_attribs);
 
-        // Let subclasses add their local args:
-        _appendNodeContextArgs(node_ctx);
+            //exec_ctx.setString("reader:enabled_facesets", enabled_facesets);
+            //exec_ctx.setInt("reader:faceset_index_offset", faceset_index_offset);
+        }
 
     } // add node_ctx args
 

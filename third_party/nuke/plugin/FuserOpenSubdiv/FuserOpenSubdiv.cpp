@@ -146,11 +146,11 @@ class FuserOpenSubdiv : public Fsr::Node
     /*! Called before execution to allow node to update local data from args.
         Updates time value and possibly local matrix transform.
     */
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real)
     {
         //std::cout << "      FuserOpenSubdiv::_validateState(" << this << ")" << std::endl;
-        Fsr::Node::_validateState(args, for_real);
+        Fsr::Node::_validateState(exec_ctx, for_real);
     }
 
 
@@ -206,17 +206,17 @@ class FuserOpenSubdiv : public Fsr::Node
 
 
     //! Return the appropriate refiner object for the given arguments and topology descriptor.
-    OpenSubdiv::Far::TopologyRefiner* getRefiner(const Fsr::ArgSet&                         args,
+    OpenSubdiv::Far::TopologyRefiner* getRefiner(const Fsr::ArgSet&                         exec_args,
                                                  int32_t                                    nRefinementLevels,
                                                  const OpenSubdiv::Far::TopologyDescriptor& desc);
 
 
     //!
-    void subdivideGenericMesh(const Fsr::ArgSet&          args,
+    void subdivideGenericMesh(const Fsr::ArgSet&          exec_args,
                               Fsr::MeshTessellateContext& tess_ctx);
 
     //!
-    void subdivideVertexBuffer(const Fsr::ArgSet&                       args,
+    void subdivideVertexBuffer(const Fsr::ArgSet&                       exec_args,
                                Fsr::PointBasedPrimitive::VertexBuffers& vbuffers);
 
 };
@@ -228,11 +228,11 @@ class FuserOpenSubdiv : public Fsr::Node
 /*! Return the appropriate refiner object for the given arguments.
 */
 OpenSubdiv::Far::TopologyRefiner*
-FuserOpenSubdiv::getRefiner(const Fsr::ArgSet&                         args,
+FuserOpenSubdiv::getRefiner(const Fsr::ArgSet&                         exec_args,
                             int32_t                                    nRefinementLevels,
                             const OpenSubdiv::Far::TopologyDescriptor& desc)
 {
-    const std::string scheme = args.getString("subd:scheme", "catmullclark"/*default*/);
+    const std::string scheme = exec_args.getString("subd:scheme", "catmullclark"/*default*/);
     OpenSubdiv::Sdc::SchemeType type;
     if      (scheme == "catmullclark") type = OpenSubdiv::Sdc::SCHEME_CATMARK;
     else if (scheme == "loop"        ) type = OpenSubdiv::Sdc::SCHEME_LOOP;
@@ -286,7 +286,7 @@ FuserOpenSubdiv::getRefiner(const Fsr::ArgSet&                         args,
 
 //!
 void
-FuserOpenSubdiv::subdivideGenericMesh(const Fsr::ArgSet&          args,
+FuserOpenSubdiv::subdivideGenericMesh(const Fsr::ArgSet&          exec_args,
                                       Fsr::MeshTessellateContext& tess_ctx)
 
 {
@@ -302,9 +302,9 @@ FuserOpenSubdiv::subdivideGenericMesh(const Fsr::ArgSet&          args,
     if (nSrcFaces == 0 || nSrcVerts == 0 || nSrcPoints == 0)
         return; // don't crash...
 
-    const int32_t current_subd_level = args.getInt("subd:current_level", 0/*default*/);
-    const int32_t  target_subd_level = args.getInt("subd:target_level",  0/*default*/);
-    //const std::string subd_scheme   = args.getString("subd:scheme");
+    const int32_t current_subd_level = exec_args.getInt("subd:current_level", 0/*default*/);
+    const int32_t  target_subd_level = exec_args.getInt("subd:target_level",  0/*default*/);
+    //const std::string subd_scheme   = exec_args.getString("subd:scheme");
     const int nRefinementLevels = (target_subd_level - current_subd_level);
 
     //std::cout << "  FuserOpenSubdiv::subdivide()";
@@ -371,7 +371,7 @@ FuserOpenSubdiv::subdivideGenericMesh(const Fsr::ArgSet&          args,
     desc.fvarChannels       = primvar_channels;
 
     // Create a FarTopologyRefiner from the descriptor:
-    OpenSubdiv::Far::TopologyRefiner* refiner = getRefiner(args, nRefinementLevels, desc);
+    OpenSubdiv::Far::TopologyRefiner* refiner = getRefiner(exec_args, nRefinementLevels, desc);
 
     OpenSubdiv::Far::PrimvarRefiner primvarRefiner(*refiner);
     //const size_t nTotalRefinedFaces  = refiner->GetNumFacesTotal();
@@ -643,7 +643,7 @@ FuserOpenSubdiv::subdivideGenericMesh(const Fsr::ArgSet&          args,
 /*!
 */
 void
-FuserOpenSubdiv::subdivideVertexBuffer(const Fsr::ArgSet&                       args,
+FuserOpenSubdiv::subdivideVertexBuffer(const Fsr::ArgSet&                       exec_args,
                                        Fsr::PointBasedPrimitive::VertexBuffers& vbuffers)
 {
     const int32_t nSrcPoints = (int32_t)vbuffers.numPoints();
@@ -652,8 +652,8 @@ FuserOpenSubdiv::subdivideVertexBuffer(const Fsr::ArgSet&                       
     if (nSrcPoints == 0 || nSrcVerts == 0 || nSrcFaces == 0)
         return; // don't crash...
 
-    const int32_t current_subd_level = args.getInt("subd:current_level", 0/*default*/);
-    const int32_t  target_subd_level = args.getInt("subd:target_level",  0/*default*/);
+    const int32_t current_subd_level = exec_args.getInt("subd:current_level", 0/*default*/);
+    const int32_t  target_subd_level = exec_args.getInt("subd:target_level",  0/*default*/);
     const int nRefinementLevels = (target_subd_level - current_subd_level);
 
     //std::cout << "  FuserOpenSubdiv::subdivideVertexBuffer()";
@@ -701,7 +701,7 @@ FuserOpenSubdiv::subdivideVertexBuffer(const Fsr::ArgSet&                       
     desc.fvarChannels       = primvar_channels;
 
     // Create a FarTopologyRefiner from the descriptor:
-    OpenSubdiv::Far::TopologyRefiner* refiner = getRefiner(args, nRefinementLevels, desc);
+    OpenSubdiv::Far::TopologyRefiner* refiner = getRefiner(exec_args, nRefinementLevels, desc);
 
     //std::cout << "    GetNumFVarValuesTotal=" << refiner->GetNumFVarValuesTotal(uv_fvar_chan);
     //std::cout << ", GetNumFacesTotal=" << refiner->GetNumFacesTotal();

@@ -109,8 +109,13 @@ class FSR_EXPORT SceneLoader : public Fsr::NodeIOInterface,
         //
         const char* node_path;              //!< Currently selected node
         //
-        double      set_frame;              //!< Manually set the frame number to read
+        bool        lock_read_frame;        //!< Whether to use the manually-set frame number
+        double      frame_offset;           //!< Offset the incoming frame range (after any frame rate change)
+        double      frame_origin;           //!< Origin of the incoming frame range
+        double      read_frame;             //!< Manually set the frame number to read
         double      frames_per_second;      //!<
+        bool        lock_read_view;         //!< Whether to use the manually-set view
+        int         read_view;              //!< Manually set the view to read
         //
         int         decompose_xform_order;  //!< Preferred decompose xform order
         int         decompose_rot_order;    //!< Preferred decompose rotation order

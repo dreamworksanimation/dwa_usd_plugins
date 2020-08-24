@@ -81,11 +81,11 @@ FuserUsdCamera::FuserUsdCamera(const Pxr::UsdStageRefPtr& stage,
 /*! Called before execution to allow node to update local data from args.
 */
 /*virtual*/ void
-FuserUsdCamera::_validateState(const Fsr::NodeContext& args,
+FuserUsdCamera::_validateState(const Fsr::NodeContext& exec_ctx,
                                bool                    for_real)
 {
     // Get the time value up to date:
-    FuserUsdXform::_validateState(args, for_real);
+    FuserUsdXform::_validateState(exec_ctx, for_real);
 }
 
 
@@ -184,20 +184,20 @@ FuserUsdCamera::_execute(const Fsr::NodeContext& target_context,
 /*virtual*/
 void
 FuserUsdCamera::importSceneOp(DD::Image::Op*     op,
-                              const Fsr::ArgSet& args)
+                              const Fsr::ArgSet& exec_args)
 {
     // Allow camera nodes to import their xforms into any AxisOp subclass:
     if (!dynamic_cast<DD::Image::AxisOp*>(op))
         return; // shouldn't happen...
 
-    const bool debug = args.getBool(Arg::Scene::read_debug, false);
+    const bool debug = exec_args.getBool(Arg::Scene::read_debug, false);
     if (debug)
         std::cout << "    FuserUsdCamera::importSceneOp('" << op->node_name() << "')" << std::endl;
 
 const bool allow_anim = true;
 
     // Import the Xform data into the Axis_Knob:
-    FuserUsdXform::importSceneOp(op, args);
+    FuserUsdXform::importSceneOp(op, exec_args);
 
     DD::Image::CameraOp* camera = dynamic_cast<DD::Image::CameraOp*>(op);
     if (!camera)
@@ -516,12 +516,12 @@ const bool allow_anim = true;
 /*virtual*/
 void
 FuserUsdCamera::importIntoIop(DD::Image::Iop*    iop,
-                              const Fsr::ArgSet& args)
+                              const Fsr::ArgSet& exec_args)
 {
     if (!iop)
         return; // shouldn't happen...
 
-    const bool debug = args.getBool(Arg::Scene::read_debug, false);
+    const bool debug = exec_args.getBool(Arg::Scene::read_debug, false);
 
     Pxr::UsdPrim camera_prim = m_camera_schema.GetPrim();
 

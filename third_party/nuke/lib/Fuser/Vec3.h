@@ -266,8 +266,9 @@ class FSR_EXPORT Vec3
     void toDegrees()       { x = degrees(x); y = degrees(y); z = degrees(z); }
     Vec3 asDegrees() const { return Vec3(degrees(x), degrees(y), degrees(z)); }
 
-    bool notZero() const { return (x != (T)0 || y != (T)0 || z != (T)0); }
-    bool isZero()  const { return !notZero(); }
+    bool isZero()          const { return !notZero(); }
+    bool notZero()         const { return (x != (T)0 || y != (T)0 || z != (T)0); }
+    bool greaterThanZero() const { return !(x <= (T)0 || y <= (T)0 || z <= (T)0); }
 
     //! Round off each element if nearly one or zero.
     void roundIfNearlyZero();

@@ -245,7 +245,7 @@ class FSR_EXPORT GeoSceneGraphReader : public FuserGeoReader
 
 
     //! Add or modify args to pass to FuserNodePrimitive ctors.
-    /*virtual*/ void _appendNodeContextArgs(Fsr::NodeContext& node_ctx);
+    /*virtual*/ void _appendNodeContextArgs(ArgSet& node_args);
 
 
     /*! Open a scene file in preparation for reading data.

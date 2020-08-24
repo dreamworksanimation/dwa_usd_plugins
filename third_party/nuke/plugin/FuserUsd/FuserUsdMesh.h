@@ -38,16 +38,17 @@
 #include <DDImage/Scene.h>
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
-#  include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdShade/material.h>
 
-#  include <pxr/usd/usdShade/material.h>
-
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
 
@@ -172,6 +173,8 @@ class FuserUsdMesh : public FuserUsdXform
     uint32_t                m_topology_variance;    //!< Object TopologyVariances
     Fsr::Node*              m_subdivider;           //!< Subdivision provider
     //
+    int32_t                 m_id_index;             //!< Usually comes from Nuke geometry object index
+    //
     Fsr::KeyValueMap        m_primvar_to_nuke;      //!< Map USD primvar names to Nuke attrib names
     Fsr::KeyValueMultiMap   m_nuke_to_primvar;      //!< Map Nuke attrib names to USD primvar names
     Pxr::TfToken            m_uv_primvar_name;
@@ -195,7 +198,7 @@ class FuserUsdMesh : public FuserUsdXform
     /*virtual*/ ~FuserUsdMesh();
 
     //! Called before execution to allow node to update local data from args.
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real);
 
 

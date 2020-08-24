@@ -31,7 +31,7 @@
 
 #include "api.h"
 
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
 #  include <map>
 #else
 #  include <unordered_map>
@@ -110,7 +110,7 @@ class Attribute
 };
 
 
-#ifdef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
 typedef std::map<std::string, Attribute*> AttributeMap;
 #else
 typedef std::unordered_map<std::string, Attribute*> AttributeMap;

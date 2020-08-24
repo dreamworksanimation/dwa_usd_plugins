@@ -36,18 +36,20 @@
 #include <DDImage/GeometryList.h>
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
-#  include <pxr/usd/usd/modelAPI.h>
+#include <pxr/usd/usd/modelAPI.h>
 
-#  include <pxr/usd/usdGeom/scope.h>
-#  include <pxr/usd/usdGeom/xform.h>
-#  include <pxr/usd/usdGeom/camera.h>
+#include <pxr/usd/usdGeom/scope.h>
+#include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdGeom/camera.h>
 
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
 
@@ -77,8 +79,9 @@ FuserUsdXformableNode::FuserUsdXformableNode(const Pxr::UsdStageRefPtr& stage,
         static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
 
         std::cout << "      FuserUsdNode::ctor(" << this << "):";
-        std::cout << " frame=" << getDouble("frame") << ", output_frame=" << getDouble("output_frame");
+        std::cout << " frame=" << getDouble("frame");
         std::cout << ", fps=" << getDouble("fps");
+        std::cout << ", output_time=" << (getDouble("frame") / getDouble("fps"));
         std::cout << std::endl;
         std::cout << "        fsrUSDIO:node:class='" << getString("fsrUSDIO:node:class") << "'" << std::endl;
         std::cout << "        path='" << getString(Arg::Scene::path) << "'" << std::endl;
@@ -99,14 +102,32 @@ FuserUsdXformableNode::~FuserUsdXformableNode()
     Updates time value and possibly local transform.
 */
 /*virtual*/ void
-FuserUsdXformableNode::_validateState(const Fsr::NodeContext& args,
+FuserUsdXformableNode::_validateState(const Fsr::NodeContext& exec_ctx,
                                       bool                    for_real)
 {
-    Fsr::XformableNode::_validateState(args, for_real);
+    Fsr::XformableNode::_validateState(exec_ctx, for_real);
 
-    m_time = getDouble("frame") / getDouble("fps");
+    //---------------------------------------
+    // Get time warping values:
 
-    const bool get_xform = getBool("reader:apply_matrix", true);
+    double input_fps  = ::fabs(getStage()->GetTimeCodesPerSecond());
+    double output_fps = ::fabs(exec_ctx.getDouble("reader:fps", 24.0));
+
+    // Keep degenerate fps from breaking calcs:
+    if (input_fps < 0.001)
+        input_fps = 0.001;
+    if (output_fps < 0.001)
+        output_fps = 0.001;
+
+    const double output_frame = exec_ctx.getDouble("frame", 0.0);
+    const double frame_origin = exec_ctx.getDouble("reader:frame_origin", 0.0);
+
+    m_output_time = ((output_frame - frame_origin) / input_fps);
+    m_input_time  = (m_output_time * output_fps) + frame_origin;
+
+    //---------------------------------------
+
+    const bool get_xform = exec_ctx.getBool("reader:apply_xforms", true);
     if (get_xform)
     {
         // TODO: implement! m_xform = getTransformAtTime(AbcSearch::getParentXform(object()), m_time);
@@ -120,6 +141,23 @@ FuserUsdXformableNode::_validateState(const Fsr::NodeContext& args,
 
     // Clear the bbox:
     m_local_bbox.setToEmptyState();
+
+    if (0)//(debug())
+    {
+        static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+
+        std::cout << "============================================================================================" << std::endl;
+        std::cout << "FuserUsdXformableNode::_validateState(" << this << "): for_real=" << for_real;
+        std::cout << ", m_output_time=" << m_output_time;
+        std::cout << ", m_input_time=" << m_input_time;
+        std::cout << ", m_local_bbox=" << m_local_bbox;
+        std::cout << ", m_have_xform=" << m_have_xform;
+        if (m_have_xform)
+            std::cout << ", xform" << m_xform;
+        if (debugAttribs())
+            std::cout << ", args[" << m_args << "]";
+        std::cout << std::endl;
+    }
 }
 
 
@@ -171,10 +209,14 @@ static void findXformNodes(const Pxr::UsdPrim&                       prim,
     std::cout << "  findXformNodes() prim='" << prim.GetPath() << "'" << std::endl;
 
 #if 1
-    for (auto child=TfMakeIterator(prim.GetAllChildren()); child; ++child)
+    auto prim_flags = (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
 #else
-    for (auto child=TfMakeIterator(prim.GetFilteredChildren(Pxr::UsdPrimIsModel)); child; ++child)
+    auto prim_flags = (Pxr::UsdPrimIsModel && Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
 #endif
+    const Pxr::UsdPrim::SiblingRange children = prim.GetFilteredChildren(Pxr::UsdTraverseInstanceProxies(prim_flags));
+    //const Pxr::UsdPrim::SiblingRange children = prim.GetAllChildren();
+
+    for (auto child=TfMakeIterator(children); child; ++child)
     {
         std::cout << "    node'" << child->GetPath() << "'[" << child->GetTypeName() << "]";
 #if PXR_MAJOR_VERSION == 0 && PXR_MINOR_VERSION < 20

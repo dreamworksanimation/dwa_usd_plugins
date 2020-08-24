@@ -35,15 +35,17 @@
 #include <Fuser/ArgConstants.h> // for attrib names constants
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
-#  include <pxr/usd/usd/stageCache.h>
-#  include <pxr/usd/usdUtils/stageCache.h>
+#include <pxr/usd/usd/stageCache.h>
+#include <pxr/usd/usdUtils/stageCache.h>
 
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
 

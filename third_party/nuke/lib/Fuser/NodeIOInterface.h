@@ -35,7 +35,7 @@
 
 namespace Fsr {
 
-class NodeContext;
+class ArgSet;
 
 
 /*! \class Fsr::NodeIOInterface
@@ -69,7 +69,7 @@ class FSR_EXPORT NodeIOInterface
                                              std::string& plugin_type);
 
     //! Add or modify args to pass to Fsr::Node ctors. Base class does nothing.
-    virtual void _appendNodeContextArgs(Fsr::NodeContext& node_ctx) {}
+    virtual void _appendNodeContextArgs(Fsr::ArgSet& node_args) {}
 
 
   public:

@@ -59,7 +59,7 @@ class FuserUsdXform : public FuserUsdXformableNode
                   Fsr::Node*                 parent);
 
     //! Called before execution to allow node to update local data from args.
-    /*virtual*/ void _validateState(const Fsr::NodeContext& args,
+    /*virtual*/ void _validateState(const Fsr::NodeContext& exec_ctx,
                                     bool                    for_real);
 
 
@@ -98,7 +98,7 @@ class FuserUsdXform : public FuserUsdXformableNode
 
     //! Import node attributes into a Nuke Op.
     /*virtual*/ void importSceneOp(DD::Image::Op*     op,
-                                   const Fsr::ArgSet& args);
+                                   const Fsr::ArgSet& exec_args);
 
 };
 

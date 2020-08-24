@@ -36,18 +36,19 @@
 #include <Fuser/NukeKnobInterface.h>
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
-#  include <pxr/usd/usd/attribute.h>
-#  include <pxr/usd/usd/stage.h>
-#  include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usd/attribute.h>
+#include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usdGeom/primvar.h>
 
-#  include <pxr/usd/usdGeom/primvar.h>
-
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
 
@@ -98,8 +99,12 @@ class AttribDoubles : public Fsr::ArrayKnobDoubles
 class FuserUsdNode
 {
   protected:
-    Pxr::UsdStageRefPtr m_stage;        //!< Stage reference-counted cache pointer
-    double              m_time;         //!< Node's current time (frame / fps)
+    Pxr::UsdStageRefPtr m_stage;                    //!< Stage reference-counted cache pointer
+    Fsr::TimeValue      m_input_time;               //!< Node's current authored time (input_frame / input_fps)
+    double              m_output_time;              //!< Node's current output time (output_frame / output_fps)
+    bool                m_is_visible;               //!< Valid if node is imageable (mesh, light)
+    bool                m_has_animated_visibility;  //!< Valid if node is imageable (mesh, light)
+
 
 
   protected:
@@ -152,6 +157,17 @@ class FuserUsdNode
 
     //-------------------------------------------------------------------------------
 
+    //! Is the prim visible at all? Checks animating visibilty of this prim and its parents.
+    static bool isVisiblePrim(const Pxr::UsdPrim& prim);
+
+    //! Get the visibility state of this prim.
+    static void getVisibility(const Pxr::UsdPrim& prim,
+                              bool&               is_visible,
+                              bool&               has_animated_visibility);
+
+
+    //-------------------------------------------------------------------------------
+
 
     //!
     static void printPrimAttributes(const char*         prefix,
@@ -170,6 +186,7 @@ class FuserUsdNode
     //! If not animated UsdTimeCode::Default() is added to set.
     static void concatenatePrimAttribTimeSamples(const Pxr::UsdAttribute&  attrib,
                                                  std::set<Fsr::TimeValue>& concat_times);
+
 
     //-------------------------------------------------------------------------------
 

@@ -35,7 +35,8 @@
 #include "Mat4.h"
 
 #include <string>
-#ifndef DWA_INTERNAL_BUILD
+#if __cplusplus <= 201103L
+#else
 #  include <unordered_map>
 #  include <unordered_set>
 #endif

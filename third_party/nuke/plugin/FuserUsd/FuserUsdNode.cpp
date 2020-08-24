@@ -35,20 +35,22 @@
 //#include <DDImage/GeometryList.h>
 
 
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#else
-// Turn off -Wconversion warnings when including USD headers:
+#ifdef __GNUC__
+// Turn off conversion warnings when including USD headers:
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif
 
 // For 'prim.IsA<>' tests:
-#  include <pxr/usd/usdGeom/scope.h>
-#  include <pxr/usd/usdGeom/xform.h>
-#  include <pxr/usd/usdGeom/camera.h>
-#  include <pxr/usd/usdGeom/mesh.h>
-#  include <pxr/usd/usdShade/shader.h>
-#  include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdGeom/scope.h>
+#include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdGeom/camera.h>
+#include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdShade/shader.h>
+#include <pxr/usd/usdShade/material.h>
 
+#ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif
 
@@ -63,7 +65,10 @@ namespace Fsr {
 */
 FuserUsdNode::FuserUsdNode(const Pxr::UsdStageRefPtr& stage) :
     m_stage(stage),
-    m_time(0.0)
+    m_input_time(0.0),
+    m_output_time(0.0),
+    m_is_visible(true),
+    m_has_animated_visibility(false)
 {
     //
 }
@@ -112,7 +117,7 @@ FuserUsdNode::isLoadedAndUseablePrim(const Pxr::UsdPrim& prim)
 
     // Only consider Prims that are now Loaded, Valid (filled) and
     // Defined (not an over), and test again that it's still Active:
-    if (!prim.IsLoaded() || !prim.IsDefined() || !prim.IsValid() || !prim.IsActive())
+    if (!prim.IsValid() || !prim.IsLoaded() || !prim.IsDefined() || !prim.IsActive())
         return false;
 
     return true; // prim ok!
@@ -314,13 +319,66 @@ FuserUsdNode::isShadingPrim(const Pxr::UsdPrim& prim)
 }
 
 
+/*! Is the prim visible at all?
+    Checks animating visibilty of this prim and its parents.
+*/
+/*static*/ bool
+FuserUsdNode::isVisiblePrim(const Pxr::UsdPrim& prim)
+{
+    bool is_visible, has_animated_visibility;
+    getVisibility(prim, is_visible, has_animated_visibility);
+    return is_visible;
+}
+
+
+/*!
+*/
+/*static*/ void
+FuserUsdNode::getVisibility(const Pxr::UsdPrim& prim,
+                            bool&               is_visible,
+                            bool&               has_animated_visibility)
+{
+    is_visible = (prim.IsValid());
+    has_animated_visibility = false;
+    if (!is_visible)
+        return;
+
+    // Walk up parent hierarchy checking each prim's visibility state:
+    Pxr::TfToken vis;
+    Pxr::UsdPrim check_prim = prim;
+    while (check_prim.IsValid())
+    {
+        if (check_prim.IsA<Pxr::UsdGeomImageable>())
+        {
+            const Pxr::UsdAttribute& vis_attrib = check_prim.GetAttribute(Pxr::UsdGeomTokens->visibility);
+            if (vis_attrib.IsValid())
+            {
+                vis_attrib.Get(&vis, Pxr::UsdTimeCode::EarliestTime());
+                if (vis == Pxr::UsdGeomTokens->invisible)
+                {
+                    is_visible = false;
+                    has_animated_visibility = vis_attrib.ValueMightBeTimeVarying();
+                    if (!has_animated_visibility)
+                        break;
+                }
+                else if (vis_attrib.ValueMightBeTimeVarying())
+                {
+                    has_animated_visibility = true;
+                }
+            }
+        }
+        check_prim = check_prim.GetParent();
+    }
+}
+
+
 //-------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------
 
 
 static std::unordered_map<std::string, PrimvarRef> primvar_refs;
 
-/*! Builds a static map of primvar types to the DD::Image::Atrribute equivalents.
+/*! Builds a static map of primvar types to the DD::Image::Attribute equivalents.
     This allows a fast map lookup to be used rather than a series if/then
     comparisions.
 */
@@ -956,17 +1014,35 @@ FuserUsdNode::copyAttribToStereoKnob(const Pxr::UsdAttribute& attrib,
     if (!k)
         return false; // no knob, don't crash...
 
+    //std::cout << "FuserUsdNode::copyAttribToStereoKnob('" << k->name() << "')" << std::endl;
     int center_view = -1;
     int left_view   = -1;
     int right_view  = -1;
 
     // TODO: make this more robust. We don't want to rely on opaque ints.
     const size_t nViews = views.size();
-    if (nViews < 2)
+    if (nViews == 0)
     {
-        // Views are the split completely into stereo.
-        // TODO: what to do in this case?
-        return false;
+        // No declared stereo view to copy into, clear the knob:
+        k->reset_to_default();
+        return true;
+    }
+    else if (nViews == 1)
+    {
+        // Read a attrib as a mono value:
+        { DD::Image::KnobChangeGroup change_group;
+            k->reset_to_default();
+            const int32_t nViews = DD::Image::OutputContext::viewcount();
+            if (nViews > 2)
+            {
+                // 'main' is 0, so unplit starting after the first stereo view:
+                for (int32_t i=nViews-1; i >= 0; --i)
+                    k->unsplit_view(i);
+            }
+            k->clear_animated(-1); // clear any existing keys on all the sub-knobs
+            copyAttribToKnob(attrib, allow_animation, k, -1/*no view*/);
+        } // DD::Image::KnobChangeGroup
+        return true;
     }
     else if (nViews == 2)
     {
