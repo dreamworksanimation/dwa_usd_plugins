@@ -39,6 +39,9 @@
 
 namespace Fsr {
 
+class SceneXform;
+class SceneLoader;
+
 
 /*! \class Fsr::SceneOpExtender
 
@@ -56,6 +59,10 @@ class FSR_EXPORT SceneOpExtender
 
     //! Return the Op the interface is attached to. Should return 'this'. Must implement.
     virtual DD::Image::Op*       sceneOp()=0;
+
+    //! Allow subclasses to gain access to sibling functions:
+    virtual SceneXform*          asSceneXform()  { return NULL; }
+    virtual SceneLoader*         asSceneLoader() { return NULL; }
 
 
     //--------------------------------------------------------------------

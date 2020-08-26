@@ -149,7 +149,8 @@ void getKnobValue(DD::Image::Knob*                k,
 //!
 inline
 FSR_EXPORT
-bool getBoolValue(DD::Image::Knob* k) { return ((k)?(k->get_value() > 0.5):false); }
+bool getBoolValue(DD::Image::Knob* k,
+                  bool             default_val=false) { return ((k) ? (k->get_value() > 0.5) : default_val); }
 
 
 //-------------------------------------------------------------------------

@@ -171,7 +171,7 @@ AxisKnobVals::isLocalXformValsDefault() const
 void
 AxisKnobVals::setParentXformValsToDefault()
 {
-    parent_enable = false;
+    parent_enable    = false;
     parent_translate = default_translate;
     parent_rotate    = default_rotate;
     parent_scale     = default_scale;
@@ -538,23 +538,31 @@ AxisKnobVals::clearAnimation(DD::Image::Op*                  op,
     if (!op)
         return; // don't crash...
 
-    DD::Image::Knob* k;
-    DD::Image::Hash dummy_hash;
+    const bool sync_parent_xform_knobs = getBoolValue(op->knob("sync_parent_xform"), true);
+    const bool sync_local_xform_knobs  = getBoolValue(op->knob("sync_local_xform" ), true);
 
-    k = op->knob("parent_translate"); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
-    k = op->knob("parent_rotate"   ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
-    k = op->knob("parent_scale"    ); if (k) { k->clear_animated(-1); k->set_value(1.0, -1); }
+    if (sync_parent_xform_knobs)
+    {
+        DD::Image::Knob* k;
+        k = op->knob("parent_translate"); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+        k = op->knob("parent_rotate"   ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+        k = op->knob("parent_scale"    ); if (k) { k->clear_animated(-1); k->set_value(1.0, -1); }
+    }
 
-    k = op->knob("translate"       ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
-    k = op->knob("rotate"          ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
-    k = op->knob("scaling"         ); if (k) { k->clear_animated(-1); k->set_value(1.0, -1); }
-    k = op->knob("uniform_scale"   ); if (k) { k->clear_animated(-1); k->set_value(1.0); }
-    k = op->knob("skew"            ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
-    k = op->knob("pivot"           ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+    if (sync_local_xform_knobs)
+    {
+        DD::Image::Knob* k;
+        k = op->knob("translate"       ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+        k = op->knob("rotate"          ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+        k = op->knob("scaling"         ); if (k) { k->clear_animated(-1); k->set_value(1.0, -1); }
+        k = op->knob("uniform_scale"   ); if (k) { k->clear_animated(-1); k->set_value(1.0); }
+        k = op->knob("skew"            ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
+        k = op->knob("pivot"           ); if (k) { k->clear_animated(-1); k->set_value(0.0, -1); }
 
-    k = op->knob("rot_order"       ); if (k) k->set_value(double(Fsr::XYZ_ORDER));
-    k = op->knob("xform_order"     ); if (k) k->set_value(double(Fsr::SRT_ORDER));
-    k = op->knob("usdMatrix"       ); if (k) k->set_value(0.0);
+        k = op->knob("rot_order"       ); if (k) k->set_value(double(Fsr::XYZ_ORDER));
+        k = op->knob("xform_order"     ); if (k) k->set_value(double(Fsr::SRT_ORDER));
+        k = op->knob("usdMatrix"       ); if (k) k->set_value(0.0);
+    }
 }
 
 
@@ -568,58 +576,61 @@ AxisKnobVals::store(DD::Image::Op*                  op,
     if (!op)
         return false; // don't crash...
 
-    DD::Image::Knob* k;
-    DD::Image::Hash dummy_hash;
+    const bool sync_parent_xform_knobs = getBoolValue(op->knob("sync_parent_xform"), true);
+    const bool sync_local_xform_knobs  = getBoolValue(op->knob("sync_local_xform" ), true);
 
     // TODO: these enables should be on the AxisKnobVals class, or something like it.
-    bool do_translate = true;
-    bool do_rotation  = true;
-    bool do_scaling   = true;
-    k = op->knob("translate_enable" ); if (k) k->store(DD::Image::BoolPtr, &do_translate, dummy_hash, context);
-    k = op->knob("rotate_enable"    ); if (k) k->store(DD::Image::BoolPtr, &do_rotation,  dummy_hash, context);
-    k = op->knob("scale_enable"     ); if (k) k->store(DD::Image::BoolPtr, &do_scaling,   dummy_hash, context);
+    const bool do_translate = getBoolValue(op->knob("translate_enable"), true);
+    const bool do_rotation  = getBoolValue(op->knob("rotate_enable"   ), true);
+    const bool do_scaling   = getBoolValue(op->knob("scale_enable"    ), true);
 
 #if 1
     if (do_translate)
     {
-        storeVec3dInKnob(translate, op->knob("translate"), context, 0/*offset*/);
-        if (parent_enable)
+        if (sync_parent_xform_knobs && parent_enable)
             storeVec3dInKnob(parent_translate, op->knob("parent_translate"), context, 0/*offset*/);
+        if (sync_local_xform_knobs)
+            storeVec3dInKnob(translate, op->knob("translate"), context, 0/*offset*/);
     }
     if (do_rotation)
     {
-        storeVec3dInKnob(rotate, op->knob("rotate"), context, 0/*offset*/);
-        if (parent_enable)
+        if (sync_parent_xform_knobs && parent_enable)
             storeVec3dInKnob(parent_rotate, op->knob("parent_rotate"), context, 0/*offset*/);
+        if (sync_local_xform_knobs)
+            storeVec3dInKnob(rotate, op->knob("rotate"), context, 0/*offset*/);
     }
     if (do_scaling)
     {
-        storeVec3dInKnob(scaling, op->knob("scaling"), context, 0/*offset*/);
-        //storeDoubleInKnob(uniform_scale, op->knob("uniform_scale"), context, 0/*offset*/);
-        if (parent_enable)
+        if (sync_parent_xform_knobs && parent_enable)
             storeVec3dInKnob(parent_scale, op->knob("parent_scale"), context, 0/*offset*/);
+        if (sync_local_xform_knobs)
+            storeVec3dInKnob(scaling, op->knob("scaling"), context, 0/*offset*/);
+        //storeDoubleInKnob(uniform_scale, op->knob("uniform_scale"), context, 0/*offset*/);
     }
     //storeVec3dsInKnob(skew,  op->knob("skew" ), context, 0/*offset*/);
     //storeVec3dsInKnob(pivot, op->knob("pivot"), context, 0/*offset*/);
 #else
     if (do_translate)
     {
-        Fsr::storeVec3dsInKnob(op->knob("translate"), translate, times, -1/*view*/);
-        if (do_parent_extract)
+        if (sync_parent_xform_knobs && do_parent_extract)
             Fsr::storeVec3dsInKnob(op->knob("parent_translate"), parent_translate, times, -1/*view*/);
+        if (sync_local_xform_knobs)
+            Fsr::storeVec3dsInKnob(op->knob("translate"), translate, times, -1/*view*/);
     }
     if (do_rotation)
     {
-        Fsr::storeVec3dsInKnob(op->knob("rotate"), rotate, times, -1/*view*/);
-        if (do_parent_extract)
+        if (sync_parent_xform_knobs && do_parent_extract)
             Fsr::storeVec3dsInKnob(op->knob("parent_rotate"), parent_rotate, times, -1/*view*/);
+        if (sync_local_xform_knobs)
+            Fsr::storeVec3dsInKnob(op->knob("rotate"), rotate, times, -1/*view*/);
     }
     if (do_scaling)
     {
-        Fsr::storeVec3dsInKnob(op->knob("scaling"), scaling, times, -1/*view*/);
-        //Fsr::storeDoublesInKnob(op->knob("uniform_scale"), uniform_scale, times, -1/*view*/);
-        if (do_parent_extract)
+        if (sync_parent_xform_knobs && do_parent_extract)
             Fsr::storeVec3dsInKnob(op->knob("parent_scale"), parent_scale, times, -1/*view*/);
+        if (sync_local_xform_knobs)
+            Fsr::storeVec3dsInKnob(op->knob("scaling"), scaling, times, -1/*view*/);
+        //Fsr::storeDoublesInKnob(op->knob("uniform_scale"), uniform_scale, times, -1/*view*/);
     }
     //Fsr::storeVec3dsInKnob(op->knob("skew" ), skew,  times, -1/*view*/);
     //Fsr::storeVec3dsInKnob(op->knob("pivot"), pivot, times, -1/*view*/);
@@ -645,12 +656,12 @@ AxisKnobVals::store(DD::Image::Op*   op,
     // sending only one upon destruction:
     { DD::Image::KnobChangeGroup change_group;
 
-        // Store separate xform parameters.
         AxisKnobVals::clearAnimation(op, context);
 
         const size_t nSamples = axis_vals_list.size();
         if (nSamples > 0)
         {
+            // Store separate xform parameters.
             for (size_t j=0; j < nSamples; ++j)
             {
                 const AxisKnobVals& axis_vals = axis_vals_list[j];

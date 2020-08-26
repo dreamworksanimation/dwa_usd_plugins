@@ -27,6 +27,7 @@
 /// @author Jonathan Egstad
 
 #include "SceneXform.h"
+#include "SceneLoader.h"
 #include "NukeKnobInterface.h" // for getVec3Knob
 #include "AxisOp.h"
 #include "CameraOp.h"
@@ -125,6 +126,8 @@ const char* SceneXformRTTIKnob = "FsrSceneXform";
 */
 SceneXform::SceneXform() :
     SceneOpExtender(),
+    kParentUnlocked(NULL),
+    kLocalUnlocked(NULL),
     kParentTranslate(NULL),
     kParentRotate(NULL),
     kParentScale(NULL),
@@ -144,7 +147,7 @@ SceneXform::SceneXform() :
 */
 /*static*/
 bool
-SceneXform::isSceneXform(DD::Image::Op* op)
+SceneXform::isOpSceneXform(DD::Image::Op* op)
 {
 #ifdef FUSER_USE_KNOB_RTTI
     // HACK!!!!: Test for dummy knob so we can test for class without using RTTI...:
@@ -164,9 +167,9 @@ SceneXform::isSceneXform(DD::Image::Op* op)
 */
 /*static*/
 SceneXform*
-SceneXform::asSceneXform(DD::Image::Op* op)
+SceneXform::getOpAsSceneXform(DD::Image::Op* op)
 {
-    if (!op || !isSceneXform(op))
+    if (!op || !isOpSceneXform(op))
         return NULL;
 
     //-----------------------------------------------------------------------------
@@ -333,6 +336,21 @@ SceneXform::_addAxisOpTransformKnobs(DD::Image::Knob_Callback         f,
     assert(axis_knob);
     assert(worldMatrixProvider);
 
+    SceneLoader* scene_loader = asSceneLoader();
+
+    if (scene_loader)
+    {
+        bool dummy_val=true;
+        kLocalUnlocked = Bool_knob(f, &dummy_val, "sync_local_xform", "sync local xform");
+            SetFlags(f, DD::Image::Knob::EARLY_STORE);
+            Tooltip(f, "If enabled and 'read from file' is true, sync the local transform knobs to "
+                       "the scene file data, overwriting (*destroying*) any user-assigned values.\n"
+                       "\n"
+                       "When disabled the local transform knobs are *not* overwritten and remain "
+                       "available for user-assigned values.");
+        Newline(f);
+    }
+
     _addOpTransformKnobs(f, localtransform);
 
     // Assign the Axis_KnobI interface pointer on the AxisOp base class:
@@ -384,6 +402,8 @@ SceneXform::addParentingKnobs(DD::Image::Knob_Callback f,
 {
     //std::cout << "  SceneXform::addParentingKnobs(" << this << ") makeKnobs=" << f.makeKnobs() << std::endl;
 
+    SceneLoader* scene_loader = asSceneLoader();
+
     //DD::Image::Divider(f, "Parent constraint");
     //----------------------------------------
     //DD::Image::BeginGroup(f, "", "@b;Parent constraint");
@@ -392,6 +412,24 @@ SceneXform::addParentingKnobs(DD::Image::Knob_Callback f,
         //    DD::Image::ClearFlags(f, DD::Image::Knob::CLOSED);
         //else
         //    DD::Image::SetFlags(f, DD::Image::Knob::CLOSED);
+
+        if (scene_loader)
+        {
+            bool dummy_val=true;
+            kParentUnlocked = Bool_knob(f, &dummy_val, "sync_parent_xform", "sync parent xform");
+                SetFlags(f, DD::Image::Knob::EARLY_STORE);
+                Tooltip(f, "If enabled and 'read from file' is true, sync the parent transform knobs to "
+                           "the scene file data, overwriting (*destroying*) any user-assigned values.\n"
+                           "\n"
+                           "When disabled the parent transform knobs are *not* overwritten and remain "
+                           "available for user-assigned values.");
+
+            //DD::Image::Script_knob(f, "knob scene_file_version ", "Clear");
+            //    DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
+            //    DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE | DD::Image::Knob::NO_UNDO | DD::Image::Knob::NO_ANIMATION);
+            //    DD::Image::Tooltip(f, "Clear the local transform knobs.");
+            Newline(f);
+        }
 
         // XYZ_knob is always floats but we don't want to store floats, so
         // point the knobs at a dummy value and later use Knob::store() to get
@@ -483,6 +521,31 @@ SceneXform::knobChanged(DD::Image::Knob* k,
     assert(op);
 #endif
 
+    // If this is also a SceneLoader check for the file read state:
+    bool read_from_file    = false;
+    bool read_knob_changed = false;
+    SceneLoader* scene_loader = asSceneLoader();
+    if (scene_loader)
+    {
+        read_from_file    = scene_loader->isSceneLoaderEnabled();
+        read_knob_changed = (k->name() == "read_from_file");
+        //std::cout << "  read_knob_changed=" << read_knob_changed << ", read_from_file=" << read_from_file << std::endl;
+    }
+
+    if (k == &DD::Image::Knob::showPanel ||
+        read_knob_changed ||
+        k == kParentUnlocked ||
+        k == kLocalUnlocked)
+    {
+        const bool sync_parent = (kParentUnlocked) ? (kParentUnlocked->get_value() > 0.5) : true;
+        const bool sync_local  = (kLocalUnlocked ) ? (kLocalUnlocked->get_value()  > 0.5) : true;
+
+        enableParentTransformKnobs(!read_from_file || !sync_parent);
+        enableLocalTransformKnobs( !read_from_file || !sync_local );
+
+        call_again = 1; // we want to be called again
+    }
+
 #if 0
     if (k == &DD::Image::Knob::showPanel)
     {
@@ -521,24 +584,26 @@ SceneXform::knobChanged(DD::Image::Knob* k,
 */
 /*virtual*/
 void
-SceneXform::enableParentTransformKnobs(bool parent_xform_enabled)
+SceneXform::enableParentTransformKnobs(bool enabled)
 {
     //DD::Image::Op* op = sceneOp();
 #ifdef DEBUG
     //assert(op);
 #endif
-    //DD::Image::Knob* k; k = op->knob("parent_transform_live"); if (k) k->enable(parent_xform_enabled);
+    //DD::Image::Knob* k; k = op->knob("parent_transform_live"); if (k) k->enable(enabled);
 
-    if (kParentTranslate) kParentTranslate->enable(parent_xform_enabled);
-    if (kParentRotate   ) kParentRotate->enable(parent_xform_enabled);
-    if (kParentScale    ) kParentScale->enable(parent_xform_enabled);
+    { DD::Image::KnobChangeGroup change_group;
+        if (kParentTranslate) kParentTranslate->enable(enabled);
+        if (kParentRotate   ) kParentRotate->enable(enabled);
+        if (kParentScale    ) kParentScale->enable(enabled);
+    }
 }
 
 /*!
 */
 /*virtual*/
 void
-SceneXform::enableLocalTransformKnobs(bool read_enabled)
+SceneXform::enableLocalTransformKnobs(bool enabled)
 {
     DD::Image::Op* op = sceneOp();
 #ifdef DEBUG
@@ -546,14 +611,14 @@ SceneXform::enableLocalTransformKnobs(bool read_enabled)
 #endif
     DD::Image::Knob* k;
 
-    // turn on local controls if not reading from file:
-    const bool local_enabled = (!read_enabled);
-
-    k = op->knob("transform"    ); if (k) k->enable(local_enabled);
-
-    k = op->knob("uniform_scale"); if (k) k->visible(local_enabled);
-    k = op->knob("skew"         ); if (k) k->visible(local_enabled);
-    k = op->knob("pivot"        ); if (k) k->visible(local_enabled);
+    { DD::Image::KnobChangeGroup change_group;
+        k = op->knob("transform"    ); if (k) k->enable(enabled);
+        // Hide the transform knobs that don't make sense when loading from a file:
+        k = op->knob("uniform_scale"); if (k) { k->enable(enabled); k->visible(enabled); }
+        k = op->knob("skew"         ); if (k) { k->enable(enabled); k->visible(enabled); }
+        k = op->knob("pivot"        ); if (k) { k->enable(enabled); k->visible(enabled); }
+        k = op->knob("useMatrix"    ); if (k) { k->enable(enabled); k->visible(enabled); }
+    }
 }
 
 
@@ -561,7 +626,7 @@ SceneXform::enableLocalTransformKnobs(bool read_enabled)
 */
 /*virtual*/
 void
-SceneXform::enableSceneXformExtraKnobs(bool read_enabled)
+SceneXform::enableSceneXformExtraKnobs(bool enabled)
 {
     // base class does nothing
 }
@@ -630,7 +695,7 @@ SceneXform::_validateAxisOpMatrices(bool                for_real,
         if (parent_axis)
         {
             parent_axis->validate(for_real);
-            const SceneXform* input_xform = asSceneXform(parent_axis);
+            const SceneXform* input_xform = getOpAsSceneXform(parent_axis);
             //std::cout << "  parent='" << op->input(parent_input)->node_name() << "' input_xform=" << input_xform << std::endl;
             if (input_xform)
                 m_input_matrix = input_xform->getWorldTransform();
@@ -702,7 +767,7 @@ SceneXform::getInputParentTransformAt(const DD::Image::OutputContext& context) c
     if (parent_axis)
     {
         parent_axis->validate(false);
-        const SceneXform* input_xform = asSceneXform(parent_axis);
+        const SceneXform* input_xform = getOpAsSceneXform(parent_axis);
         //std::cout << "    parent='" << parent_axis->node_name() << "' input_xform=" << input_xform << std::endl;
         // Check if input is a SceneXform and access the double-precision methods:
         if (input_xform)
@@ -850,7 +915,7 @@ SceneXform::getLocalTransformWithLookatAt(const Fsr::Mat4d&               parent
         if (lookat_axis)
         {
             lookat_axis->validate(false);
-            const SceneXform* lookat_xform = asSceneXform(lookat_axis);
+            const SceneXform* lookat_xform = getOpAsSceneXform(lookat_axis);
             //std::cout << "    lookat='" << lookat_axis->node_name() << "' lookat_xform=" << lookat_xform << std::endl;
             // Check if input is a SceneXform and access the double-precision methods:
             if (lookat_xform)

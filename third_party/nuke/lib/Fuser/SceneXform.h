@@ -91,6 +91,9 @@ class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
     Fsr::Mat4d       m_local_matrix;    //!< Also contains lookat transform!
     Fsr::Mat4d       m_world_matrix;    //!< parent * local
 
+    DD::Image::Knob* kParentUnlocked;   //!< Parent-unlocked knob
+    DD::Image::Knob* kLocalUnlocked;    //!< Local-unlocked knob
+
     DD::Image::Knob* kParentTranslate;  //!< If not NULL apply parent_translate
     DD::Image::Knob* kParentRotate;     //!< If not NULL apply parent_rotate
     DD::Image::Knob* kParentScale;      //!< If not NULL apply parent_scale
@@ -141,10 +144,10 @@ class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
 
 
     //! Returns true if Op is a Fuser SceneXform.
-    static bool        isSceneXform(DD::Image::Op* op);
+    static bool        isOpSceneXform(DD::Image::Op* op);
 
     //! Returns op cast to Fuser SceneXform if possible, otherwise NULL.
-    static SceneXform* asSceneXform(DD::Image::Op* op);
+    static SceneXform* getOpAsSceneXform(DD::Image::Op* op);
 
 
     //--------------------------------------------------------------------
@@ -202,9 +205,9 @@ class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
 
 
     //! Enable/disable knobs filled in by the node read.
-    virtual void enableParentTransformKnobs(bool parent_xform_enabled);
-    virtual void enableLocalTransformKnobs(bool read_enabled);
-    virtual void enableSceneXformExtraKnobs(bool read_enabled);
+    virtual void enableParentTransformKnobs(bool enabled);
+    virtual void enableLocalTransformKnobs(bool enabled);
+    virtual void enableSceneXformExtraKnobs(bool enabled);
 
 
     //---------------------------------------------------------------------

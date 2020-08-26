@@ -216,6 +216,13 @@ const bool allow_anim = true;
     if (!light)
         return; // skip any light-specific data if not a LightOp
 
+    // Skip loading light controls if its disabled:
+    // TODO: this kind of logic needs to go in a base 'LightLoader' class...
+    const bool sync_light_controls = getBoolValue(light->knob("sync_light_controls"), true);
+    if (!sync_light_controls)
+        return; // don't need to load controls
+
+
     Pxr::UsdPrim light_prim = m_light_schema.GetPrim();
     //std::cout << "    FuserUsdLight::importSceneOp('" << light_prim.GetName() << "')" << std::endl;
 

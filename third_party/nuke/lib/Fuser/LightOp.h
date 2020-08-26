@@ -163,6 +163,10 @@ class FSR_EXPORT FuserLightOp : public DD::Image::ComplexLightOp,
     //! SceneExtender:: Should return 'this'. Must implement.
     /*virtual*/ DD::Image::Op*       sceneOp() { return this; }
 
+    //! Allow subclasses to gain access to sibling functions:
+    /*virtual*/ SceneXform*  asSceneXform()   { return this; }
+    /*virtual*/ SceneLoader* asSceneLoader()  { return this; }
+
     //! SceneExtender:: If extender is attached to a AxisOp subclass return 'this'.
     /*virtual*/ DD::Image::AxisOp*   asAxisOp() { return this; }
 
@@ -176,7 +180,7 @@ class FSR_EXPORT FuserLightOp : public DD::Image::ComplexLightOp,
     /*virtual*/ const char*          defaultSceneNodeType() { return "light"; }
 
     //! Enable/disable any knobs that get updated by SceneLoader.
-    /*virtual*/ void enableSceneLoaderExtraKnobs(bool read_enabled);
+    /*virtual*/ void enableSceneLoaderExtraKnobs(bool enabled);
 
 
     //------------------------------------------------------------

@@ -86,6 +86,9 @@ class FSR_EXPORT FuserAxisOp : public DD::Image::AxisOp,
     //! SceneExtender:: If extender is attached to an AxisOp subclass return 'this'.
     /*virtual*/ DD::Image::AxisOp* asAxisOp() { return this; }
 
+    //! Allow subclasses to gain access to sibling functions:
+    /*virtual*/ SceneXform*  asSceneXform()   { return this; }
+    /*virtual*/ SceneLoader* asSceneLoader()  { return this; }
 
     //------------------------------------------------------------
     // DD::Image::AxisOp virtual methods.

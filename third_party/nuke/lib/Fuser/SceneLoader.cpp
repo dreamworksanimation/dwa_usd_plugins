@@ -221,7 +221,7 @@ SceneLoader::SceneLoader(bool read_enabled) :
 */
 /*static*/
 bool
-SceneLoader::isSceneLoader(DD::Image::Op* op)
+SceneLoader::isOpSceneLoader(DD::Image::Op* op)
 {
 #ifdef FUSER_USE_KNOB_RTTI
     // HACK!!!!: Test for dummy knob so we can test for class without using RTTI...:
@@ -571,8 +571,7 @@ SceneLoader::isSceneLoaderEnabled()
 {
     if (!sceneOp())
         return false;
-    DD::Image::Knob* k = sceneOp()->knob("read_from_file");
-    return (k) ? (k->get_value_at(sceneOp()->outputContext()) > 0.5) : false;
+    return getBoolValue(sceneOp()->knob("read_from_file"), false);
 }
 
 
@@ -596,7 +595,7 @@ SceneLoader::knobChanged(DD::Image::Knob* k,
         k->name() == "lock_read_view")
     {
         enableSceneLoaderKnobs(scene_loader_enabled);
-        enableSceneLoaderExtraKnobs(scene_loader_enabled);
+        enableSceneLoaderExtraKnobs(!scene_loader_enabled);
         updateSceneGraph();
 
         call_again = 1; // we want to be called again

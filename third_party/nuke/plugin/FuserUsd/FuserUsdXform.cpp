@@ -626,6 +626,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
         {
             // Extract the local xform at each concat sample time and decompose to SRT:
             const size_t nSamples = axis_vals_list.size();
+            //std::cout << "      nSamples=" << nSamples << ":" << std::endl;
             for (size_t j=0; j < nSamples; ++j)
             {
                 AxisKnobVals& axis_vals = axis_vals_list[j];
@@ -646,7 +647,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
                     //TF_RUNTIME_ERROR("Unable to successfully decompose transform at USD prim <%s>", m_xformable_schema.GetPath().GetText());
                     break;
                 }
-                //std::cout << "      " << axis_vals.time;
+                //std::cout << "        " << axis_vals.time;
                 //std::cout << " t" << axis_vals.translate << " r" << axis_vals.rotate << " s" << axis_vals.scaling;
                 //std::cout << std::endl;
             }

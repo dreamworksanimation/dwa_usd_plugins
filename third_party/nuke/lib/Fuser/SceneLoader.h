@@ -181,7 +181,7 @@ class FSR_EXPORT SceneLoader : public Fsr::NodeIOInterface,
 
 
     //! Returns true if Op is a Fuser SceneLoader.
-    static bool isSceneLoader(DD::Image::Op* op);
+    static bool isOpSceneLoader(DD::Image::Op* op);
 
     //! Is scene loader enabled? Base class returns the state of the 'read_from_file' knob.
     virtual bool isSceneLoaderEnabled();

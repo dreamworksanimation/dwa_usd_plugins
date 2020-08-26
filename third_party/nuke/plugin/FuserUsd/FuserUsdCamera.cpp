@@ -203,6 +203,14 @@ const bool allow_anim = true;
     if (!camera)
         return; // skip any camera-specific data if not a CameraOp
 
+
+    // Skip loading camera controls if its disabled:
+    // TODO: this kind of logic needs to go in a base 'CameraLoader' class...
+    const bool sync_camera_controls = getBoolValue(camera->knob("sync_camera_controls"), true);
+    if (!sync_camera_controls)
+        return; // don't need to load controls
+
+
     Pxr::UsdPrim camera_prim = m_camera_schema.GetPrim();
 
 #if 0

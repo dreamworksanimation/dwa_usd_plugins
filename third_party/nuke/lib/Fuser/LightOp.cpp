@@ -27,6 +27,7 @@
 /// @author Jonathan Egstad
 
 #include "LightOp.h"
+#include "NukeKnobInterface.h" // for getBoolValue
 
 #include <DDImage/gl.h>
 
@@ -244,6 +245,17 @@ FuserLightOp::addExtraFrontPanelKnobs(DD::Image::Knob_Callback f)
 void
 FuserLightOp::addLightKnobs(DD::Image::Knob_Callback f)
 {
+    Newline(f);
+    bool dummy_val=true;
+    Bool_knob(f, &dummy_val, "sync_light_controls", "sync light controls");
+        SetFlags(f, DD::Image::Knob::EARLY_STORE);
+        Tooltip(f, "If enabled and 'read from file' is true, sync the light controls to "
+                   "the scene file data, overwriting (*destroying*) any user-assigned values.\n"
+                   "\n"
+                   "When disabled the light controls are *not* overwritten and remain "
+                   "available for user-assigned values.");
+    Newline(f);
+
     DD::Image::ComplexLightOp::color_knobs(f);
     DD::Image::Double_knob(f, &near_, DD::Image::IRange(0.001, 10.0), "near");
     DD::Image::Double_knob(f, &far_,  DD::Image::IRange(1.0, 1000.0), "far" );
@@ -283,6 +295,12 @@ FuserLightOp::knob_changed(DD::Image::Knob* k)
     call_again =  SceneXform::knobChanged(k, call_again);
     call_again = SceneLoader::knobChanged(k, call_again);
 
+    if (k->name() == "sync_light_controls")
+    {
+        enableSceneLoaderExtraKnobs(isSceneLoaderEnabled());
+        call_again = 1; // we want to be called again
+    }
+
     // Let base class handle their changes:
     if (DD::Image::ComplexLightOp::knob_changed(k))
         call_again = 1;
@@ -297,21 +315,17 @@ FuserLightOp::knob_changed(DD::Image::Knob* k)
 */
 /*virtual*/
 void
-FuserLightOp::enableSceneLoaderExtraKnobs(bool read_enabled)
+FuserLightOp::enableSceneLoaderExtraKnobs(bool enabled)
 {
-    // turn on local controls if not reading from file:
-    //const bool local_enabled = (!read_enabled);
+    if (!getBoolValue(knob("sync_light_controls"), true))
+        enabled = true;
 
-    //DD::Image::Knob* k;
-    // Standard camera knobs:
-    //k = knob("projection_mode"); if (k) k->enable(local_enabled);
-    //k = knob("focal"          ); if (k) k->enable(local_enabled);
-    //k = knob("haperture"      ); if (k) k->enable(local_enabled);
-    //k = knob("vaperture"      ); if (k) k->enable(local_enabled);
-    //k = knob("near"           ); if (k) k->enable(local_enabled);
-    //k = knob("far"            ); if (k) k->enable(local_enabled);
-    //k = knob("focal_point"    ); if (k) k->enable(local_enabled);
-    //k = knob("fstop"          ); if (k) k->enable(local_enabled);
+    DD::Image::Knob* k;
+    // Standard light knobs:
+    k = knob("color"    ); if (k) k->enable(enabled);
+    k = knob("intensity"); if (k) k->enable(enabled);
+    k = knob("near"     ); if (k) k->enable(enabled);
+    k = knob("far"      ); if (k) k->enable(enabled);
 }
 
 

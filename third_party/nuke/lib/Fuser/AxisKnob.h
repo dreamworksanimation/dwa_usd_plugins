@@ -52,24 +52,24 @@ typedef std::vector<AxisKnobVals> AxisKnobValsList;
 class FSR_EXPORT AxisKnobVals
 {
   public:
-    double              time;               //!< Sample time
+    double              time;                   //!< Sample time
     //
-    Fsr::XformOrder     xform_order;        //!< (matches the DD::Image::Axis_KnobI enums)
-    Fsr::RotationOrder  rot_order;          //!< (matches the DD::Image::Axis_KnobI enums)
+    Fsr::XformOrder     xform_order;            //!< (matches the DD::Image::Axis_KnobI enums)
+    Fsr::RotationOrder  rot_order;              //!< (matches the DD::Image::Axis_KnobI enums)
     Fsr::Vec3d          translate;
-    Fsr::Vec3d          rotate;             //!< Rotation angles *in degrees*
+    Fsr::Vec3d          rotate;                 //!< Rotation angles *in degrees*
     Fsr::Vec3d          scaling;
     double              uniform_scale;
     Fsr::Vec3d          skew;
     Fsr::Vec3d          pivot;
     //
-    bool                use_matrix;         //!< Ignore separate transform parms above, use an explicit matrix
-    Fsr::Mat4d          matrix;             //!< If 'use_matrix' should be enabled on Axis_Knob.
+    bool                use_matrix;             //!< Ignore separate transform parms above, use an explicit matrix
+    Fsr::Mat4d          matrix;                 //!< If 'use_matrix' should be enabled on Axis_Knob.
     //
-    bool                parent_enable;      //!< Are parent transform values being used?
-    Fsr::Vec3d          parent_translate;   //!<
-    Fsr::Vec3d          parent_rotate;      //!< Rotation angles *in degrees*
-    Fsr::Vec3d          parent_scale;       //!<
+    bool                parent_enable;          //!< Are parent transform values being used?
+    Fsr::Vec3d          parent_translate;       //!<
+    Fsr::Vec3d          parent_rotate;          //!< Rotation angles *in degrees*
+    Fsr::Vec3d          parent_scale;           //!<
 
 
   public:

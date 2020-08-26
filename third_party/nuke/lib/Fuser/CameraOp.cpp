@@ -27,6 +27,7 @@
 /// @author Jonathan Egstad
 
 #include "CameraOp.h"
+#include "NukeKnobInterface.h" // for getBoolValue
 
 #include <DDImage/gl.h>
 
@@ -221,6 +222,17 @@ FuserCameraOp::addExtraFrontPanelKnobs(DD::Image::Knob_Callback f)
 void
 FuserCameraOp::addProjectionTabKnobs(DD::Image::Knob_Callback f)
 {
+    Newline(f);
+    bool dummy_val=true;
+    Bool_knob(f, &dummy_val, "sync_camera_controls", "sync camera controls");
+        SetFlags(f, DD::Image::Knob::EARLY_STORE);
+        Tooltip(f, "If enabled and 'read from file' is true, sync the camera controls to "
+                   "the scene file data, overwriting (*destroying*) any user-assigned values.\n"
+                   "\n"
+                   "When disabled the camera controls are *not* overwritten and remain "
+                   "available for user-assigned values.");
+    Newline(f);
+
     projection_knobs(f);
 
     lens_knobs(f);
@@ -292,11 +304,39 @@ FuserCameraOp::knob_changed(DD::Image::Knob* k)
     call_again =  SceneXform::knobChanged(k, call_again);
     call_again = SceneLoader::knobChanged(k, call_again);
 
+    if (k->name() == "sync_camera_controls")
+    {
+        enableSceneLoaderExtraKnobs(isSceneLoaderEnabled());
+        call_again = 1; // we want to be called again
+    }
+
     // Let base class handle their changes:
     if (DD::Image::CameraOp::knob_changed(k))
         call_again = 1;
 
     return call_again;
+}
+
+
+/*! Enable/disable any knobs that get updated by SceneLoader.
+*/
+/*virtual*/
+void
+FuserCameraOp::enableSceneLoaderExtraKnobs(bool enabled)
+{
+    if (!getBoolValue(knob("sync_camera_controls"), true))
+        enabled = true;
+
+    DD::Image::Knob* k;
+    // Standard camera knobs:
+    k = knob("projection_mode"); if (k) k->enable(enabled);
+    k = knob("focal"          ); if (k) k->enable(enabled);
+    k = knob("haperture"      ); if (k) k->enable(enabled);
+    k = knob("vaperture"      ); if (k) k->enable(enabled);
+    k = knob("near"           ); if (k) k->enable(enabled);
+    k = knob("far"            ); if (k) k->enable(enabled);
+    k = knob("focal_point"    ); if (k) k->enable(enabled);
+    k = knob("fstop"          ); if (k) k->enable(enabled);
 }
 
 
@@ -349,28 +389,6 @@ FuserCameraOp::_validate(bool for_real)
     //std::cout << "               local_" << local_ << std::endl;
     //std::cout << "              matrix_" << matrix_ << std::endl;
     //std::cout << "   inversion_updated=" << inversion_updated << std::endl;
-}
-
-
-/*! Enable/disable any knobs that get updated by SceneLoader.
-*/
-/*virtual*/
-void
-FuserCameraOp::enableSceneLoaderExtraKnobs(bool read_enabled)
-{
-    // turn on local controls if not reading from file:
-    const bool local_enabled = (!read_enabled);
-
-    DD::Image::Knob* k;
-    // Standard camera knobs:
-    k = knob("projection_mode"); if (k) k->enable(local_enabled);
-    k = knob("focal"          ); if (k) k->enable(local_enabled);
-    k = knob("haperture"      ); if (k) k->enable(local_enabled);
-    k = knob("vaperture"      ); if (k) k->enable(local_enabled);
-    k = knob("near"           ); if (k) k->enable(local_enabled);
-    k = knob("far"            ); if (k) k->enable(local_enabled);
-    k = knob("focal_point"    ); if (k) k->enable(local_enabled);
-    k = knob("fstop"          ); if (k) k->enable(local_enabled);
 }
 
 
