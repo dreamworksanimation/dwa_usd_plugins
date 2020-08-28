@@ -37,6 +37,7 @@ pxr_static_library(${PXR_PACKAGE}
         NukeGeoInterface.h
         NukeKnobInterface.h
         NukePixelInterface.h
+        ObjectFilterKnob.h
         PointBasedPrimitive.h
         Primitive.h
         RayContext.h
@@ -68,6 +69,7 @@ pxr_static_library(${PXR_PACKAGE}
         NodePrimitive.cpp
         NukeGeoInterface.cpp
         NukeKnobInterface.cpp
+        ObjectFilterKnob.cpp
         PointBasedPrimitive.cpp
         SceneLoader.cpp
         SceneXform.cpp
