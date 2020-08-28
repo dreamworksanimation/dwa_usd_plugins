@@ -171,6 +171,7 @@ FuserUsdMesh::FuserUsdMesh(const Pxr::UsdStageRefPtr& stage,
                 //m_material_binding = bindingAPI.ComputeBoundMaterial();
 
                 //if (!m_material_binding)
+                if (0)//(debug)
                 {
                     std::cerr << "    FuserUsdMesh::ctor('" << mesh_prim.GetPath() << "'): ";
                     std::cerr << "warning, material binding prim '" << targets[0].GetString() << "'";

@@ -133,16 +133,22 @@ class FuserUsdNode
     /*! Make sure the prim is Loaded, and is Valid, Defined, and Active.
         Returns false if prim is not Valid, not Active, not Defined, or
         it failed to Load.
+
+        NOTE - this may change/update the passed-in UsdPrim object if it's
+        an instance proxy - it will be updated to the master prim!
     */
-    static bool isLoadedAndUseablePrim(const Pxr::UsdPrim& prim);
+    static bool isLoadedAndUseablePrim(Pxr::UsdPrim& prim);
 
     /*! Make sure the prim is Loaded, and is Valid, Defined, and Active.
         Returns NULL if no error otherwise an allocated ErrorNode with more error info.
+
+        NOTE - this may change/update the passed-in UsdPrim object if it's
+        an instance proxy - it will be updated to the master prim!
     */
-    static Fsr::ErrorNode* isLoadedAndUseablePrim(const char*         fsr_builder_class,
-                                                  const Pxr::UsdPrim& prim,
-                                                  const char*         prim_load_path,
-                                                  bool                debug_loading=false);
+    static Fsr::ErrorNode* isLoadedAndUseablePrim(const char*   fsr_builder_class,
+                                                  Pxr::UsdPrim& prim,
+                                                  const char*   prim_load_path,
+                                                  bool          debug_loading=false);
 
 
     //! Is the prim able to be rendered (rasterized)?
@@ -153,6 +159,9 @@ class FuserUsdNode
 
     //! Is the prim a usdShade prim?
     static bool isShadingPrim(const Pxr::UsdPrim& prim);
+
+    // Hack method to get depth from path string:
+    static int32_t getPrimDepth(const Pxr::UsdPrim& prim);
 
 
     //-------------------------------------------------------------------------------
@@ -337,6 +346,25 @@ copyArrays(const T* IN, unsigned in_vals, S* OUT, unsigned out_vals)
         for (unsigned i=0; i < out_vals; ++i)
             *OUT++ = float(*IN++);
     }
+}
+
+
+//-------------------------------------------------------------------------------
+
+
+// Hack to get depth from path string:
+/*static*/ inline int32_t
+FuserUsdNode::getPrimDepth(const Pxr::UsdPrim& prim)
+{
+    const std::string& path = prim.GetPath().GetString();
+    if (path == "/")
+        return 0;
+    // Count the '/'s in the string:
+    int32_t depth = 1;
+    for (std::string::const_iterator it=path.begin(); it != path.end(); ++it) 
+        if (*it == '/')
+            ++depth;
+    return (depth - 1);
 }
 
 

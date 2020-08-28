@@ -496,7 +496,7 @@ Fsr::Node* buildUsdNode(const char*        builder_class,
         //for (Pxr::SdfPathSet::const_iterator it=loadable_paths.begin(); it != loadable_paths.end(); ++it)
         //    std::cout << "      '" << *it << "'" << std::endl;
 
-        const Pxr::UsdPrim prim = stage->GetPrimAtPath(Pxr::SdfPath(scene_node_path));
+        Pxr::UsdPrim prim = stage->GetPrimAtPath(Pxr::SdfPath(scene_node_path));
 
         Fsr::ErrorNode* error = FuserUsdNode::isLoadedAndUseablePrim(builder_class,
                                                                      prim,
@@ -600,7 +600,7 @@ Fsr::Node* buildUsdNode(const char*        builder_class,
         //
         //------------------------------------------------------------------
 
-        const Pxr::UsdPrim prim = stage->GetPrimAtPath(Pxr::SdfPath(scene_node_path));
+        Pxr::UsdPrim prim = stage->GetPrimAtPath(Pxr::SdfPath(scene_node_path));
         Fsr::ErrorNode* error = FuserUsdNode::isLoadedAndUseablePrim(builder_class,
                                                                      prim,
                                                                      scene_node_path.c_str()/*prim_load_path*/,

@@ -96,23 +96,30 @@ FuserUsdNode::~FuserUsdNode()
     This fails silently so if you want specific info about why the
     prim is not useable call the version that returns an ErrorNode
     which will contain that info.
+
+    NOTE - this may change/update the passed-in UsdPrim object if it's
+    an instance proxy - it will be updated to the master prim!
 */
 /*static*/
 bool
-FuserUsdNode::isLoadedAndUseablePrim(const Pxr::UsdPrim& prim)
+FuserUsdNode::isLoadedAndUseablePrim(Pxr::UsdPrim& prim)
 {
     // Only load Prims that are Active (enabled) and not Abstract:
-    if (!prim.IsActive() || prim.IsAbstract())
+    if (!prim.IsValid() || !prim.IsActive() || prim.IsAbstract())
         return false;
 
     // Expand (load) all payloads - this can be expensive, but we can't
     // avoid it since we need to traverse the payload's graph too.
     if (!prim.IsLoaded())
     {
-        //std::cout << "LOADING '" << prim.GetPath() << "'" << std::endl;
-        // Don't load decendents automatically:
-        // Note this works even though we're dealing with a const prim...:
+        // Potentially need to update an Instanced prim to the Master. Remember the
+        // info *before* calling Load() as the prim can be trashed afterwards:
+        Pxr::UsdStageRefPtr stage = prim.GetStage();
+        const Pxr::SdfPath& path  = prim.GetPath();
+        const bool update_prim = prim.IsInstanceProxy();
         prim.Load(Pxr::UsdLoadWithDescendants);//Pxr::UsdLoadWithoutDescendants
+        if (update_prim)
+            prim = stage->GetPrimAtPath(path);
     }
 
     // Only consider Prims that are now Loaded, Valid (filled) and
@@ -133,13 +140,16 @@ FuserUsdNode::isLoadedAndUseablePrim(const Pxr::UsdPrim& prim)
 
     The returned ErrorNode will detail if the prim is not Valid,
     not Active, not Defined, or it failed to Load.
+
+    NOTE - this may change/update the passed-in UsdPrim object if it's
+    an instance proxy - it will be updated to the master prim!
 */
 /*static*/
 Fsr::ErrorNode*
-FuserUsdNode::isLoadedAndUseablePrim(const char*         fsr_builder_class,
-                                     const Pxr::UsdPrim& prim,
-                                     const char*         prim_load_path,
-                                     bool                debug_loading)
+FuserUsdNode::isLoadedAndUseablePrim(const char*   fsr_builder_class,
+                                     Pxr::UsdPrim& prim,
+                                     const char*   prim_load_path,
+                                     bool          debug_loading)
 {
     if (!prim.IsValid())
         return new Fsr::ErrorNode(fsr_builder_class,
@@ -164,9 +174,14 @@ FuserUsdNode::isLoadedAndUseablePrim(const char*         fsr_builder_class,
             std::cout << "      prim.IsLoaded=" << prim.IsLoaded() << " ... LOADING NOW!" << std::endl;
         }
 
-        // Load the prim here. LoadWithoutDescendents mean load the parents of
-        // this node and the node itself, but not any children:
-        prim.Load(Pxr::UsdLoadWithoutDescendants/*Pxr::UsdLoadWithDescendants*/);
+        // Potentially need to update an Instanced prim to the Master. Remember the
+        // info *before* calling Load() as the prim can be trashed afterwards:
+        Pxr::UsdStageRefPtr stage = prim.GetStage();
+        const Pxr::SdfPath& path  = prim.GetPath();
+        const bool update_prim = prim.IsInstanceProxy();
+        prim.Load(Pxr::UsdLoadWithDescendants);//Pxr::UsdLoadWithoutDescendants
+        if (update_prim)
+            prim = stage->GetPrimAtPath(path);
 
         // Check if the load happened:
         if (!prim.IsLoaded())

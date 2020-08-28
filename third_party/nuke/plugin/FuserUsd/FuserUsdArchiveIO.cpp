@@ -130,11 +130,11 @@ findMatchingPrimByType(const Pxr::UsdPrim& prim,
 
         // No match, continue down hierarchy:
         auto prim_flags = (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
-        const Pxr::UsdPrim::SiblingRange children = (instancing_enabled) ?
+        const Pxr::UsdPrim::SiblingRange child_range = (instancing_enabled) ?
                                                         prim.GetFilteredChildren(Pxr::UsdTraverseInstanceProxies(prim_flags)) :
                                                         prim.GetAllChildren();
 
-        for (Pxr::UsdPrim::SiblingRange::iterator it=children.begin(); it != children.end(); ++it)
+        for (Pxr::UsdPrim::SiblingRange::iterator it=child_range.begin(); it != child_range.end(); ++it)
         {
             const Pxr::UsdPrim child(*it);
             Pxr::UsdPrim match = findMatchingPrimByType(child, prim_type);
@@ -199,7 +199,7 @@ findFirstMatchingPrim(const Pxr::UsdStageRefPtr& stage,
 /*! Get a list of node descriptions from the USD file, as cheaply as possible...
 */
 static void
-getNodeDescriptions(const Pxr::UsdPrim&      prim,
+getNodeDescriptions(Pxr::UsdPrim             prim,
                     Fsr::NodeDescriptionMap& node_description_map,
                     int                      depth,
                     int                      max_depth,
@@ -209,7 +209,7 @@ getNodeDescriptions(const Pxr::UsdPrim&      prim,
     if (!prim.IsValid())
         return;
 
-    const std::string& path = prim.GetPath().GetString();
+    const std::string path = prim.GetPath().GetString();
     if (path != "/")
         ++depth; // skip pseudo root as a level
 
@@ -253,14 +253,14 @@ getNodeDescriptions(const Pxr::UsdPrim&      prim,
     // We do a manual child walk so we can keep track of the depth we're at.
     // Using just a UsdPrimRange iterator means losing where we are in depth.
     auto prim_flags = (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
-    const Pxr::UsdPrim::SiblingRange children = (instancing_enabled) ?
+    const Pxr::UsdPrim::SiblingRange child_range = (instancing_enabled) ?
                                                     prim.GetFilteredChildren(Pxr::UsdTraverseInstanceProxies(prim_flags)) :
                                                     prim.GetAllChildren();
 
-    // Skip the pseudo-root node and only add with real nodes:
+    // Skip the pseudo-root node and only add real nodes:
     if (path != "/")
     {
-        const bool is_leaf = (children.empty());
+        const bool is_leaf = (child_range.empty());
         const bool is_truncated = (depth == max_depth && !is_leaf);
         const bool is_visible = FuserUsdNode::isVisiblePrim(prim);
 
@@ -305,12 +305,20 @@ getNodeDescriptions(const Pxr::UsdPrim&      prim,
 #endif
     }
 
-    for (Pxr::UsdPrim::SiblingRange::iterator it=children.begin(); it != children.end(); ++it)
-    {
-        const Pxr::UsdPrim child(*it);
-        getNodeDescriptions(child, node_description_map, depth, max_depth, debug);
-    }
+    // We need to avoid using the UsdPrim::SiblingRange iterators in the recursion
+    // as loading child prims invalidate the iterator ranges, so we copy the prims
+    // to a local list:
+    std::vector<Pxr::UsdPrim*> children; children.reserve(50);
+    for (Pxr::UsdPrim::SiblingRange::iterator it=child_range.begin(); it != child_range.end(); ++it)
+        children.push_back(new Pxr::UsdPrim(*it));
 
+    // Recurse through the now-local child list:
+    const size_t nChildren = children.size();
+    for (size_t i=0; i < nChildren; ++i)
+    {
+        getNodeDescriptions(*children[i], node_description_map, depth, max_depth, debug);
+        delete children[i];
+    }
 }
 
 
@@ -365,77 +373,86 @@ selectMatchingPath(const std::string&                path,
     as cheaply as possible...
 */
 static void
-findSelectedNodes(const Pxr::UsdPrim&               prim,
+findSelectedNodes(Pxr::UsdPrim                      prim,
                   const Fsr::NodeFilterPatternList& node_filter_patterns,
                   Fsr::NodePathSelections&          selections,
                   bool                              debug=false)
 {
-    auto prim_flags = (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
-    const Pxr::UsdPrimRange range(prim, Pxr::UsdTraverseInstanceProxies(prim_flags));
-    for (Pxr::UsdPrimRange::iterator it=range.begin(); it != range.end(); ++it)
+    // Only consider Prims that are valid after loading:
+    if (!FuserUsdNode::isLoadedAndUseablePrim(prim))
+        return;
+
+    const std::string& path = prim.GetPath().GetString();
+    if (path.empty())
+        return; // just in case...
+
+    //std::cout << "  findSelectedNodes() path='" << path << "' [" << prim.GetTypeName() << "]" << std::endl;
+
+#if 0
+    std::cout << "    '" << prim.GetPath() << "' [" << prim.GetTypeName() << "]";
+    //Pxr::SdfPrimSpecHandle spec = prim.GetPrimDefinition();
+    //if (spec)
+    //    std::cout << ", Kind='" << spec->GetKind() << "'";
+    std::cout << ", IsLoaded=" << prim.IsLoaded();
+    std::cout << ", IsValid=" << prim.IsValid();
+    std::cout << ", IsActive=" << prim.IsActive();
+    std::cout << ", IsDefined=" << prim.IsDefined();
+    std::cout << ", IsAbstract=" << prim.IsAbstract();
+    //std::cout << ", isModel=" << prim.IsModel();
+    //std::cout << ", isCamera=" << prim.IsA<Pxr::UsdGeomCamera>();
+    //std::cout << ", isScope=" << prim.IsA<Pxr::UsdGeomScope>();
+    //std::cout << ", isXform=" << prim.IsA<Pxr::UsdGeomXformable>();
+    std::cout << std::endl;
+#endif
+
+    if (FuserUsdNode::isRenderablePrim(prim))
     {
-        const Pxr::UsdPrim& range_prim = *it;
-        const std::string& path = range_prim.GetPath().GetString();
-        //std::cout << "  findSelectedNodes() path='" << path << "' [" << range_prim.GetTypeName() << "]" << std::endl;
+        //std::cout << "    findSelectedNodes() renderable path='" << path << "'" << std::endl;
+        selectMatchingPath(path, node_filter_patterns, selections.objects);
+    }
+    else if (FuserUsdNode::isShadingPrim(prim))
+    {
+        // UsdShade handling - Shaders are *always* underneath a UsdShadeMaterial so instead
+        // of selecting a whole tree of UsdShadeShader nodes we select the top of the network
+        // by adding the top UsdShadeMaterial, then rely on the node creation logic in
+        // buildUsdNode() to create the network tree underneath:
+        if (prim.IsA<Pxr::UsdShadeMaterial>())
+            selectMatchingPath(path, node_filter_patterns, selections.materials);
 
-        if (path.empty())
-        {
-            // Empty paths shouldn't happen...
-            std::cerr << "fsrUsdIO::findSelectedNodes(): warning, path for prim '" << path;
-            std::cerr << "' is empty!" << std::endl;
-            continue;
-        }
-
-        // Only consider Prims that are valid after loading:
-        if (!FuserUsdNode::isLoadedAndUseablePrim(range_prim))
-            continue;
-
+        return; // skip going down shader tree
+    }
 #if 0
-        std::cout << "    '" << range_prim.GetPath() << "' [" << range_prim.GetTypeName() << "]";
-        //Pxr::SdfPrimSpecHandle spec = range_prim.GetPrimDefinition();
-        //if (spec)
-        //    std::cout << ", Kind='" << spec->GetKind() << "'";
-        std::cout << ", IsLoaded=" << range_prim.IsLoaded();
-        std::cout << ", IsValid=" << range_prim.IsValid();
-        std::cout << ", IsActive=" << range_prim.IsActive();
-        std::cout << ", IsDefined=" << range_prim.IsDefined();
-        std::cout << ", IsAbstract=" << range_prim.IsAbstract();
-        //std::cout << ", isModel=" << range_prim.IsModel();
-        //std::cout << ", isCamera=" << range_prim.IsA<Pxr::UsdGeomCamera>();
-        //std::cout << ", isScope=" << range_prim.IsA<Pxr::UsdGeomScope>();
-        //std::cout << ", isXform=" << range_prim.IsA<Pxr::UsdGeomXformable>();
-        std::cout << std::endl;
+    else if (FuserUsdNode::isLightPrim(prim))
+    {
+        //std::cout << "    findSelectedNodes() light path='" << path << "'" << std::endl;
+        selectMatchingPath(path, node_filter_patterns, selections.lights);
+    }
 #endif
+    else
+    {
+        // Handle non-renderable types too!
+        //std::cout << "      NOT RENDERABLE" << std::endl;
+    }
 
-        if (FuserUsdNode::isRenderablePrim(range_prim))
-        {
-            //std::cout << "    findSelectedNodes() renderable path='" << path << "'" << std::endl;
-            selectMatchingPath(path, node_filter_patterns, selections.objects);
-        }
-        else if (FuserUsdNode::isShadingPrim(range_prim))
-        {
-            // UsdShade handling - Shaders are *always* underneath a UsdShadeMaterial so instead
-            // of selecting a whole tree of UsdShadeShader nodes we select the top of the network
-            // by adding the top UsdShadeMaterial, then rely on the node creation logic in
-            // buildUsdNode() to create the network tree underneath:
-            if (range_prim.IsA<Pxr::UsdShadeMaterial>())
-                selectMatchingPath(path, node_filter_patterns, selections.materials);
 
-            it.PruneChildren(); // skip going down down shader tree
-        }
-#if 0
-        else if (FuserUsdNode::isLightPrim(range_prim))
-        {
-            //std::cout << "    findSelectedNodes() light path='" << path << "'" << std::endl;
-            selectMatchingPath(path, node_filter_patterns, selections.lights);
-        }
-#endif
-        else
-        {
-            // Handle non-renderable types too!
-            //std::cout << "      NOT RENDERABLE" << std::endl;
-        }
+    // We need to avoid using the UsdPrim::SiblingRange iterators in the recursion
+    // as loading child prims invalidate the iterator ranges, so we copy the prims
+    // to a local list:
+    auto prim_flags = (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
+    const Pxr::UsdPrim::SiblingRange child_range = (instancing_enabled) ?
+                                                    prim.GetFilteredChildren(Pxr::UsdTraverseInstanceProxies(prim_flags)) :
+                                                    prim.GetAllChildren();
 
+    std::vector<Pxr::UsdPrim*> children; children.reserve(50);
+    for (Pxr::UsdPrim::SiblingRange::iterator it=child_range.begin(); it != child_range.end(); ++it)
+        children.push_back(new Pxr::UsdPrim(*it));
+
+    // Recurse through the now-local child list:
+    const size_t nChildren = children.size();
+    for (size_t i=0; i < nChildren; ++i)
+    {
+        findSelectedNodes(*children[i], node_filter_patterns, selections, debug);
+        delete children[i];
     }
 
 }
