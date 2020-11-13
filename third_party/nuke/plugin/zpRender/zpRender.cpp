@@ -28,6 +28,7 @@
 
 
 #include "zpRender.h"
+#include "zpSurfaceHandlers.h"
 
 #include <zprender/Bvh.h>
 #include <zprender/ThreadContext.h>
@@ -79,6 +80,147 @@ const DD::Image::Op::Description zpRender::description("zpRender", build);
 //#define APPLY_GLOBAL_OFFSET 1
 
 
+//-------------------------------------------------------------------------------------
+
+AmbientVolumeShader::AmbientVolumeShader() :
+    zprHomogeneousVolume()
+{
+    //
+}
+
+
+//-----------------------------------------------------------------------------
+
+
+/*!
+*/
+/*virtual*/
+void
+AmbientVolumeShader::addVolumeKnobs(DD::Image::Knob_Callback f)
+{
+    Int_knob(f, &inputs.k_preview_max_ray_steps, "preview_max_steps", "max steps");
+        SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
+        ClearFlags(f, Knob::SLIDER);
+        Tooltip(f, "The max number of ray steps to use in preview mode.  The lower the amount the faster "
+                   "the preview but of course the quality also drops.");
+    Int_knob(f, &inputs.k_ray_step_count_max, "max_steps", "full-quality:");
+        SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
+        ClearFlags(f, Knob::SLIDER | Knob::STARTLINE);
+        Tooltip(f, "Limit the total number of ray steps to this.");
+    Newline(f);
+    Int_knob(f, &inputs.k_ray_step_count_min, IRange(5, 100), "min_steps", "min steps");
+        SetFlags(f, Knob::SLIDER);
+        Tooltip(f, "Where volumes are thin (like the start of a spotlight cone,) do at least this number of ray steps.\n"
+                   "Ignored in preview mode.");
+    Double_knob(f, &inputs.k_ray_step, IRange(0.0, 10.0), "step", "step size");
+        SetFlags(f, Knob::LOG_SLIDER);
+        Tooltip(f, "Full-quality step size.  Smaller value yields higher-quality but dramatically slows down the render.\n"
+                   "Ignored in preview mode.");
+    Double_knob(f, &inputs.k_ray_step_min, IRange(0.0, 10.0), "step_min", "min step size");
+        //Clear_knob(f, Knob::SLIDER);
+        Tooltip(f, "Don't go smaller that this step size (stops render times from blowing up.)\n"
+                   "Ignored in preview mode.");
+
+    //--------------------------------------------------------------------------
+    Divider(f);
+    Double_knob(f, &inputs.k_atmospheric_density, IRange(0.0, 5.0), "density", "atmospheric density");
+    SetFlags(f, Knob::LOG_SLIDER);
+        Tooltip(f, "Density per world-scale unit.  In other words, the density of the medium "
+                   "through the thickness of one unit of space (i.e. 1 meter or 1 shreckle.)\n"
+                   "When this increases the influence of the illumination sources on the atmosphere increases "
+                   "(higher density means there's more particles in the air to scatter the light.)\n"
+                   "Higher values may mean the illumination gain must be increased for the light to get "
+                   "through the fog.");
+    Double_knob(f, &inputs.k_density_base, IRange(0.0, 1.0), "density_base", "base density");
+    SetFlags(f, Knob::LOG_SLIDER);
+        Tooltip(f, "The ambient base level density.");
+    Newline(f);
+    Bool_knob(f, &inputs.k_light_absorption, "enable_light_absorption", "atmosphere attenuates light sources");
+        Tooltip(f, "Additional density falloff over the light's reach (near->far).\n"
+                   "This is separate from the falloff of the light itself which is assumed to be due to energy "
+                   "dispersal over distance.\n"
+                   "\n"
+                   "When enabled this additional absorption may cause the light beam to look incorrectly "
+                   "attenuated where it overlaps objects due to object surfaces still being illuminated "
+                   "with the full light's strength. This is by design however since the volume rendering "
+                   "algorithm is not using 'real' volumes and is not integrated with the surface "
+                   "calculations.\n"
+                   "\n"
+                   "True volume rendering support is TBD.\n");
+    Divider(f);
+    Double_knob(f, &inputs.k_volume_illum_factor, IRange(0.01, 5.0), "illum_gain", "illumination factor");
+       Tooltip(f, "Light additional gain.");
+}
+
+
+/*!
+*/
+/*virtual*/
+void
+AmbientVolumeShader::addFalloffKnobs(DD::Image::Knob_Callback f)
+{
+    Bool_knob(f, &inputs.k_falloff_enabled, "falloff_enable", "atmo falloff enable");
+        Tooltip(f, "Enable atmospheric falloff.  This is confined inside the cube area defined on the "
+                   "'bbox' control.\n"
+                   "The X,Y & Z curves define the falloff in each axis respectively.  The default is for "
+                   "the atmosphere in Y to be most dense at the bottom of the cube and least dense at the top.  "
+                   "Changing the slope of the curves changes the rate of the falloff in that direction.");
+    Box3_knob(f, inputs.k_falloff_bbox.array(), "falloff_bbox", "bbox");
+        Tooltip(f, "Defines the XYZ cubic space containing the falloff curves.");
+    LookupCurves_knob(f, &inputs.k_falloff_lut, "falloff_profile", "falloff profile");
+        Tooltip(f, "Slope of a curve changes the rate the falloff in its respective direction.");
+}
+
+
+/*!
+*/
+/*virtual*/
+void
+AmbientVolumeShader::addNoiseKnobs(DD::Image::Knob_Callback f)
+{
+    Bool_knob(f, &inputs.k_noise_enabled, "noise_enable", "atmo noise master enable");
+    Divider(f);
+    for (uint32_t j=0; j < NUM_NOISE_FUNC; ++j)
+    {
+        if (!m_noise_modules[j])
+            continue;
+        VolumeNoise& nmod = *m_noise_modules[j];
+
+        Tab_knob(f, nmod.knob_names[0]);
+
+        Bool_knob(f, &nmod.k_enabled, nmod.knob_names[1], "enable");
+        Enumeration_knob(f, &nmod.k_type, noise_types, nmod.knob_names[2], "noise");
+        Int_knob(f, &nmod.k_octaves, IRange(1, 10), nmod.knob_names[3], "octaves");
+            SetFlags(f, Knob::SLIDER);
+        Double_knob(f, &nmod.k_lacunarity, IRange(1.0, 10.0), nmod.knob_names[4], "lacunarity");
+            ClearFlags(f, Knob::LOG_SLIDER);
+        Double_knob(f, &nmod.k_gain, IRange(-10.0, 10.0), nmod.knob_names[5], "gain");
+            ClearFlags(f, Knob::LOG_SLIDER);
+        Double_knob(f, &nmod.k_mix, IRange(0.0, 1.0), nmod.knob_names[6], "mix");
+            ClearFlags(f, Knob::LOG_SLIDER);
+
+        if (j == 0)
+        {
+            Divider(f, "Master Transform");
+            Axis_knob(f, reinterpret_cast<DD::Image::Matrix4*>(inputs.k_noise_xform.array()), "noise_xform", "transform");
+                SetFlags(f, Knob::NO_HANDLES);
+        }
+        else
+        {
+            Divider(f);
+            XYZ_knob(f, nmod.k_translate.array(), nmod.knob_names[7], "translate");
+                SetFlags(f, Knob::NO_HANDLES);
+            XYZ_knob(f, nmod.k_rotate.array(), nmod.knob_names[8], "rotate");
+                SetFlags(f, Knob::NO_HANDLES);
+            XYZ_knob(f, nmod.k_scale.array(), nmod.knob_names[9], "scale");
+                SetFlags(f, Knob::NO_HANDLES);
+            Float_knob(f, &nmod.k_uniform_scale, nmod.knob_names[10], "scale");
+                SetFlags(f, Knob::NO_HANDLES);
+        }
+    }
+}
+
+
 //----------------------------------------------------------------------------
 
 static DD::Image::Lock my_lock;
@@ -103,8 +245,8 @@ static FsrPointsHandler             fuser_pointprim_handler;    // FUSER_POINTPR
 //----------------------------------------------------------------------------
 // Light Volume Handlers:
 //----------------------------------------------------------------------------
-static ConeHandler      lightcone_handler;  // LIGHTCONE_PRIM
-static SphereHandler  lightsphere_handler;  // LIGHTSPHERE_PRIM
+//static ConeHandler      lightcone_handler;  // LIGHTCONE_PRIM
+//static SphereHandler  lightsphere_handler;  // LIGHTSPHERE_PRIM
 
 
 //----------------------------------------------------------------------------
@@ -234,8 +376,8 @@ zpRender::zpRender(::Node* node) :
     rtx.surface_handler[FUSER_MESHPRIM  ] =  &fuser_meshprim_handler;
     rtx.surface_handler[FUSER_POINTPRIM ] = &fuser_pointprim_handler;
     //
-    rtx.surface_handler[LIGHTSPHERE_PRIM  ] = &lightsphere_handler;
-    rtx.surface_handler[LIGHTCONE_PRIM    ] =   &lightcone_handler;
+    //rtx.surface_handler[LIGHTSPHERE_PRIM  ] = &lightsphere_handler;
+    //rtx.surface_handler[LIGHTCONE_PRIM    ] =   &lightcone_handler;
     /*                 [LIGHTCYLINDER_PRIM] set to null handler in RenderContext ctor */
     /*                 [LIGHTCARD_PRIM    ] set to null handler in RenderContext ctor */
 
@@ -1369,6 +1511,13 @@ zpRender::knobs(DD::Image::Knob_Callback f)
 
     Newline(f);
     Enumeration_knob(f, &rtx.k_output_bbox_mode, RenderContext::output_bbox_modes, "output_bbox_mode", "output bbox");
+        Tooltip(f, "Output 2D bbox clamping mode:\n"
+                   "\n"
+                   "<b>scene</b>: if 'render only' mode is enabled then this is the screen-space projected "
+                   "3D bounding-box of all rendering geometry & volume lights. If 'render only' is off then "
+                   "the projected 3D bounding-box is unioned with the incoming bbox from the bg input.\n"
+                   "\n"
+                   "<b>format</b>: the output bbox is always the format's size,");
     WH_knob(f, &overscanX_, "overscan", "overscan padding (x/y splittable)");
         ClearFlags(f, Knob::STARTLINE | Knob::SLIDER);
         SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
@@ -1712,7 +1861,7 @@ zpRender::_validate(bool for_real)
         }
 
         // Creating the scene also assigns its motion sample and absolute frame number:
-        zpr::Scene* input_scene = new zpr::Scene(shutter_sample, scene_frame_time/*frame*/);
+        zpr::Scene* input_scene = new zpr::Scene(&rtx, shutter_sample, scene_frame_time/*frame*/);
         rtx.input_scenes[j] = input_scene;
 
         // Fill in the scene ref that we will sort:
@@ -2008,10 +2157,62 @@ zpRender::_validate(bool for_real)
 
     }
 
+
+    //============================================================
+    // Setup Lighting Parameters:
+    //============================================================
+    if (k_autolighting_mode == LIGHTING_ENABLE_AUTO)
+    {
+        zpr::Scene* scene0 = rtx.shutter_scenerefs[0].scene;
+        uint32_t nLights  = (uint32_t)scene0->lights.size();
+        uint32_t nEnabledLights = 0;
+        for (uint32_t lt_index=0; lt_index < nLights; ++lt_index)
+        {
+#if DEBUG
+            assert(scene0);
+            assert(scene0->lights[lt_index]);
+            assert(scene0->lights[lt_index]->light());
+#endif
+            DD::Image::LightOp* light = scene0->lights[lt_index]->light();
+            light->validate(for_real);
+            if (!light->node_disabled())
+                ++nEnabledLights;
+        }
+        if (nEnabledLights > 0)
+        {
+            rtx.direct_lighting_enabled      = k_use_direct_lighting;
+            rtx.indirect_lighting_enabled    = k_use_indirect_lighting;
+            rtx.atmospheric_lighting_enabled = k_use_atmospheric_lighting;
+        }
+        else
+        {
+            rtx.direct_lighting_enabled      = false;
+            rtx.indirect_lighting_enabled    = false;
+            rtx.atmospheric_lighting_enabled = false;
+        }
+    }
+    else if (k_autolighting_mode == LIGHTING_ENABLED)
+    {
+        rtx.direct_lighting_enabled      = k_use_direct_lighting;
+        rtx.indirect_lighting_enabled    = k_use_indirect_lighting;
+        rtx.atmospheric_lighting_enabled = k_use_atmospheric_lighting;
+    }
+    else
+    {
+        rtx.direct_lighting_enabled      = false;
+        rtx.indirect_lighting_enabled    = false;
+        rtx.atmospheric_lighting_enabled = false;
+    }
+#ifdef DEBUG_STARTUP
+    std::cout << "  direct_lighting_enabled=" << rtx.direct_lighting_enabled << std::endl;
+    std::cout << "  indirect_lighting_enabled=" << rtx.indirect_lighting_enabled << std::endl;
+    std::cout << "  atmospheric_lighting_enabled=" << rtx.atmospheric_lighting_enabled << std::endl;
+#endif
+
+
     // This call finds the screen bounding-box and validates all the object material Iops.
     // The second half to this is done in _request() which calls doTextureRequests().
-    rtx.validateObjects(rtx.shutter_scenerefs[0].scene,
-                        for_real);
+    rtx.validateShutterScenes(for_real);
 
     // Add other channels we need for z and alpha compositing:
     rtx.material_channels += DD::Image::Mask_Z;        // Always need Z by default from shaders
@@ -2219,6 +2420,12 @@ zpRender::_validate(bool for_real)
             rtx.Far  = cam->Far();
         }
 
+
+        //------------------------------------------------
+        // Atmosphere Shader:
+        //------------------------------------------------
+        k_ambient_volume.validateShader(for_real, &rtx, &outputContext());
+
         //------------------------------------------------
         // Pixel Filter:
         //------------------------------------------------
@@ -2335,60 +2542,6 @@ zpRender::_validate(bool for_real)
         std::cout << "       aov_channels=" << rtx.aov_channels << std::endl;
         std::cout << "     under_channels=" << rtx.under_channels << std::endl;
 #endif
-        
-
-        //============================================================
-        // Setup Volume Render Parameters:
-        //============================================================
-        if (rtx.atmospheric_lighting_enabled)
-            k_ambient_volume.validate(for_real);
-
-
-        //============================================================
-        // Setup Lighting Parameters:
-        //============================================================
-        if (k_autolighting_mode == LIGHTING_ENABLE_AUTO)
-        {
-            zpr::Scene* scene0 = rtx.shutter_scenerefs[0].scene;
-            uint32_t nLights  = (uint32_t)scene0->lights.size();
-            uint32_t nEnabledLights = 0;
-            for (uint32_t lt_index=0; lt_index < nLights; ++lt_index)
-            {
-                DD::Image::LightContext* ltx = scene0->lights[lt_index];
-                assert(ltx); // Shouldn't happen...
-                if (!ltx->light()->node_disabled())
-                    ++nEnabledLights;
-            }
-            if (nEnabledLights > 0)
-            {
-                rtx.direct_lighting_enabled      = k_use_direct_lighting;
-                rtx.indirect_lighting_enabled    = k_use_indirect_lighting;
-                rtx.atmospheric_lighting_enabled = k_use_atmospheric_lighting;
-            }
-            else
-            {
-                rtx.direct_lighting_enabled      = false;
-                rtx.indirect_lighting_enabled    = false;
-                rtx.atmospheric_lighting_enabled = false;
-            }
-        }
-        else if (k_autolighting_mode == LIGHTING_ENABLED)
-        {
-            rtx.direct_lighting_enabled      = k_use_direct_lighting;
-            rtx.indirect_lighting_enabled    = k_use_indirect_lighting;
-            rtx.atmospheric_lighting_enabled = k_use_atmospheric_lighting;
-        }
-        else
-        {
-            rtx.direct_lighting_enabled      = false;
-            rtx.indirect_lighting_enabled    = false;
-            rtx.atmospheric_lighting_enabled = false;
-        }
-#ifdef DEBUG_STARTUP
-        std::cout << "  direct_lighting_enabled=" << rtx.direct_lighting_enabled << std::endl;
-        std::cout << "  indirect_lighting_enabled=" << rtx.indirect_lighting_enabled << std::endl;
-        std::cout << "  atmospheric_lighting_enabled=" << rtx.atmospheric_lighting_enabled << std::endl;
-#endif
 
     } // for_real = true
 
@@ -2474,26 +2627,26 @@ zpRender::_request(int x, int y, int r, int t,
     //    zpRender::_request() forever.
     //
     // *************************************************************************
+    //
     // This replaces scene->request():
+#if 1
+    // Don't filter request by output channel request, this appears
+    // to cause a channel-request loop:
+    rtx.doTextureRequests(rtx.material_channels, count);
+#else
     DD::Image::ChannelSet get_material_channels(rtx.material_channels);
     get_material_channels &= output_channels;
     rtx.doTextureRequests(get_material_channels, count);
+#endif
+
 
     //==============================================================
-    // Update the map of active TextureSamplers:
+    // Add any new textures to the map of active TextureSamplers:
     // TODO: I'm not sure exactly why this needs to be in request,
     //  but when request is repeatedly called we don't want to
-    //  destroy the map repeatedly
-    //==============================================================
-
-    rtx.requestTextureSamplers();
-
-
-    // This should be a combined mask from all lights in the scene...:
-    DD::Image::ChannelSet light_channels(DD::Image::Mask_RGB);
-    light_channels += DD::Image::Mask_Alpha;    // always need transparency - unless we have a switch...
-
-    doLightRequests(light_channels, count);
+    //  destroy the map repeatedly.
+    //
+    rtx.updateTextureSamplerMap();
 }
 
 
@@ -2562,9 +2715,30 @@ zpRender::getDeepRequests(DD::Image::Box                       bbox,
 #endif
 #endif
 
-    doLightRequests(light_channels, count);
-
     reqData.push_back(DD::Image::RequestData(DD::Image::Iop::input(0), bbox, request_channels, count));
+
+
+    // *************************************************************************
+    //                      **** IMPORTANT ***
+    //    If rtx.doTextureRequests() is not called on *every* zpRender::_request()
+    //    then Nuke will go into an infinite loop and repeatedly call 
+    //    zpRender::_request() forever.
+    //
+    // *************************************************************************
+    //
+    // This replaces scene->request():
+    DD::Image::ChannelSet get_material_channels(rtx.material_channels);
+    get_material_channels &= output_channels;
+    rtx.doTextureRequests(get_material_channels, count);
+
+
+    //==============================================================
+    // Add any new textures to the map of active TextureSamplers:
+    // TODO: I'm not sure exactly why this needs to be in request,
+    //  but when request is repeatedly called we don't want to
+    //  destroy the map repeatedly.
+    //
+    rtx.updateTextureSamplerMap();
 }
 
 /*! DeepOp deep tile engine.
@@ -2730,6 +2904,7 @@ zpRender::generate_render_primitives()
         m_sampler_set->m_refraction_side_count = getRaySampleSideCount(m_ray_refraction_samples);
 
         m_sampler_set->initialize(randomZ, rtx.k_spatial_jitter_threshold);
+        //std::cout << "  m_pixel_sample_mode=" << m_pixel_sample_mode << std::endl;
     }
 
 
@@ -2779,50 +2954,40 @@ zpRender::generate_render_primitives()
         }
 
         // Build ray camera:
-        int proj_mode = rtx.k_projection_mode;
-        if (proj_mode == PROJECTION_RENDER_CAMERA)
-        {
-            // Map camera projection modes to render projection modes.
-            // Unsupported modes default to perspective.
-            switch (sref.camera->projection_mode())
-            {
-                default:
-                case DD::Image::CameraOp::LENS_PERSPECTIVE:  proj_mode = PROJECTION_PERSPECTIVE; break;
-                case DD::Image::CameraOp::LENS_ORTHOGRAPHIC: proj_mode = PROJECTION_PERSPECTIVE; break;//PROJECTION_ORTHOGRAPHIC
-                case DD::Image::CameraOp::LENS_UV:           proj_mode = PROJECTION_PERSPECTIVE; break;//PROJECTION_UV
-                case DD::Image::CameraOp::LENS_SPHERICAL:    proj_mode = PROJECTION_SPHERICAL;   break;
-                case DD::Image::CameraOp::LENS_USER_CAMERA:  proj_mode = PROJECTION_PERSPECTIVE; break;
-            }
-        }
-
+        // RenderContext will allocate a RayCamera subclass based on type:
+        // TODO: change this to sending a camera type string vs. an enumeration!
+        const RenderContext::CameraProjectionType proj_mode = getRayCameraType(rtx.k_projection_mode);
         switch (proj_mode)
         {
-            case PROJECTION_PERSPECTIVE:
-                rtx.ray_cameras[i] = new zpr::RayPerspectiveCamera();
+            default:
+            case RenderContext::CAMERA_PROJECTION_PERSPECTIVE:
+                rtx.ray_cameras[i] = rtx.buildRayCamera(proj_mode);
                 if (make_hero_cameras)
-                    rtx.hero_ray_cameras[i] = new zpr::RayPerspectiveCamera();
+                    rtx.hero_ray_cameras[i] = rtx.buildRayCamera(proj_mode);
                 break;
 
-            //case PROJECTION_ORTHOGRAPHIC:
-            //    rtx.ray_cameras[i] = new zpr::RayCamera();
-            //    if (make_hero_cameras)
-            //        rtx.hero_ray_cameras[i] = new zpr::RayOrthoCamera();
-            //    break;
-
-            //case PROJECTION_UV:
-            //    rtx.ray_cameras[i] = new zpr::RayUVCamera();
-            //    if (make_hero_cameras)
-            //        rtx.hero_ray_cameras[i] = new zpr::RayUVCamera();
-            //    break;
-
-            case PROJECTION_SPHERICAL:
-                rtx.ray_cameras[i] = new zpr::RaySphericalCamera();
+            case RenderContext::CAMERA_PROJECTION_ORTHOGRAPHIC:
+                rtx.ray_cameras[i] = rtx.buildRayCamera(proj_mode);
                 if (make_hero_cameras)
-                    rtx.hero_ray_cameras[i] = new zpr::RaySphericalCamera();
+                    rtx.hero_ray_cameras[i] = rtx.buildRayCamera(proj_mode);
                 break;
 
-            case PROJECTION_CYLINDRICAL:
-                rtx.ray_cameras[i] = new zpr::RayCylindricalCamera();
+            case RenderContext::CAMERA_PROJECTION_UV:
+                rtx.ray_cameras[i] = rtx.buildRayCamera(proj_mode);
+                if (make_hero_cameras)
+                    rtx.hero_ray_cameras[i] = rtx.ray_cameras[i];
+                break;
+
+            case RenderContext::CAMERA_PROJECTION_SPHERICAL:
+                rtx.ray_cameras[i] = rtx.buildRayCamera(proj_mode);
+                if (make_hero_cameras)
+                    rtx.hero_ray_cameras[i] = rtx.ray_cameras[i];
+                break;
+
+            case RenderContext::CAMERA_PROJECTION_CYLINDRICAL:
+                rtx.ray_cameras[i] = rtx.buildRayCamera(proj_mode);
+                if (make_hero_cameras)
+                    rtx.hero_ray_cameras[i] = rtx.ray_cameras[i];
                 break;
 
         }
@@ -2933,6 +3098,17 @@ zpRender::generate_render_primitives()
                 return false;
             }
 
+            // The MaterialContext for this object was configured in _validate(),
+            // if it's not enabled then the object can be skipped:
+#if DEBUG
+            assert(obj_index < (int32_t)rtx.object_material_ctxs.size());
+#endif
+            // TODO: use the MaterialContext info to construct the BVH bbox
+            // as it's already been done!
+            MaterialContext& material_ctx = rtx.object_material_ctxs[obj_index];
+            if (!material_ctx.enabled)
+                continue; // not renderable
+
             // Build a GeoInfoContext:
             GeoInfoContext* gptx = new GeoInfoContext();
             gptx->motion_objects.reserve(nShutterSamples);
@@ -3012,7 +3188,7 @@ zpRender::generate_render_primitives()
 
                     //std::cout << "    checking motion object 0x" << current_info->out_id() << " ptr=" << current_info << std::endl;
                     // Find matching object id in motionblur scene object map:
-                    const int next_obj_index = next_scene->findObject(current_info->out_id().value());
+                    const int next_obj_index = next_scene->findMatchingObject(*current_info);
                     if (next_obj_index < 0)
                         break; // not found
                     //std::cout << "      match in scene " << next_scene << std::endl;
@@ -3310,9 +3486,22 @@ zpRender::generate_render_primitives()
     }
 
 
-
     //if (!rtx.lights_bvh_initialized)
     {
+#if 1
+        //==============================================================
+        // Build Light Shaders and Light Volumes
+        // This only happens if atmospheric_lighting_enabled or
+        // there's created RayMaterials that may access LightMaterials:
+        //==============================================================
+
+        rtx.destroyLightBVHs(true/*force*/);
+
+        rtx.buildLightVolumeBvh();
+
+        rtx.lights_bvh_initialized = true;
+
+#else
         // These lists are passed to the BVHs to build them:
         std::vector<zpr::ObjectContextRef> ltvref_list;
         ltvref_list.reserve(nLights);
@@ -3430,13 +3619,8 @@ zpRender::generate_render_primitives()
         }
 
         rtx.lights_bvh_initialized = true;
+#endif
     }
-
-    //==============================================================
-    // Build Light Shaders:
-    //==============================================================
-
-    rtx.buildLightShaders();
 
 
     // Ok we're done:

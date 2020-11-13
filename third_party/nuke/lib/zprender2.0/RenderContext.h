@@ -71,7 +71,6 @@ enum AOVType
     AOV_dPWdx,              //!< PW x-derivative
     AOV_dPWdy,              //!< PW y-derivative
     AOV_PL,                 //!< Shading point in local-space
-    AOV_PWg,                //!< Geometric surface point (no displacement)
     //
     AOV_st,                 //!< Primitive's barycentric coordinates at R intersection
     AOV_dstdx,              //!< Primitive's barycentric coordinates at Rx intersection
@@ -171,7 +170,7 @@ class ZPR_EXPORT AOVLayer
 
 /*! 
 */
-struct AOVBuiltIn
+struct ZPR_EXPORT AOVBuiltIn
 {
     const char*       tokens;
     AOVLayer::Handler handler;
@@ -187,11 +186,13 @@ struct AOVBuiltIn
 
 class RenderContext;
 class ObjectContext;
+class SurfaceContext;
 class GeoInfoContext;
 class LightVolumeContext;
 class SurfaceHandler;
 class ThreadContext;
 class RayMaterial;
+class LightMaterial;
 class Texture2dSampler;
 class InputBinding;
 class Scene;
@@ -203,7 +204,7 @@ class Scene;
 
 /*! Works on gcc 4.1.2+.
 */
-class AtomicCount32
+class ZPR_EXPORT AtomicCount32
 {
     int32_t val;
   public:
@@ -224,7 +225,7 @@ class AtomicCount32
 
 /*! TODO: deprecate? Don't think we need this whole thing anymore.
 */
-struct ShutterSceneRef
+struct ZPR_EXPORT ShutterSceneRef
 {
     int op_input_index;                 //!< Op input number (split input number)
     //
@@ -248,6 +249,17 @@ struct ShutterSceneRef
 //-------------------------------------------------------------------------
 
 
+enum SourceObjectType
+{
+    UNKNOWN_OBJECT=-1,
+    //
+    SURFACE_OBJECT=0,           //!< Hard surface, open or closed
+    VOLUME_OBJECT,              //!< An atmospheric volume
+    LIGHT_OBJECT,               //!< Light source
+    SURFACE_LIGHT_OBJECT        //!< An emissive surface acting as a light source
+};
+
+
 /*! Supported source primitive types.
     This list is used to index an array of SurfaceHandler structures
     or for fast comparison since testing just the Class() pointer fails
@@ -261,25 +273,27 @@ enum SourcePrimitiveType
     FN_POLYSOUP_PRIM=0,         //!< DD::Image::Triangle or DD::Image::Polygon
     FN_MESH_PRIM,               //!< DD::Image::Mesh
     FN_POLYMESH_PRIM,           //!< DD::Image::PolyMesh
-    FN_POINT_PRIM,              //!< DD::Image::Point
+    FN_POINT_PRIM,              //!< DD::Image::Point(s)
     FN_PARTICLE_SPRITE_PRIM,    //!< DD::Image::ParticleSprite
     //
     FUSER_NODEPRIM,             //!< Fuser::NodePrim
     FUSER_MESHPRIM,             //!< Fuser::MeshPrim
-    FUSER_POINTPRIM,            //!< Fuser::PointPrim (TODO: NYI)
+    FUSER_POINTPRIM,            //!< Fuser::PointPrim (TODO)
     //
     // Light primitives:
     LIGHTSPHERE_PRIM,           //!< PointLight  primitive (zpr::SphereVolume)
     LIGHTCONE_PRIM,             //!< SpotLight   primitive (zpr::ConeVolume)
     LIGHTCYLINDER_PRIM,         //!< DirectLight primitive (zpr::CylinderVolume) (TODO: NYI)
-    LIGHTCARD_PRIM,             //!< AreaLight   primitive (zpr::Card) (TODO: NYI)
+    LIGHTCARD_PRIM,             //!< AreaLight   primitive (zpr::ConeVolume trimmed)
     //
     LAST_SOURCE_PRIM_TYPE
 };
 
+
 //-------------------------------------------------------------------------
 
-//! Scene part masks.
+
+//! Scene part change masks.
 enum
 {
     GeometryFlag    = 0x00000001,
@@ -289,6 +303,9 @@ enum
     //
     AllPartsFlag  = GeometryFlag | MaterialsFlag | LightsFlag | CameraFlag
 };
+
+
+//-------------------------------------------------------------------------
 
 
 /*! Surface dicing status.
@@ -310,7 +327,7 @@ typedef std::map<DD::Image::Iop*, Texture2dSampler*> Texture2dSamplerMap;
 
 /*!
 */
-struct TextureSamplerContext
+struct ZPR_EXPORT TextureSamplerContext
 {
     uint32_t          index;    //!< Index in global texture list
     Texture2dSampler* sampler;  //!<
@@ -320,44 +337,87 @@ struct TextureSamplerContext
 
 
 
-/*! There's one of these for each object in the primary Scene, even if
-    it doesn't render.
+/*! There's one of these created for each GeoInfo object and Light in
+    the primary Scene, even if the GeoInfo doesn't render or the Light
+    is turned off. This is to allow the index of the MaterialContext
+    to match the index of the GeoInfo or Light in the Scene.
+
+    These are created in RenderContext::validateObjects() which is called
+    from zpRender::_validate().
+
+    They're stored in the RenderContext::object_materials and light_materials
+    lists which are static for the entire render session so that any texture
+    bindings remain stable and thread safe through the entirety of the render.
 */
-struct ZPR_EXPORT ObjectMaterialRef
+struct ZPR_EXPORT MaterialContext
 {
-    RayMaterial*          raymaterial;              //!<
+    int32_t               object_type;              //!< Type of object material is bound to
+    int32_t               scene_index;              //!< Index of source GeoInfo or Light in Scene
+    bool                  enabled;                  //!< Renderable
     //
-    DD::Image::Iop*       material;                 //!<
+    RayMaterial*          raymaterial;              //!< Object or light material containing shaders
+    //
+    DD::Image::Iop*       material;                 //!< Legacy surface shader to use if RayMaterial not available
     DD::Image::Iop*       displacement_material;    //!< Legacy displacement shader to use if RayMaterial not available
+    SurfaceContext*       surface_ctx;              //!< Info of GeoInfo or LightOp if using legacy shaders
     //
-    DD::Image::Hash       hash;                     //!< 
+    DD::Image::Hash       hash;                     //!< Global hash of object material
     DD::Image::ChannelSet texture_channels;         //!< All the channels from all texture samplers
     DD::Image::ChannelSet output_channels;          //!< All the channels this material outputs
-    float                 displacement_max;         //!< Max displacement bounds
+    DD::Image::ChannelSet shadow_channels;          //!< TODO: do we really need this anymore...? Can't we stop using shadow renderers?
+    //
+    bool                  displacement_enabled;             //!< Is displacement enabled?
+    int                   displacement_subdivision_level;   //!< What recursion level to subdivide to
+    Fsr::Vec3f            displacement_bounds;              //!< Displacement bounds scaled by local-to-world matrix
 
     std::vector<InputBinding*> texture_bindings;    //!< Set of all texture bindings in Material
 
     //!
-    ObjectMaterialRef() :
+    MaterialContext() :
+        object_type(-1),
+        scene_index(-1),
+        enabled(false),
+        //
         raymaterial(NULL),
+        //
         material(NULL),
-        displacement_max(0.0f)
+        displacement_material(NULL),
+        surface_ctx(NULL),
+        //
+        displacement_enabled(false),
+        displacement_subdivision_level(0),
+        displacement_bounds(0.0f, 0.0f, 0.0f)
     {
         //
     }
 
-    //!
-    ObjectMaterialRef(const ObjectMaterialRef& b) :
+
+    //! Copy ctor.
+    MaterialContext(const MaterialContext& b) :
+        object_type(b.object_type),
+        scene_index(b.scene_index),
+        enabled(b.enabled),
+        //
         raymaterial(b.raymaterial),
+        //
         material(b.material),
+        displacement_material(b.displacement_material),
+        surface_ctx(b.surface_ctx),
+        //
         hash(b.hash),
         texture_channels(b.texture_channels),
         output_channels(b.output_channels),
-        displacement_max(b.displacement_max),
+        shadow_channels(b.shadow_channels),
+        //
+        displacement_enabled(b.displacement_enabled),
+        displacement_subdivision_level(b.displacement_subdivision_level),
+        displacement_bounds(b.displacement_bounds),
+        //
         texture_bindings(b.texture_bindings)
     {
         //
     }
+
 };
 
 
@@ -365,29 +425,23 @@ struct ZPR_EXPORT ObjectMaterialRef
 //-------------------------------------------------------------------------
 
 
-/*! Shaders are assigned from filled-in ObjectMaterialRefs.
+/*! Shaders are assigned from filled-in MaterialContexts created
+    in RenderContext::validateObjects() which is called from
+    zpRender::_validate().
+
 */
 class ZPR_EXPORT SurfaceContext
 {
   public:
-    SurfaceHandler*     handler;                        //!< Source primitive converter
-    ObjectContext*      parent_object_ctx;              //!< ObjectContext
-    int32_t             status;                         //!< Surface state indicator (unexpanded, etc)
+    SurfaceHandler*  handler;               //!< Source primitive converter (may be NULL)
+    ObjectContext*   parent_object_ctx;     //!< ObjectContext
+    int32_t          status;                //!< Surface state indicator (unexpanded, etc)
     //
-    int32_t             obj_index;                      //!< Copied from parent ObjectSample index
-    int32_t             prim_index;                     //!< Primitive index in GeoInfo if not polysoup or light
-    Fsr::Uint32List     polysoup_prims;                 //!< List of tris/polys prim indices in GeoInfo
+    int32_t          obj_index;             //!< Copied from parent ObjectSample index
+    int32_t          prim_index;            //!< Primitive index in GeoInfo if not polysoup or light
+    Fsr::Uint32List  polysoup_prims;        //!< List of tris/polys prim indices in GeoInfo
 
-    // Ray shading:
-    RayMaterial*        raymaterial;                    //!< RayMaterial to call shaders on
-    //
-    bool                displacement_enabled;           //!< Is displacement enabled?
-    int                 displacement_subdivision_level; //!< What recursion level to subdivide to
-    Fsr::Vec3f          displacement_bounds;            //!< Displacement bounds scaled by local-to-world matrix
-
-    // Legacy shading:
-    DD::Image::Iop*     material;                       //!< Legacy shader to use if RayMaterial not available
-    DD::Image::Iop*     displacement_material;          //!< Legacy displacement shader to use if RayMaterial not available
+    MaterialContext* material_ctx;          //!< Reference back to the object MaterialContext
 
 
   public:
@@ -401,14 +455,7 @@ class ZPR_EXPORT SurfaceContext
         obj_index(-1),
         prim_index(-1),
         //
-        raymaterial(NULL),
-        //
-        displacement_enabled(false),
-        displacement_subdivision_level(0),
-        displacement_bounds(0.0f, 0.0f, 0.0f),
-        //
-        material(NULL),
-        displacement_material(NULL)
+        material_ctx(NULL)
     {
         //
     }
@@ -447,7 +494,6 @@ class ZPR_EXPORT ObjectContext
     {
         zpr::Scene* scene;      //!< Scene containing this object.
         uint32_t    index;      //!< Object index in Scene lists (GeoInfo index or LightContext index)
-
 
         //
         ObjectSample() : scene(NULL), index(0) {}
@@ -596,7 +642,10 @@ class ZPR_EXPORT GeoInfoContext : public ObjectContext
 class ZPR_EXPORT LightVolumeContext : public ObjectContext
 {
   public:
+    zpr::LightMaterial* light_material;                 //!<
+
     /*! Motion sample for a LightVolume object.
+        Deprecate
     */
     struct Sample
     {
@@ -613,14 +662,13 @@ class ZPR_EXPORT LightVolumeContext : public ObjectContext
 
   public:
     //!
-    LightVolumeContext() : ObjectContext() {}
-    //!
-    LightVolumeContext(zpr::Scene* scene,
-                       uint32_t    lt_index) :
-        ObjectContext(scene, lt_index)
+    LightVolumeContext(zpr::LightMaterial* material) :
+        ObjectContext(),
+        light_material(material)
     {
         //
     }
+
 
     /*virtual*/ LightVolumeContext* asLightVolume() { return this; }
 
@@ -630,6 +678,65 @@ class ZPR_EXPORT LightVolumeContext : public ObjectContext
     Sample&       addLightVolumeSample(zpr::Scene* scene,
                                        uint32_t    lt_index);
 
+};
+
+
+/*! A context structure to reference environmental and transform
+    information for the Light during rendering.
+
+    This subclass contains a pointer to the ThreadContext so that
+    LightShaders can work in the legacy lighting system, as thread-safe
+    DD::Image::LightContexts are stored in the ThreadContext, one per
+    LightOp.
+*/
+class ZPR_EXPORT RayLightContext : public DD::Image::LightContext
+{
+  private:
+    uint64_t magic_token;   //!< Token that identifies this as a zpr::RayLightContext
+
+
+  protected:
+    bool m_enabled;
+
+
+  public:
+    ThreadContext*      ttx;            //!< Pointer back to ThreadContext (can get to RenderContext from it)
+    int32_t             ltindex;        //!< Light index (to reference LightOps in multiple Scenes)
+    zpr::LightMaterial* light_material; //!<
+
+
+  public:
+    //! Also copies LightContext contents.
+    RayLightContext(ThreadContext*           _ttx,
+                    int32_t                  _ltindex,
+                    zpr::LightMaterial*      _light_material,
+                    DD::Image::LightContext* _ltx);
+
+    //! Copy constructor
+    RayLightContext(const RayLightContext* b);
+
+
+    //! Return non-null if the magic token value is present.
+    static inline zpr::RayLightContext* isRayLightContext(DD::Image::LightContext* ltx)
+    {
+        const uint64_t* magic_token = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(ltx) + sizeof(DD::Image::LightContext));
+        return (*magic_token == ZPR_MAGIC_TOKEN) ? static_cast<zpr::RayLightContext*>(ltx) : NULL;
+    }
+    static inline zpr::RayLightContext* isRayLightContext(const DD::Image::LightContext* ltx)
+    {
+        return isRayLightContext(const_cast<DD::Image::LightContext*>(ltx));
+    }
+
+
+    //! Must implement.
+    /*virtual*/ LightContext* clone() { return new RayLightContext(this); }
+
+
+    //!
+    bool enabled() const { return m_enabled; }
+
+    //! Get the currently active RayShaderContext from the ThreadContext.
+    RayShaderContext& getShaderContext() const;
 };
 
 
@@ -704,7 +811,7 @@ struct ZPR_EXPORT DWAStereoViews
 
 /*! Context structure passed as target data to Fuser execute methods.
 */
-struct GenerateRenderPrimsContext
+struct ZPR_EXPORT GenerateRenderPrimsContext
 {
     static const char* name; // "GenerateRenderPrims"
 
@@ -732,7 +839,7 @@ class ZPR_EXPORT RenderContext
 {
   public:
     // Camera projection types:
-    enum
+    enum CameraProjectionType
     {
         CAMERA_PROJECTION_PERSPECTIVE,
         CAMERA_PROJECTION_ORTHOGRAPHIC,
@@ -941,15 +1048,19 @@ class ZPR_EXPORT RenderContext
     std::vector<GeoInfoContext*>     object_context;
     std::vector<LightVolumeContext*> light_context;
 
-    //! Per-object material references
-    std::vector<ObjectMaterialRef>     object_materials;    //!< Per-object material references
+    /*! List of material references, one per GeoInfo or LightOp in Scene.
+        The active list of materials may be smaller.
+    */
+    std::vector<MaterialContext>    object_material_ctxs;   //!< Per-object MaterialContext references
+    std::vector<MaterialContext>    light_material_ctxs;    //!< Per-light MaterialContext references
     //std::vector<TextureSamplerContext> texture_samplers;    //!< Flattened list of all textures for ColorMapKnob 
 
-    std::vector<RayMaterial*>          ray_materials;       //!< List of allocated RayMaterials
-    Texture2dSamplerMap                texture_sampler_map; //!< Texture ID to texture sampler index map
+    std::vector<RayMaterial*>        active_ray_materials;  //!< List of all allocated RayMaterials (surface, light, etc)
+
+    Texture2dSamplerMap              texture_sampler_map;   //!< Texture ID to texture sampler index map
     //
-    //TextureSampleIndexMap              texture_sampler_map; //!< Iop*->index map into texture_samplers map
-    TextureBBoxMap                     texture_bbox_map;    //!< Iop*->Box2i map for texture request()
+    //TextureSampleIndexMap            texture_sampler_map;   //!< Iop*->index map into texture_samplers map
+    TextureBBoxMap                   texture_bbox_map;      //!< Iop*->Box2i map for texture request()
 
     //! ID -> object/light index map
     std::map<uint64_t, uint32_t>     object_map;
@@ -973,8 +1084,8 @@ class ZPR_EXPORT RenderContext
     bool              indirect_lighting_enabled;    //!< Enable indirect scene lighting (bounce)
     bool              atmospheric_lighting_enabled; //!< Enable atmospherics lighting
 
-    LightShaderList   master_light_shaders;         //!< Ray-tracing light shaders, for each light in the Scene
-    LightShaderLists  per_object_light_shaders;     //!< Per-object list of light shaders
+    LightMaterialList  master_light_materials;      //!< Active ray-tracing light materials
+    LightMaterialLists per_object_light_materials;  //!< Per-object list of light materials
 
 
 
@@ -990,6 +1101,12 @@ class ZPR_EXPORT RenderContext
     //!
     ~RenderContext();
 
+    /*! Checks if parent Op has abort flag set.
+        Use this in loops to check if the user has changed the GUI and
+        the render should be stopped.
+    */
+    bool aborted() const { return (m_parent->aborted()); }
+
 
     //========================================================
     //! Delete context allocations.
@@ -998,6 +1115,7 @@ class ZPR_EXPORT RenderContext
     void destroyLightBVHs(bool force=false);
     void destroyTextureSamplers();
     void destroyRayMaterials();
+
 
     //========================================================
     // Shutter samples:
@@ -1021,17 +1139,26 @@ class ZPR_EXPORT RenderContext
 
     //========================================================
 
+    //! Allocated and return a RayCamera subclass based on requested type. Calling method takes ownership.
+    static RayCamera* buildRayCamera(CameraProjectionType camera_type);
+
 
     //!
-    void validateObjects(zpr::Scene* scene,
-                         bool        for_real=true);
+    void validateShutterScenes(bool for_real=true);
 
     //! Return false if object disabled.
-    bool validateObject(int32_t                    obj,
-                        DD::Image::Hash&           obj_geometry_hash,
-                        DD::Image::Box3&           obj_bbox,
-                        DD::Image::Box&            obj_screen_bbox,
-                        RayMaterial*&              ray_material);
+    bool buildObjectMaterial(int32_t          obj,
+                             DD::Image::Hash& obj_geometry_hash,
+                             DD::Image::Box3& obj_bbox,
+                             DD::Image::Box&  obj_screen_bbox,
+                             RayMaterial*&    ray_material);
+
+    //! Return false if light disabled.
+    bool buildLightMaterial(int32_t                ltindex,
+                            const Fsr::DoubleList& motion_times,
+                            const Fsr::Mat4dList&  motion_xforms,
+                            DD::Image::Hash&       lt_hash,
+                            LightMaterial*&        lt_created_material);
 
     //!
     void doTextureRequests(const DD::Image::ChannelSet& request_channels,
@@ -1044,9 +1171,14 @@ class ZPR_EXPORT RenderContext
                        DD::Image::Iop*&             obj_material,
                        DD::Image::Box&              obj_material_bbox);
 
+    //! Return false if light disabled.
+    bool requestLight(int32_t                      ltindex,
+                      const DD::Image::ChannelSet& request_channels,
+                      int                          request_count);
+
 
     //! Update the map of all InputBinding->TextureSamplers.
-    void requestTextureSamplers();
+    void updateTextureSamplerMap();
 
 
     //========================================================
@@ -1078,24 +1210,22 @@ class ZPR_EXPORT RenderContext
                                                   Fsr::Box3d&               bbox) const;
 
     //!
-    void buildLightShaders();
-
-    //!
-    void updateLightingScene(const zpr::Scene* ref_scene,
-                             zpr::Scene*       lighting_scene) const;
+    void buildLightVolumeBvh();
 
     //!
     void updateLightingScenes(const zpr::Scene* ref_scene,
                               ThreadContext&    ttx) const;
 
     //! Interpolate LightContext vectors to a shutter time.
-    void updateLightingSceneVectorsTo(uint32_t    shutter_step,
-                                      float       shutter_step_t,
-                                      zpr::Scene* light_scene) const;
+    void updateLightingSceneVectorsTo(const Fsr::RayContext& cameraRtx,
+                                      uint32_t               shutter_step,
+                                      float                  shutter_step_t,
+                                      ThreadContext&         ttx) const;
 
     //========================================================
     // RayShaderContext routines:
 
+#if 0
     //! Start a shader context list owned by thread_index and returning a reference to the first one.
     RayShaderContext& startShaderContext(uint32_t thread_index);
     //! Add a shader context to the end of the list, copying the current context, and returning a reference to it.
@@ -1109,6 +1239,7 @@ class ZPR_EXPORT RenderContext
                                         const Fsr::RayDifferentials*     Rdif=NULL);
     //! Remove a RayShaderContext from the end of the list.
     int               popShaderContext(uint32_t thread_index);
+#endif
 
 
   private:

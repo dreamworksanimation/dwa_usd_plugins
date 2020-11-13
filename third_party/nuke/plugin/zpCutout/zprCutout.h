@@ -27,11 +27,10 @@
 /// @author Jonathan Egstad
 
 
-#ifndef zprModify_h
-#define zprModify_h
+#ifndef zprCutout_h
+#define zprCutout_h
 
 #include <zprender/RayShader.h>
-#include <zprender/RenderContext.h> // for GeoInfoContext
 
 //#define TRY_CUTOUT_MAP 1
 
@@ -47,6 +46,9 @@ class zprCutout : public RayShader
     enum MaterialOpBindings
     {
         BG0,
+#ifdef TRY_CUTOUT_MAP
+        MAP1,
+#endif
         //
         NUM_INPUTS
     };
@@ -80,8 +82,9 @@ class zprCutout : public RayShader
     /*virtual*/ void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
 #endif
     /*virtual*/ InputBinding* getInputBinding(uint32_t input);
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
+    /*virtual*/ void validateShader(bool                            for_real,
+                                    const RenderContext*            rtx,
+                                    const DD::Image::OutputContext* op_ctx);
     /*virtual*/ void evaluateSurface(RayShaderContext& stx,
                                      Fsr::Pixel&       out);
 

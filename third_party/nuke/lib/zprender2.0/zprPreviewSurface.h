@@ -40,21 +40,27 @@ namespace zpr {
 */
 class ZPR_EXPORT zprPreviewSurface : public RayShader
 {
+    struct InputParams
+    {
+        Fsr::Vec3f k_diffuseColor;          //!< (0.18, 0.18, 0.18) When using metallic workflow this is interpreted as albedo.
+        Fsr::Vec3f k_emissiveColor;         //!< (0.0, 0.0, 0.0)  Emissive component. 
+        int        k_useSpecularWorkflow;   //!< 0 
+        Fsr::Vec3f k_specularColor;         //!< (0.0, 0.0, 0.0)
+        float      k_metallic;              //!< 0.0
+        float      k_roughness;             //!< 0.5   Roughness for the specular lobe.
+        float      k_clearcoat;             //!< 0.0   Second specular lobe amount. The color is white.
+        float      k_clearcoatRoughness;    //!< 0.01  Roughness for the second specular lobe.
+        float      k_opacity;               //!< 1.0   When opacity is 1.0 then the gprim is fully opaque, if it is smaller than 1.0 then the prim is translucent, when it is 0 the gprim is transparent.
+        float      k_opacityThreshold;      //!< 0.0   The opacityThreshold input is useful for creating geometric cut-outs based on the opacity input.
+        float      k_ior;                   //!< 1.5   Index of Refraction to be used for translucent objects.
+        Fsr::Vec3f k_normal;                //!< (0.0, 0.0, 1.0)  Expects normal in tangent space [(-1,-1,-1), (1,1,1)]
+        float      k_displacement;          //!< 0.0   Displacement in the direction of the normal.
+        float      k_occlusion;             //!< 1.0 
+    };
+
+
   public:
-    Fsr::Vec3f k_diffuseColor;          //!< (0.18, 0.18, 0.18) When using metallic workflow this is interpreted as albedo.
-    Fsr::Vec3f k_emissiveColor;         //!< (0.0, 0.0, 0.0)  Emissive component. 
-    int        k_useSpecularWorkflow;   //!< 0 
-    Fsr::Vec3f k_specularColor;         //!< (0.0, 0.0, 0.0)
-    float      k_metallic;              //!< 0.0
-    float      k_roughness;             //!< 0.5   Roughness for the specular lobe.
-    float      k_clearcoat;             //!< 0.0   Second specular lobe amount. The color is white.
-    float      k_clearcoatRoughness;    //!< 0.01  Roughness for the second specular lobe.
-    float      k_opacity;               //!< 1.0   When opacity is 1.0 then the gprim is fully opaque, if it is smaller than 1.0 then the prim is translucent, when it is 0 the gprim is transparent.
-    float      k_opacityThreshold;      //!< 0.0   The opacityThreshold input is useful for creating geometric cut-outs based on the opacity input.
-    float      k_ior;                   //!< 1.5   Index of Refraction to be used for translucent objects.
-    Fsr::Vec3f k_normal;                //!< (0.0, 0.0, 1.0)  Expects normal in tangent space [(-1,-1,-1), (1,1,1)]
-    float      k_displacement;          //!< 0.0   Displacement in the direction of the normal.
-    float      k_occlusion;             //!< 1.0 
+    InputParams inputs;
 
     bool m_diffuse_enabled;
     bool m_specular_enabled;
@@ -72,15 +78,17 @@ class ZPR_EXPORT zprPreviewSurface : public RayShader
 
     //!
     zprPreviewSurface();
-    ~zprPreviewSurface();
+    zprPreviewSurface(const InputParams& input_params);
 
-    //!
-    void setFilename(const char* path,
-                     int         version);
+    //! Must have a virtual destructor to subclass!
+    ~zprPreviewSurface() {}
 
 
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
+    /*virtual*/ void updateUniformLocals(double  frame,
+                                         int32_t view=-1);
+    /*virtual*/ void validateShader(bool                            for_real,
+                                    const RenderContext*            rtx,
+                                    const DD::Image::OutputContext* op_ctx=NULL);
     /*virtual*/ void evaluateSurface(RayShaderContext& stx,
                                      Fsr::Pixel&       out);
 

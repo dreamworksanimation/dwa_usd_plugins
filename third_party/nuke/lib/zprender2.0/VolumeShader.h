@@ -33,9 +33,6 @@
 #include "RayShader.h"
 #include "Volume.h"
 
-#include <DDImage/Knob.h>
-
-
 namespace zpr {
 
 
@@ -60,32 +57,23 @@ class ZPR_EXPORT VolumeShader : public RayShader
     /*virtual*/ const char* zprShaderClass() const { return "VolumeShader"; }
 
 
-    /*! !!HACK ALERT!! This adds an invisible 'zpVolumeShader' knob
-        that's used to identify a VolumeShader-derived Op to other plugins.
-
-        If the zprender lib is built static then dynamic_casting fails,
-        so we can test for this knob instead and then static_cast the
-        pointer to VolumeShader*.
-
-        Atm if this knob doesn't exist then the _evaluate*() methods will
-        not be called since the node will not be recognized as a VolumeShader!
-    */
-    void addVolumeShaderIdKnob(DD::Image::Knob_Callback f);
-
     //! Initialize any vars prior to rendering.
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
+    /*virtual*/ void validateShader(bool                            for_real,
+                                    const RenderContext*            rtx,
+                                    const DD::Image::OutputContext* op_ctx=NULL);
 
 
   public:
     //!
-    virtual bool getVolumeIntersections(zpr::RayShaderContext&          stx,
-                                        Volume::VolumeIntersectionList& vol_intersections,
-                                        double&                         vol_tmin,
-                                        double&                         vol_tmax,
-                                        double&                         vol_depth_min,
-                                        double&                         vol_depth_max) const { return false; }
+    static bool getVolumeIntersections(zpr::RayShaderContext&          stx,
+                                       Volume::VolumeIntersectionList& vol_intersections,
+                                       double&                         vol_tmin,
+                                       double&                         vol_tmax,
+                                       double&                         vol_depth_min,
+                                       double&                         vol_depth_max);
 
+
+  public:
     /*! Default homogenous ray march through a set of light volumes.
         If it returns false there's been a user-abort.
     */

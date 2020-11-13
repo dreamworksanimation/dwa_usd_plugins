@@ -81,7 +81,7 @@ struct FSR_EXPORT NodeDescription
 {
     std::string     path;       //!< Full scene path ex. '/Scene/Foo/Bar'
     std::string     type;       //!< Type/Class of node ex. 'Camera'
-    std::string     note;       //!< Extra descriptive info
+    std::string     note;       //!< Extra descriptive info ex. 'Invisible', 'Hidden', 'Inactive'
 
     NodeDescription() {}
 

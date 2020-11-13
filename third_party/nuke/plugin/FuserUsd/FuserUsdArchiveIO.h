@@ -58,12 +58,14 @@ namespace Fsr {
 
 //!
 Pxr::UsdPrim findMatchingPrimByType(const Pxr::UsdPrim& prim,
-                                    const std::string&  prim_type);
+                                    const std::string&  prim_type,
+                                    bool                allow_inactive_prims);
 
 //!
 Pxr::UsdPrim findFirstMatchingPrim(const Pxr::UsdStageRefPtr& stage,
                                    const std::string&         start_path,
-                                   const std::string&         prim_type);
+                                   const std::string&         prim_type,
+                                   bool                       allow_inactive_prims);
 
 
 //-------------------------------------------------------------------------------
@@ -74,8 +76,10 @@ Pxr::UsdPrim findFirstMatchingPrim(const Pxr::UsdStageRefPtr& stage,
 class StageCacheReference
 {
   protected:
+    Pxr::SdfLayerRefPtr         m_root_layer;       //!< 
     Pxr::UsdStagePopulationMask m_populate_mask;    //!< Populate mask to use for stage open and retrieval
     std::string                 m_stage_id;         //!< Stage cache identifier string returned from Pxr::UsdStageCache
+    Pxr::SdfLayerRefPtr         m_session_layer;    //!< This layer must be unique per stage hash so caches are also unique
 
 
   public:
@@ -88,8 +92,10 @@ class StageCacheReference
     //! Copy operator
     const StageCacheReference& operator = (const StageCacheReference& b)
     {
+        m_root_layer    = b.m_root_layer;
         m_populate_mask = b.m_populate_mask;
         m_stage_id      = b.m_stage_id;
+        m_session_layer = b.m_session_layer;
         return *this;
     }
 
@@ -109,8 +115,7 @@ class StageCacheReference
   public:
     //! Create a shared StageCacheReference keyed by 'hash'. parent_path and stage_id are optional.
     static StageCacheReference* createStageReference(uint64_t                        hash,
-                                                     const std::vector<std::string>& paths,
-                                                     const std::string&              stage_id=std::string(""));
+                                                     const std::vector<std::string>& paths);
 
     //! Find a shared StageCacheReference keyed by 'hash'.
     static StageCacheReference* findStageReference(uint64_t hash);

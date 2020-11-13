@@ -83,33 +83,29 @@ local transform controls seperate and more easily manipulated in a local context
 class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
 {
   protected:
-    Fsr::LookatVals  m_lookat;          //!< Replicates the DD::ImageLookAt functionality
+    Fsr::AxisKnobVals k_axis_knob_vals; //!< Updated in addAxisOpTransformKnobs()::store()
+    Fsr::LookatVals   k_look_vals;      //!< Updated in addAxisOpTransformKnobs()::store()
 
-    Fsr::Mat4d       m_input_matrix;    //!< Input transform from parent input source - identity if no input
-    Fsr::Mat4d       m_parent_matrix;   //!< Parent transform from local parent knobs
-    Fsr::Mat4d       m_xform_matrix;    //!< AxisKnob fills this in
-    Fsr::Mat4d       m_local_matrix;    //!< Also contains lookat transform!
-    Fsr::Mat4d       m_world_matrix;    //!< parent * local
+    Fsr::Mat4d        m_input_matrix;   //!< Input transform from parent input source - identity if no input
+    Fsr::Mat4d        m_parent_matrix;  //!< Parent transform from local parent knobs
+    Fsr::Mat4d        m_axis_matrix;    //!< AxisKnob fills this in
+    Fsr::Mat4d        m_local_matrix;   //!< Also contains lookat transform!
+    Fsr::Mat4d        m_world_matrix;   //!< parent * local
 
-    DD::Image::Knob* kParentUnlocked;   //!< Parent-unlocked knob
-    DD::Image::Knob* kLocalUnlocked;    //!< Local-unlocked knob
+    DD::Image::Knob*  kParentUnlocked;  //!< Parent-unlocked knob
+    DD::Image::Knob*  kLocalUnlocked;   //!< Local-unlocked knob
 
-    DD::Image::Knob* kParentTranslate;  //!< If not NULL apply parent_translate
-    DD::Image::Knob* kParentRotate;     //!< If not NULL apply parent_rotate
-    DD::Image::Knob* kParentScale;      //!< If not NULL apply parent_scale
+    DD::Image::Knob*  kParentTranslate; //!< If not NULL apply parent_translate
+    DD::Image::Knob*  kParentRotate;    //!< If not NULL apply parent_rotate
+    DD::Image::Knob*  kParentScale;     //!< If not NULL apply parent_scale
 
     DD::Image::Knob*      kAxisKnob;    //!< The stock single-precision AxisKnob
     Fsr::AxisKnobWrapper* kFsrAxisKnob; //!< Double-precision AxisKnob wrapper
 
 
   protected:
-    /*! Call this from owner (FuserAxisOp, FuserCameraOp, FuserLightOp)::knobs() to
-        replace the AxisKnob knobs.
-        Adds the local transform knobs matching the typical AxisKnob ones.
-        This is valid as of Nuke 12.
-    */
-    void _addOpTransformKnobs(DD::Image::Knob_Callback f,
-                              DD::Image::Matrix4*      localtransform);
+    //---------------------------------------------
+
 
     /*! Call this from owner (FuserAxisOp, FuserCameraOp, FuserLightOp)::knobs() to
         replace the AxisOp baseclass' knobs() implementation.
@@ -133,6 +129,36 @@ class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
                                  DD::Image::Matrix4* local,
                                  DD::Image::Matrix4* matrix,
                                  bool*               inversion_updated);
+
+
+    //---------------------------------------------
+
+
+    /*! Call this from owner GeoOp::knobs() to replace the AxisKnob knobs.
+        Adds the local transform knobs matching the typical AxisKnob ones
+        but defaulted for GeoOp use. The main difference is the pivot controls
+        will disable if lookat is enabled.
+        This is valid as of Nuke 12.
+    */
+    void _addGeoOpTransformKnobs(DD::Image::Knob_Callback f,
+                                 DD::Image::Matrix4*      localtransform=NULL);
+
+    /*! Call this from owner (GeoOp-subclass)::_validate().
+        Builds the double-precision matrices replacing the stock single-precision one
+        filled in by the Axis_knob.
+    */
+    void _validateGeoOpMatrices(bool for_real,
+                                DD::Image::Matrix4* localtransform=NULL);
+
+
+    /*! Build the local xform with lookat applied.
+        Requires world transform up to local matrix to find origin.
+    */
+    Fsr::Mat4d _getLocalWithLookatTransform(const Fsr::Mat4d&               parent_matrix,
+                                            const DD::Image::OutputContext& context,
+                                            const Fsr::AxisKnobVals&        axis_vals,
+                                            const Fsr::LookatVals&          look_vals) const;
+
 
 
   public:
@@ -215,9 +241,13 @@ class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
 
     // Return the matrices constructed at the last validated OutputContext()
     const Fsr::Mat4d& getInputParentTransform()      const { return m_input_matrix;  }
+    //! Result of the parent TRS knobs, if enabled.
     const Fsr::Mat4d& getParentConstraintTransform() const { return m_parent_matrix; }
-    const Fsr::Mat4d& getXformTransform()            const { return m_xform_matrix;  }
+    //! Result of all the local TRS 'Axis_knob' knobs, *without* lookat.
+    const Fsr::Mat4d& getAxisTransform()             const { return m_axis_matrix;   }
+    //! Include lookat transform!
     const Fsr::Mat4d& getLocalTransform()            const { return m_local_matrix;  }
+    //! Entire transform.
     const Fsr::Mat4d& getWorldTransform()            const { return m_world_matrix;  }
 
 
@@ -227,13 +257,13 @@ class FSR_EXPORT SceneXform : public Fsr::SceneOpExtender
     //! Builds the parent contraint matrix from the parent constraint knobs.
     virtual Fsr::Mat4d getParentConstraintTransformAt(const DD::Image::OutputContext& context) const;
 
-    //! Builds the local 'xform' matrix from the local transform knobs. Does not include lookat!
+    //! Builds the local 'axis' matrix from the local transform knobs. Does not include lookat!
     virtual Fsr::Mat4d getLocalTransformAt(const DD::Image::OutputContext& context) const;
 
     //! Build the local xform with lookat applied. Requires world transform up to local matrix to find origin.
     virtual Fsr::Mat4d getLocalTransformWithLookatAt(const Fsr::Mat4d&               parent_matrix,
                                                      const DD::Image::OutputContext& context,
-                                                     Fsr::Mat4d*                     xform_matrix=NULL) const;
+                                                     Fsr::Mat4d*                     local_no_look=NULL) const;
 
     //! Builds the entire transform matrix. Includes parent, local and lookat.
     virtual Fsr::Mat4d getWorldTransformAt(const DD::Image::OutputContext& context) const;

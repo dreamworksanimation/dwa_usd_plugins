@@ -59,6 +59,26 @@ ZPR_EXPORT int32_t  getMotionStep(const Fsr::DoubleList& motion_times,
                                   float&                 motion_step_t);
 
 
+/*! Get a matrix, possibly interpolated, at frame_time.
+    If frame_time is between keys then matrix is linear interpolated using
+    Fsr::Mat4 lerp().
+*/
+ZPR_EXPORT Fsr::Mat4d getMotionXformAt(const Fsr::DoubleList& motion_times,
+                                       double                 frame_time,
+                                       const Fsr::Mat4dList&  motion_xforms);
+/*! Get two xforms at once, saving an additional motion step calculation.
+    This is usually used when getting a matrix and its inverse at the same
+    time. Both are linearly interpolated vs. deriving the first then
+    inverting it.
+*/
+ZPR_EXPORT void       getMotionXformsAt(const Fsr::DoubleList& motion_times,
+                                        double                 frame_time,
+                                        const Fsr::Mat4dList&  motion_xformsA,
+                                        const Fsr::Mat4dList&  motion_xformsB,
+                                        Fsr::Mat4d&            xformA,
+                                        Fsr::Mat4d&            xformB);
+
+
 
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------
@@ -91,9 +111,12 @@ static const uint32_t  ZprRenderPrim  =  100;
 
 
 class Surface;
-class SurfaceContext;
 class Volume;
 class LightEmitter;
+class MaterialContext;
+class SurfaceContext;
+class GeoInfoContext;
+class LightVolumeContext;
 
 
 
@@ -102,35 +125,17 @@ class LightEmitter;
 class ZPR_EXPORT RenderPrimitive
 {
   protected:
-    Fsr::DoubleList  m_motion_times;    //!< Frame time for each motion-sample
-
-
-  public:
-    SurfaceContext*  surface_ctx;   //!< Parent surface
-    uint32_t         index;         //!< Primitive's index relative to SurfaceContext index
+    MaterialContext*    m_material_ctx;         //!< Material parameters
+    Fsr::DoubleList     m_motion_times;         //!< Frame time for each motion-sample
 
 
   public:
     //!
-    RenderPrimitive(SurfaceContext* stx,
-                    double          motion_time) :
-        surface_ctx(stx),
-        index(0)
-    {
-        m_motion_times.resize(1, motion_time);
-    }
-
+    RenderPrimitive(const MaterialContext* material_ctx,
+                    double                 motion_time);
     //!
-    RenderPrimitive(SurfaceContext*        stx,
-                    const Fsr::DoubleList& motion_times) :
-        m_motion_times(motion_times),
-        surface_ctx(stx),
-        index(0)
-    {
-#if DEBUG
-        assert(motion_times.size() > 0);
-#endif
-    }
+    RenderPrimitive(const MaterialContext* material_ctx,
+                    const Fsr::DoubleList& motion_times);
 
     //!
     virtual ~RenderPrimitive() {}
@@ -161,6 +166,22 @@ class ZPR_EXPORT RenderPrimitive
     //---------------------------------------------
 
 
+    //! Get the MaterialContext info structure - should never be NULL!
+    MaterialContext*          getMaterialContext() { return m_material_ctx; }
+
+    //! Get the parent SurfaceContext structure - should never be NULL!
+    const SurfaceContext*     getSurfaceContext() const;
+
+    //! Get the parent DD::Image::GeoInfo context structure, if generated from one.
+    const GeoInfoContext*     getGeoInfoContext() const;
+
+    //! Get the parent DD::Image::LightOp context structure, if generated from one.
+    const LightVolumeContext* getLightVolumeContext() const;
+
+
+    //---------------------------------------------
+
+
     //! Number of motion times, must be >= 1!
     uint32_t numMotionTimes() const { return (uint32_t)m_motion_times.size(); }
 
@@ -178,7 +199,7 @@ class ZPR_EXPORT RenderPrimitive
 
 
     //! How many subd level to displace to.
-    virtual int getDisplacementSubdivisionLevel() const;
+    virtual int        getDisplacementSubdivisionLevel() const;
 
     //! Return a maximum displacement vector for this prim.
     virtual Fsr::Vec3f getDisplacementBounds() const;
@@ -234,10 +255,10 @@ inline uint32_t
 getMotionStep(const Fsr::DoubleList& motion_times,
               double                 frame_time)
 {
+    const size_t nMotionSamples = motion_times.size();
 #if DEBUG
-    assert(motion_times.size() > 0);
+    assert(nMotionSamples > 0);
 #endif
-    const size_t nMotionSamples = (uint32_t)motion_times.size();
     if (nMotionSamples == 1)
         return 0; // no motionblur
 
@@ -273,10 +294,10 @@ getMotionStep(const Fsr::DoubleList& motion_times,
               uint32_t&              motion_step,
               float&                 motion_step_t)
 {
-#if DEBUG
-    assert(motion_times.size() > 0);
-#endif
     const size_t nMotionSamples = motion_times.size();
+#if DEBUG
+    assert(nMotionSamples > 0);
+#endif
     if (nMotionSamples == 1)
     {
         // No motionblur:
@@ -309,9 +330,79 @@ getMotionStep(const Fsr::DoubleList& motion_times,
     }
 
     // Past last motion step:
-    motion_step   = uint32_t(nMotionSamples-1);
+    motion_step   = uint32_t(nMotionSamples-2);
     motion_step_t = 1.0f;
     return MOTIONSTEP_END;
+}
+
+
+inline Fsr::Mat4d
+getMotionXformAt(const Fsr::DoubleList& motion_times,
+                 double                 frame_time,
+                 const Fsr::Mat4dList&  motion_xforms)
+{
+    // Don't crash, just return identity():
+    if (motion_xforms.size() == 0)
+        return Fsr::Mat4d::getIdentity();
+
+    // Find the motion-step this shutter position falls inside:
+    uint32_t  motion_step;
+    float     motion_step_t;
+    const int motion_mode = getMotionStep(motion_times, frame_time, motion_step, motion_step_t);
+#if DEBUG
+    assert(motion_step < motion_xforms.size());
+#endif
+
+    if (motion_mode == MOTIONSTEP_START)
+        return motion_xforms[motion_step ];
+    else if (motion_mode == MOTIONSTEP_END)
+        return motion_xforms[motion_step+1];
+
+    return Fsr::lerp(motion_xforms[motion_step], motion_xforms[motion_step+1], motion_step_t);
+}
+
+inline void
+getMotionXformsAt(const Fsr::DoubleList& motion_times,
+                  double                 frame_time,
+                  const Fsr::Mat4dList&  motion_xformsA,
+                  const Fsr::Mat4dList&  motion_xformsB,
+                  Fsr::Mat4d&            xformA,
+                  Fsr::Mat4d&            xformB)
+{
+    // Find the motion-step this shutter position falls inside:
+    uint32_t  motion_step;
+    float     motion_step_t;
+    const int motion_mode = getMotionStep(motion_times, frame_time, motion_step, motion_step_t);
+
+    if (motion_step >= motion_xformsA.size())
+    {
+        // Don't crash, just return identity():
+        xformA = Fsr::Mat4d::getIdentity();
+    }
+    else
+    {
+        if (motion_mode == MOTIONSTEP_START)
+            xformA = motion_xformsA[motion_step ];
+        else if (motion_mode == MOTIONSTEP_END)
+            xformA = motion_xformsA[motion_step+1];
+
+        xformA = Fsr::lerp(motion_xformsA[motion_step], motion_xformsA[motion_step+1], motion_step_t);
+    }
+
+    if (motion_step >= motion_xformsB.size())
+    {
+        // Don't crash, just return identity():
+        xformB = Fsr::Mat4d::getIdentity();
+    }
+    else
+    {
+        if (motion_mode == MOTIONSTEP_START)
+            xformB = motion_xformsB[motion_step ];
+        else if (motion_mode == MOTIONSTEP_END)
+            xformB = motion_xformsB[motion_step+1];
+
+        xformB = Fsr::lerp(motion_xformsB[motion_step], motion_xformsB[motion_step+1], motion_step_t);
+    }
 }
 
 

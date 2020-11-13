@@ -98,7 +98,7 @@ PointBasedPrimitive::copy(const Fsr::PointBasedPrimitive* b)
 PointBasedPrimitive::get_bbox(const DD::Image::GeoInfo* info) const
 {
     if (info)
-        const_cast<PointBasedPrimitive*>(this)->updateBounds(info->point_list());
+        const_cast<PointBasedPrimitive*>(this)->updateBounds(info->point_list(), true/*force*/);
     else
         const_cast<PointBasedPrimitive*>(this)->updateBounds();
 
@@ -319,6 +319,7 @@ PointBasedPrimitive::tessellate(DD::Image::Scene*            render_scene,
 
     //std::cout << "---------------------------------------------" << std::endl;
     //std::cout << "PointBasedPrimitive:tessellate('" << getPath() << "') frame=" << m_frame;
+    //std::cout << ", out_id=0x" << std::hex << ptx->geoinfo()->out_id().value() << std::dec;
     //std::cout << ", nPoints=" << ptx->geoinfo()->points();
     //std::cout << ", nVerts=" << numVerts();
     //std::cout << ", nFaces=" << numFaces();

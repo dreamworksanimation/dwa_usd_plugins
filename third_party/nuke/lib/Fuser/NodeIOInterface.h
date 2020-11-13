@@ -36,6 +36,7 @@
 namespace Fsr {
 
 class ArgSet;
+class NodeContext;
 
 
 /*! \class Fsr::NodeIOInterface
@@ -70,6 +71,11 @@ class FSR_EXPORT NodeIOInterface
 
     //! Add or modify args to pass to Fsr::Node ctors. Base class does nothing.
     virtual void _appendNodeContextArgs(Fsr::ArgSet& node_args) {}
+
+
+    //! Add or modify args to pass to execution contexts. Base class does nothing.
+    virtual void _appendExecuteContextArgs(const Fsr::ArgSet& node_args,
+                                           Fsr::NodeContext&  exec_ctx) {}
 
 
   public:

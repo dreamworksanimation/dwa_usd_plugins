@@ -53,7 +53,7 @@ namespace zpr {
 
 class RenderContext;
 class RayShader;
-class LightShader;
+class LightMaterial;
 class VolumeShader;
 class RenderPrimitive;
 class Scene;
@@ -61,9 +61,9 @@ class AOVLayer;
 class StochasticSampleSet;
 class ThreadContext;
 
-typedef std::vector<zpr::Scene*>     LightingSceneList;
-typedef std::vector<LightShader*>    LightShaderList;
-typedef std::vector<LightShaderList> LightShaderLists;
+typedef std::vector<zpr::Scene*>       LightingSceneList;
+typedef std::vector<LightMaterial*>    LightMaterialList;
+typedef std::vector<LightMaterialList> LightMaterialLists;
 
 //-------------------------------------------------------------------------
 
@@ -93,7 +93,6 @@ struct ZPR_EXPORT RayShaderContext
     const Fsr::Mat4d*  l2w;                 //!< Local-to-world matrix for current primitive - NULL if identity
     //
     RayShader*         surface_shader;      //!< Current RayShader being evaluated (NULL if legacy material)
-    RayShader*         displacement_shader; //!< Current RayShader being evaluated (NULL if legacy material)
     VolumeShader*      atmosphere_shader;   //!< Current atmospheric VolumeShader being evaluated
 
     DD::Image::TextureFilter* texture_filter;       //!< Filter to use for texture mapping
@@ -101,8 +100,8 @@ struct ZPR_EXPORT RayShaderContext
     bool               direct_lighting_enabled;     //!< Enable direct scene lighting (shadowed)
     bool               indirect_lighting_enabled;   //!< Enable indirect scene lighting (bounce)
     //
-    LightShaderList*   master_light_shaders;        //!< List of all light shaders in scene
-    LightShaderLists*  per_object_light_shaders;    //!< Per-object list of light shaders
+    LightMaterialList*  master_light_materials;      //!< List of all light materials in scene
+    LightMaterialLists* per_object_light_materials;  //!< Per-object list of light materials
     //--------------------------------------------------------------------------------
     DD::Image::Iop*    material;                    //!< Current material on primitive - legacy!
     DD::Image::Iop*    displacement_material;       //!< Current displacement material on primitive - legacy!
@@ -148,7 +147,6 @@ struct ZPR_EXPORT RayShaderContext
     Fsr::Vec3d PW;                  //!< Displaced shading point in world-space
     Fsr::Vec3d dPWdx;               //!< PW x-derivative
     Fsr::Vec3d dPWdy;               //!< PW y-derivative
-    Fsr::Vec3d PWg;                 //!< Geometric surface point (no displacement)
 
     Fsr::Vec2f st;                  //!< Primitive's barycentric coordinates at Rtx intersection
     Fsr::Vec2f Rxst;                //!< Primitive's barycentric coordinates at Rtdx intersection
@@ -170,6 +168,9 @@ struct ZPR_EXPORT RayShaderContext
     Fsr::Vec4f dCfdy;               //!< Vertex color y-derivative
 
 
+    //------------------------------------------------------------------
+
+
     //! Empty constructor leaves junk in the contents.
     RayShaderContext() {}
 
@@ -181,30 +182,39 @@ struct ZPR_EXPORT RayShaderContext
                      double            tmax=std::numeric_limits<double>::infinity());
 
     //! Copy ctor updates Rtx from current_stx PW, frame_time, etc.
-    RayShaderContext(const RayShaderContext&      current_stx,
-                     const Fsr::RayContext&       ray_context,
-                     uint32_t                     ray_type,
-                     int                          sides,
-                     const Fsr::RayDifferentials* ray_dif=NULL);
-    RayShaderContext(const RayShaderContext&      current_stx,
-                     const Fsr::Vec3d&            Rdir,
-                     double                       tmin,
-                     double                       tmax,
-                     uint32_t                     ray_type,
-                     int                          sides,
-                     const Fsr::RayDifferentials* ray_dif=NULL);
+    RayShaderContext(const RayShaderContext&          current_stx,
+                     const Fsr::RayContext&           ray_context,
+                     const Fsr::RayContext::TypeMask& ray_type,
+                     uint32_t                         sides,
+                     const Fsr::RayDifferentials*     ray_dif=NULL);
+    RayShaderContext(const RayShaderContext&          current_stx,
+                     const Fsr::Vec3d&                Rdir,
+                     double                           tmin,
+                     double                           tmax,
+                     const Fsr::RayContext::TypeMask& ray_type,
+                     uint32_t                         sides,
+                     const Fsr::RayDifferentials*     ray_dif=NULL);
 
+
+    //------------------------------------------------------------------
 
     //! Set the ray, ray type and ray-differential in one step.
-    void setRayContext(const Fsr::RayContext&       ray_context,
-                       uint32_t                     ray_type,
-                       const Fsr::RayDifferentials* ray_dif=NULL);
+    void setRayContext(const Fsr::RayContext&           ray_context,
+                       const Fsr::RayContext::TypeMask& ray_type,
+                       const Fsr::RayDifferentials*     ray_dif=NULL);
 
     //! Copies intersection info into context.
     //void updateFromIntersection(const zpr::Traceable::SurfaceIntersection& I);
 
     //! Returns 'fake' stereo view-vector or ray view-vector depending on rendering context's stereo mode.
     Fsr::Vec3d getViewVector() const;
+
+
+    //------------------------------------------------------------------
+
+    //! Return true if the assigned shader is a surface or volume shader, for convenience.
+    //bool isSurfaceContext() const { return (surface_shader    != NULL); }
+    //bool isVolumeContext()  const { return (atmosphere_shader != NULL); }
 
 };
 
@@ -233,11 +243,11 @@ RayShaderContext::RayShaderContext(const Fsr::Vec3d& origin,
 
 //!
 inline
-RayShaderContext::RayShaderContext(const RayShaderContext&      current_stx,
-                                   const Fsr::RayContext&       ray_context,
-                                   uint32_t                     ray_type,
-                                   int                          sides,
-                                   const Fsr::RayDifferentials* ray_dif)
+RayShaderContext::RayShaderContext(const RayShaderContext&          current_stx,
+                                   const Fsr::RayContext&           ray_context,
+                                   const Fsr::RayContext::TypeMask& ray_type,
+                                   uint32_t                         sides,
+                                   const Fsr::RayDifferentials*     ray_dif)
 {
     if (this != &current_stx)
     {
@@ -258,13 +268,13 @@ RayShaderContext::RayShaderContext(const RayShaderContext&      current_stx,
     rprim = NULL;
 }
 inline
-RayShaderContext::RayShaderContext(const RayShaderContext&      current_stx,
-                                   const Fsr::Vec3d&            Rdir,
-                                   double                       tmin,
-                                   double                       tmax,
-                                   uint32_t                     ray_type,
-                                   int                          sides,
-                                   const Fsr::RayDifferentials* ray_dif)
+RayShaderContext::RayShaderContext(const RayShaderContext&          current_stx,
+                                   const Fsr::Vec3d&                Rdir,
+                                   double                           tmin,
+                                   double                           tmax,
+                                   const Fsr::RayContext::TypeMask& ray_type,
+                                   uint32_t                         sides,
+                                   const Fsr::RayDifferentials*     ray_dif)
 {
     if (this != &current_stx)
     {
@@ -288,9 +298,9 @@ RayShaderContext::RayShaderContext(const RayShaderContext&      current_stx,
 /* Set the ray, ray type and ray-differential in one step.
 */
 inline void
-RayShaderContext::setRayContext(const Fsr::RayContext&       ray_context,
-                                uint32_t                     ray_type,
-                                const Fsr::RayDifferentials* ray_dif)
+RayShaderContext::setRayContext(const Fsr::RayContext&           ray_context,
+                                const Fsr::RayContext::TypeMask& ray_type,
+                                const Fsr::RayDifferentials*     ray_dif)
 {
     Rtx = ray_context;
     Rtx.time = frame_time;

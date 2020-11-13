@@ -376,6 +376,27 @@ GeoSceneGraphReaderFormat::knobs(DD::Image::Knob_Callback f)
     addTimeOptionsKnobs(f);
 
     Divider(f);
+    addObjectSelectionKnobs(f);
+    Bool_knob(f, &k_debug_archive, "debug_archive", "debug scene file loading");
+        SetFlags(f, Knob::STARTLINE);
+        Tooltip(f, "Prints scene file archive loading info to the console.");
+
+    Divider(f);
+    addImportOptionsKnobs(f);
+
+    Divider(f);
+    addPrimOptionsKnobs(f);
+
+    // Gracefully handle the stock Foundry knobs we don't support:
+    Obsolete_knob(f, "scene_view", 0);
+}
+
+
+/*!
+*/
+/*virtual*/ void
+GeoSceneGraphReaderFormat::addObjectSelectionKnobs(Knob_Callback f)
+{
     Multiline_String_knob(f, &k_surface_mask, knob_map[SURFACE_MASK_KNOB].readerKnob, "surface mask", 3/*lines*/);
         SetFlags(f, Knob::EARLY_STORE);
         ClearFlags(f, Knob::GRANULAR_UNDO); // doesn't appear to do anything for Multiline...
@@ -399,20 +420,6 @@ GeoSceneGraphReaderFormat::knobs(DD::Image::Knob_Callback f)
                     "\n"
                     "NOTE - THIS MENU IS JUST FOR REFERENCE, "
                     "SELECTING ITEMS AFFECTS NOTHING");
-
-    Bool_knob(f, &k_debug_archive, "debug_archive", "debug scene file loading");
-        SetFlags(f, Knob::STARTLINE);
-        Tooltip(f, "Prints scene file archive loading info to the console.");
-
-
-    Divider(f);
-    addImportOptionsKnobs(f);
-
-    Divider(f);
-    addPrimOptionsKnobs(f);
-
-    // Gracefully handle the stock Foundry knobs we don't support:
-    Obsolete_knob(f, "scene_view", 0);
 }
 
 
@@ -986,7 +993,7 @@ GeoSceneGraphReader::_updateSceneGraph()
             if (desc.note == "PATH_TRUNCATED")
                 snprintf(path, 2048, "%s  (%s) ...", desc_id.c_str(), desc.type.c_str());
             else if (!desc.note.empty())
-                snprintf(path, 2048, "%s (%s)  (%s)", desc_id.c_str(), desc.note.c_str(), desc.type.c_str());
+                snprintf(path, 2048, "%s (%s %s)", desc_id.c_str(), desc.note.c_str(), desc.type.c_str());
             else
                 snprintf(path, 2048, "%s  (%s)", desc_id.c_str(), desc.type.c_str());
         }
@@ -1720,7 +1727,7 @@ GeoSceneGraphReader::_openSceneFile()
     Fsr::GeoSceneFileArchiveContext* archive_ctx = sceneFileArchiveContext();
     if (!archive_ctx)
     {
-        std::cerr << "  GeoSceneGraphReader(" << this << ")::_openSceneFile(): coding error - archive_ctx is NULL!" << std::endl;
+        //std::cerr << "  GeoSceneGraphReader(" << this << ")::_openSceneFile(): coding error - archive_ctx is NULL!" << std::endl;
         return true; // don't crash if reader hasn't been validated yet
     }
 
@@ -1809,6 +1816,9 @@ GeoSceneGraphReader::_openSceneFile()
             exec_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
             //exec_ctx.setBool(buildStr("%s:debug_archive_loading", fuserIOClass()), debug_archive);
 
+            // Let subclasses add their local execution args:
+            _appendExecuteContextArgs(node_args, exec_ctx);
+
             archive_ctx->scene_file         = filePathForReader();
             archive_ctx->scene_context_name = "";
         }
@@ -1896,6 +1906,9 @@ GeoSceneGraphReader::_openSceneFile()
                 exec_ctx.setString(Arg::Scene::path,         *it);
                 exec_ctx.setBool(  Arg::Scene::read_debug,   true);
                 exec_ctx.setBool(  Arg::NukeGeo::read_debug, true);
+
+                // Let subclasses add their local execution args:
+                _appendExecuteContextArgs(node_args, exec_ctx);
             }
             uint32_t topology_variance = Fsr::Node::ConstantTopology;
             Fsr::Node::executeImmediate(fuserIOClass(),                               /*node_class*/
@@ -1964,6 +1977,9 @@ GeoSceneGraphReader::_getNodeDescriptions(const char*              file,
         exec_ctx.setInt(   Arg::Scene::path_max_depth,     path_max_depth);
         exec_ctx.setBool(  Arg::Scene::read_debug,         debug);
         //exec_ctx.setBool(  Arg::Scene::file_archive_debug, debug_archive);
+
+        // Let subclasses add their local execution args:
+        _appendExecuteContextArgs(node_args, exec_ctx);
     }
 
     Fsr::ScenePathFilters scene_path_filters;
@@ -2106,6 +2122,9 @@ GeoSceneGraphReader::_getSelectedNodePaths(const Fsr::NodeFilterPatternList& nod
             // Parameters then passed to execute(), validateState(), and _execute():
             exec_ctx.setBool(Arg::Scene::read_debug,         debug);
             exec_ctx.setBool(Arg::Scene::file_archive_debug, debug_archive);
+
+            // Let subclasses add their local execution args:
+            _appendExecuteContextArgs(node_args, exec_ctx);
         }
 
         Fsr::NodeFilterPatternList* filter_patterns =

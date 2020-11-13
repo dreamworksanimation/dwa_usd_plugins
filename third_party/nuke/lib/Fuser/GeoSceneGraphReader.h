@@ -63,23 +63,26 @@ class FSR_EXPORT GeoSceneGraphReaderFormat : public FuserGeoReaderFormat
     //!
     virtual const char* defaultSurfaceMask() const { return ""; }
 
+    //! Add knobs specific to object selection.
+    virtual void addObjectSelectionKnobs(DD::Image::Knob_Callback);
+
     //! Add knobs specific to scene graph reading.
-    virtual void addSceneGraphKnobs(DD::Image::Knob_Callback f);
+    virtual void addSceneGraphKnobs(DD::Image::Knob_Callback);
 
 
     //================================================================
     // From FileHandler (DD::Image::FileOp.h):
     //================================================================
 
-    /*virtual*/ void knobs(DD::Image::Knob_Callback f);
+    /*virtual*/ void knobs(DD::Image::Knob_Callback);
 
-    /*virtual*/ void extraKnobs(DD::Image::Knob_Callback f);
+    /*virtual*/ void extraKnobs(DD::Image::Knob_Callback);
 
     //================================================================
     // From ReaderFormat (DD::Image::Reader.h):
     //================================================================
 
-    /*virtual*/ void append(DD::Image::Hash& hash);
+    /*virtual*/ void append(DD::Image::Hash&);
 
 };
 

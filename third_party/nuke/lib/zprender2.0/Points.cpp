@@ -42,7 +42,7 @@ namespace zpr {
 
 /*!
 */
-Points::Points(SurfaceContext*        stx,
+Points::Points(const MaterialContext* material_ctx,
                const Fsr::DoubleList& motion_times,
                const Fsr::Mat4dList&  motion_xforms,
                uint32_t               numPoints,
@@ -51,7 +51,7 @@ Points::Points(SurfaceContext*        stx,
                const Fsr::Vec3f**     velocity_arrays,
                const float**          radii_arrays,
                const Fsr::Vec4f*      Cf_array) :
-    RenderPrimitive(stx, motion_times),
+    RenderPrimitive(material_ctx, motion_times),
     m_mode(POINT_POINTS),
     m_status(SURFACE_NOT_DICED),
     m_P_offset(0.0, 0.0, 0.0)
@@ -153,11 +153,11 @@ Points::Points(SurfaceContext*        stx,
 
 /*!
 */
-Points::Points(SurfaceContext*           stx,
+Points::Points(const MaterialContext*    material_ctx,
                const Fsr::DoubleList&    motion_times,
                const Points::SampleList& motion_ptcs,
                const Fsr::Vec4f*         Cf_array) :
-    RenderPrimitive(stx, motion_times),
+    RenderPrimitive(material_ctx, motion_times),
     m_motion_ptcs(motion_ptcs)
 {
 #if DEBUG
@@ -184,14 +184,14 @@ Points::Points(SurfaceContext*           stx,
 
 /*!
 */
-SpherePoints::SpherePoints(SurfaceContext*        stx,
+SpherePoints::SpherePoints(const MaterialContext* material_ctx,
                            const Fsr::DoubleList& motion_times,
                            const Fsr::Mat4dList&  motion_xforms,
                            uint32_t               numPoints,
                            const Fsr::Vec3f**     P_arrays,
                            const float**          radii_arrays,
                            const Fsr::Vec4f*      Cf_array) :
-    Points(stx,
+    Points(material_ctx,
            motion_times,
            motion_xforms,
            numPoints,
@@ -207,7 +207,7 @@ SpherePoints::SpherePoints(SurfaceContext*        stx,
 
 /*!
 */
-DiscPoints::DiscPoints(SurfaceContext*        stx,
+DiscPoints::DiscPoints(const MaterialContext* material_ctx,
                        const Fsr::DoubleList& motion_times,
                        const Fsr::Mat4dList&  motion_xforms,
                        uint32_t               numPoints,
@@ -215,7 +215,7 @@ DiscPoints::DiscPoints(SurfaceContext*        stx,
                        const Fsr::Vec3f**     N_arrays,
                        const float**          radii_arrays,
                        const Fsr::Vec4f*      Cf_array) :
-    Points(stx,
+    Points(material_ctx,
            motion_times,
            motion_xforms,
            numPoints,
@@ -231,7 +231,7 @@ DiscPoints::DiscPoints(SurfaceContext*        stx,
 
 /*!
 */
-CardPoints::CardPoints(SurfaceContext*        stx,
+CardPoints::CardPoints(const MaterialContext* material_ctx,
                        const Fsr::DoubleList& motion_times,
                        const Fsr::Mat4dList&  motion_xforms,
                        uint32_t               numPoints,
@@ -240,7 +240,7 @@ CardPoints::CardPoints(SurfaceContext*        stx,
                        const float**          width_array,
                        const float*           aspect_array,
                        const Fsr::Vec4f*      Cf_array) :
-    Points(stx,
+    Points(material_ctx,
            motion_times,
            motion_xforms,
            numPoints,
@@ -549,7 +549,7 @@ SpherePoints::pointIntersect(uint32_t             point,
         I.t  = tmin;
         I.PW = I.PWg = stx.Rtx.getPositionAt(tmin);
         I.N  = (I.PW - P.asVec3d());
-        I.N.fastNormalize();
+        I.N.normalize();
         I.Ng = I.Ni = I.N;
     }
 
@@ -585,7 +585,7 @@ DiscPoints::pointIntersect(uint32_t             point,
         I.t  = tmin;
         I.PW = I.PWg = stx.Rtx.getPositionAt(tmin);
         I.N  = (I.PW - P.asVec3d());
-        I.N.fastNormalize();
+        I.N.normalize();
         I.Ng = I.Ni = I.N;
         return Fsr::RAY_INTERSECT_POINT;
     }
@@ -623,7 +623,7 @@ CardPoints::pointIntersect(uint32_t             point,
         I.t  = tmin;
         I.PW = I.PWg = stx.Rtx.getPositionAt(tmin);
         I.N  = (I.PW - P.asVec3d());
-        I.N.fastNormalize();
+        I.N.normalize();
         I.Ng = I.Ni = I.N;
         return Fsr::RAY_INTERSECT_POINT;
     }

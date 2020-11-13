@@ -75,17 +75,42 @@ zprReadUVTexture::zprReadUVTexture(const char* path) :
     m_read_error(true)
 {
     //std::cout << "zprReadUVTexture::ctor(" << this << ")" << std::endl;
-    // Assign the knobs to their values:
-    assert(m_inputs.size() == 6 && m_inputs.size() == input_defs.size());
-    assignInputKnob("file",     &k_file);
-    assignInputKnob("wrapS",    &k_wrapS);
-    assignInputKnob("wrapT",    &k_wrapT);
-    assignInputKnob("fallback", &k_fallback);
-    assignInputKnob("scale",    &k_scale);
-    assignInputKnob("bias",     &k_bias);
-
     if (path)
-        k_file = path;
+        inputs.k_file = path;
+    inputs.k_wrapS    = false;
+    inputs.k_wrapT    = false;
+    inputs.k_fallback.set(1.0f, 1.0f, 1.0f, 1.0f);
+    inputs.k_scale.set(1.0f, 1.0f, 1.0f, 1.0f);
+    inputs.k_bias.set(0.0f, 0.0f, 0.0f, 0.0f);
+
+    // Assign the knobs to their value destinations, overwriting them:
+    assert(m_inputs.size() == 6 && m_inputs.size() == input_defs.size());
+    bindInputKnob("file",     &inputs.k_file);
+    bindInputKnob("wrapS",    &inputs.k_wrapS);
+    bindInputKnob("wrapT",    &inputs.k_wrapT);
+    bindInputKnob("fallback", &inputs.k_fallback);
+    bindInputKnob("scale",    &inputs.k_scale);
+    bindInputKnob("bias",     &inputs.k_bias);
+}
+
+
+/*!
+*/
+zprReadUVTexture::zprReadUVTexture(const InputParams& input_params) :
+    RayShader(input_defs, output_defs),
+    inputs(input_params),
+    m_read(NULL),
+    m_file_exists(false),
+    m_read_error(true)
+{
+    // Point the knobs to their already-set values:
+    assert(m_inputs.size() == 6 && m_inputs.size() == input_defs.size());
+    setInputKnobTarget("file",     &inputs.k_file);
+    setInputKnobTarget("wrapS",    &inputs.k_wrapS);
+    setInputKnobTarget("wrapT",    &inputs.k_wrapT);
+    setInputKnobTarget("fallback", &inputs.k_fallback);
+    setInputKnobTarget("scale",    &inputs.k_scale);
+    setInputKnobTarget("bias",     &inputs.k_bias);
 }
 
 
@@ -98,44 +123,65 @@ zprReadUVTexture::~zprReadUVTexture()
 }
 
 
+/*! Initialize any uniform vars prior to rendering.
+    This may be called without a RenderContext from the legacy shader system.
+*/
+/*virtual*/
+void
+zprReadUVTexture::updateUniformLocals(double  frame,
+                                      int32_t view)
+{
+    //std::cout << "  zprReadUVTexture::updateUniformLocals()"<< std::endl;
+    RayShader::updateUniformLocals(frame, view);
+
+    DD::Image::Hash file_hash;
+    file_hash.append(inputs.k_file);
+    if (file_hash != m_file_hash)
+    {
+        m_file_hash = file_hash;
+
+        delete m_read;
+        m_read = NULL;
+        m_texture_channels = DD::Image::Mask_None;
+
+        m_file_exists = false;
+        if (!inputs.k_file.empty())
+        {
+            struct stat st;
+            m_file_exists = (stat(inputs.k_file.c_str(), &st) == 0);
+        }
+    }
+}
+
+
 /*!
 */
 /*virtual*/
 void
-zprReadUVTexture::validateShader(bool                 for_real,
-                                 const RenderContext& rtx)
+zprReadUVTexture::validateShader(bool                            for_real,
+                                 const RenderContext*            rtx,
+                                 const DD::Image::OutputContext* op_ctx)
 {
-    //std::cout << "zprReadUVTexture::validateShader() file='" << k_file << "'" << std::endl;
-    RayShader::validateShader(for_real, rtx);
-
-    m_file_exists = false;
-    if (!k_file.empty())
-    {
-        struct stat st;
-        if (stat(k_file.c_str(), &st) == 0)
-        {
-            m_file_exists = true;
-        }
-    }
-
+    //std::cout << "zprReadUVTexture::validateShader() file='" << inputs.k_file << "'" << std::endl;
+    RayShader::validateShader(for_real, rtx, op_ctx); // updates the uniform locals
 
     if (m_file_exists && !m_read)
     {
-        //std::cout << "  file exists '" << k_file << "', CREATE READ" << std::endl;
+        //std::cout << "  file exists '" << inputs.k_file << "', CREATE READ" << std::endl;
         op_lock.lock();
         {
             m_read = new DD::Image::Read(NULL/*node*/);
-            m_read->parent(rtx.m_parent); // set the parent to avoid issues with undo/error system
+            m_read->parent(rtx->m_parent); // set the parent to avoid issues with undo/error system
             assert(m_read);
         }
         op_lock.unlock();
 
-        m_read->filename(k_file.c_str());
+        m_read->filename(inputs.k_file.c_str());
         m_read->validate(for_real);
         if (!m_read->hasError())
         {
-            //std::cout << "    READ OK read=" << m_read << " '" << k_file << "', channels=" << m_read->channels() << std::endl;
             m_texture_channels = m_read->channels();
+            //std::cout << "    READ OK read=" << m_read << " '" << inputs.k_file << "', channels=" << m_texture_channels << std::endl;
 
             const DD::Image::Channel rchan = (m_texture_channels.contains(DD::Image::Chan_Red  )) ? DD::Image::Chan_Red   : DD::Image::Chan_Black;
             const DD::Image::Channel gchan = (m_texture_channels.contains(DD::Image::Chan_Green)) ? DD::Image::Chan_Green : DD::Image::Chan_Black;
@@ -147,7 +193,7 @@ zprReadUVTexture::validateShader(bool                 for_real,
         }
         else
         {
-            //std::cout << "    ERROR '" << k_file << "'" << std::endl;
+            //std::cout << "    ERROR '" << inputs.k_file << "'" << std::endl;
         }
     }
 
@@ -158,7 +204,8 @@ zprReadUVTexture::validateShader(bool                 for_real,
     }
 
     m_output_channels = m_texture_channels;
-    //std::cout << "  channels=" << m_texture_channels << std::endl;
+    //std::cout << "  texture_channels=" << m_texture_channels << std::endl;
+    //std::cout << "  output_channels=" << m_output_channels << std::endl;
 }
 
 
@@ -168,7 +215,6 @@ zprReadUVTexture::validateShader(bool                 for_real,
 void
 zprReadUVTexture::getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings)
 {
-    //std::cout << "zprReadUVTexture::getActiveTextureBindings() m_read=" << m_read << std::endl;
     if (m_binding.isActiveTexture())
         texture_bindings.push_back(&m_binding);
 }
@@ -191,10 +237,13 @@ zprReadUVTexture::evaluateSurface(RayShaderContext& stx,
         //out[m_binding.opacity_chan] = 0.0f;
         out.rgb().set(0.0f);
         out.alpha() = 1.0f;
-        return;
     }
-
-    m_binding.sampleTexture(stx, out);
+    else
+    {
+        m_binding.sampleTexture(stx, out);
+        if (!m_binding.hasAlpha())
+            out.alpha() = 1.0f;
+    }
 }
 
 

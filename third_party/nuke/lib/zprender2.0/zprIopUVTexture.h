@@ -58,9 +58,14 @@ class ZPR_EXPORT zprIopUVTexture : public RayShader
     //! Ctor assumes this is being constructed from the InputBinding of another RayShader.
     zprIopUVTexture(const InputBinding& binding);
 
+    //! Must have a virtual destructor to subclass!
+    virtual ~zprIopUVTexture() {}
 
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
+    /*virtual*/ void updateUniformLocals(double  frame,
+                                         int32_t view=-1);
+    /*virtual*/ void validateShader(bool                            for_real,
+                                    const RenderContext*            rtx,
+                                    const DD::Image::OutputContext* op_ctx=NULL);
     /*virtual*/ void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
     /*virtual*/ void evaluateSurface(RayShaderContext& stx,
                                      Fsr::Pixel&       out);

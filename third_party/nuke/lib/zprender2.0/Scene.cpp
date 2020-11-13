@@ -44,17 +44,36 @@ namespace zpr {
 
 /*!
 */
-Scene::Scene(int32_t _shutter_step,
-             double  _frame) :
+Scene::Scene() :
     DD::Image::Scene(),
-    frame(_frame),
-    shutter_step(_shutter_step)
+    magic_token(ZPR_MAGIC_TOKEN),
+    rtx(NULL),
+    shutter_sample(0),
+    frame(0.0)
 {
+    //
+}
+
+
+/*!
+*/
+Scene::Scene(RenderContext* _rtx,
+             int32_t        _shutter_sample,
+             double         _frame) :
+    DD::Image::Scene(),
+    magic_token(ZPR_MAGIC_TOKEN),
+    rtx(_rtx),
+    shutter_sample(_shutter_sample),
+    frame(_frame)
+{
+#if DEBUG
+    assert(rtx);
+#endif
     _time = float(frame);
 
     // Use the _id var as motion-sample indicator.  If it's negative then
     // the motion-step is back in time from frame0:
-    _id = shutter_step;
+    _id = shutter_sample;
     //std::cout << "zpr::Scene::ctor(" << this << ")" << std::endl;
 }
 
@@ -76,18 +95,34 @@ Scene::~Scene()
 void
 Scene::copyInfo(const Scene* b)
 {
-    // This should copy all the vars, including the lights:
+    // This should copy all the vars, including the lights, but it doesn't
+    // update the Scene pointers in the LightContexts!
     DD::Image::Scene::copyInfo(b);
+    cam_vectors = b->cam_vectors; // base class doesn't appear to do this
 
     // Copy zpr::Scene subclass vars:
-    frame        = b->frame;
-    shutter_step = b->shutter_step;
+    rtx            = b->rtx;
+    shutter_sample = b->shutter_sample;
+    frame          = b->frame;
     m_object_map.clear(); // don't copy geometry info
+
+    // Update the LightContexts:
+    const size_t nLights = lights.size();
+    for (size_t i=0; i < nLights; ++i)
+    {
+        DD::Image::LightContext* ltx = lights[i];
+#if DEBUG
+        assert(ltx);
+#endif
+        ltx->set_scene(this);
+    }
 }
 
 
 //-----------------------------------------------------------------------------
 
+
+static DD::Image::Lock map_lock;
 
 /*! Find matching object id hash in the object map.
     Returns -1 if not found.
@@ -101,17 +136,22 @@ Scene::findObject(const uint64_t& obj_id)
 
     if (m_object_map.empty())
     {
-        // Build the map of output id hashes.  This is needed for fast searching
-        // of matching objects in separate scenes for motion-blur purposes.
-        //
-        // Go through each GeoInfo adding its out_id hash to the map referencing the
-        // object's index in the object_list_.  This way we can quickly find objects
-        // with matching out_ids.
-        for (uint32_t j=0; j < nObjects; ++j)
-            m_object_map[object(j).out_id().value()] = j;
+        map_lock.lock();
+        if (m_object_map.empty())
+        {
+            // Build the map of output id hashes.  This is needed for fast searching
+            // of matching objects in separate scenes for motion-blur purposes.
+            //
+            // Go through each GeoInfo adding its out_id hash to the map referencing the
+            // object's index in the object_list_.  This way we can quickly find objects
+            // with matching out_ids.
+            for (uint32_t j=0; j < nObjects; ++j)
+                m_object_map[object(j).out_id().value()] = j;
+        }
+        map_lock.unlock();
     }
 
-    std::map<uint64_t, uint32_t>::iterator it = m_object_map.find(obj_id);
+    ObjectIdMap::iterator it = m_object_map.find(obj_id);
     if (it == m_object_map.end())
         return -1;
     return it->second;
@@ -128,6 +168,22 @@ Scene::getObject(const uint64_t& obj_id)
         return NULL;
     return &object_list_[obj];
 }
+
+
+#if 0
+/*! Return a LightContext pointer cast to a zpr::RayLightContext.
+*/
+zpr::RayLightContext*
+Scene::getLightContext(int32_t ltindex) const
+{
+#if DEBUG
+    assert(ltindex >= 0);
+    assert(ltindex < (int32_t)lights.size());
+    assert(lights[ltindex] != NULL);
+#endif
+    return reinterpret_cast<zpr::RayLightContext*>(lights[ltindex]);
+}
+#endif
 
 
 //-----------------------------------------------------------------------------

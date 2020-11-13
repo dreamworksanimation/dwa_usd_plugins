@@ -1,6 +1,6 @@
 set(PXR_PACKAGE zpOcclusion)
 
-pxr_plugin(zprOcclusion}
+pxr_plugin(zprOcclusion
     LIBRARIES
         zprender
         Fuser

@@ -67,6 +67,18 @@
 #endif
 
 
+// Used to magically (hackily) identify extended classes without using
+// dynamic_cast. No idea if this is a reasonably unique pattern to
+// expect it 'never' occur after an allocated class...but it should
+// work most of the time...
+// We rely on C++ packing the zpr::Scene struct vars right
+// after the DD::Image::Scene ones...
+//
+//    magic_token = 0100 1100 0111 0000 1111 0000 0111 1100 0011 1110 0000 1111 0000 1110 0011 0010
+//                  0x4c70f07c3e0f0e32
+#define ZPR_MAGIC_TOKEN 0x4c70f07c3e0f0e32ull
+
+
 #endif
 
 // end of zprender/api.h

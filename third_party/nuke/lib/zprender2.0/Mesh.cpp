@@ -54,7 +54,7 @@ static DD::Image::Lock my_lock;
 
     TODO: figure out why passing the Fsr::ArgSet by reference causes a crash. Compiler bug? Bad coding?
 */
-Mesh::Mesh(SurfaceContext*        stx,
+Mesh::Mesh(const MaterialContext* material_info,
            bool                   enable_subdivision,
            const Fsr::ArgSet&     subd_args,
            const Fsr::DoubleList& motion_times,
@@ -67,7 +67,7 @@ Mesh::Mesh(SurfaceContext*        stx,
            const uint32_t*        vertList,
            const Fsr::Vec2f*      UV_array,
            const Fsr::Vec4f*      Cf_array) :
-    RenderPrimitive(stx, motion_times),
+    RenderPrimitive(material_info, motion_times),
     m_status(SURFACE_NOT_DICED),
     m_P_offset(0.0, 0.0, 0.0),
     m_num_facetris(0),
@@ -154,6 +154,14 @@ Mesh::Mesh(SurfaceContext*        stx,
         // Bake the xform into the points during copy:
 #if DEBUG
         assert(P_arrays[j] != NULL);
+        // Nan check:
+        for (size_t i=0; i < numPoints; ++i)
+        {
+            const Fsr::Vec3f& P = P_arrays[j][i];
+            assert(!isnan(P.x));
+            assert(!isnan(P.y));
+            assert(!isnan(P.z));
+        }
 #endif
         mesh.P_list.resize(numPoints);
         xform.transform(mesh.P_list.data()/*dst*/, P_arrays[j]/*src*/, numPoints);

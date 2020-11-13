@@ -30,7 +30,7 @@
 #include "zprPreviewSurface.h"
 #include "RenderContext.h"
 #include "ThreadContext.h"
-#include "LightShader.h"
+#include "LightMaterial.h"
 
 /*  UsdPreviewSurface
 
@@ -145,30 +145,67 @@ zprPreviewSurface::zprPreviewSurface() :
     RayShader(input_defs, output_defs)
 {
     //std::cout << "zprPreviewSurface::ctor(" << this << ")" << std::endl;
+    
 
-    // Point the knobs to their values:
+
+    // Assign the knobs to their value destinations, overwriting them:
     assert(m_inputs.size() == 14 && m_inputs.size() == input_defs.size());
-    assignInputKnob("diffuseColor",        &k_diffuseColor);
-    assignInputKnob("emissiveColor",       &k_emissiveColor);
-    assignInputKnob("useSpecularWorkflow", &k_useSpecularWorkflow);
-    assignInputKnob("specularColor",       &k_specularColor);
-    assignInputKnob("metallic",            &k_metallic);
-    assignInputKnob("roughness",           &k_roughness);
-    assignInputKnob("clearcoat",           &k_clearcoat);
-    assignInputKnob("clearcoatRoughness",  &k_clearcoatRoughness);
-    assignInputKnob("opacity",             &k_opacity);
-    assignInputKnob("opacityThreshold",    &k_opacityThreshold);
-    assignInputKnob("ior",                 &k_ior);
-    assignInputKnob("normal",              &k_normal);
-    assignInputKnob("displacement",        &k_displacement);
-    assignInputKnob("occlusion",           &k_occlusion);
+    bindInputKnob("diffuseColor",        &inputs.k_diffuseColor);
+    bindInputKnob("emissiveColor",       &inputs.k_emissiveColor);
+    bindInputKnob("useSpecularWorkflow", &inputs.k_useSpecularWorkflow);
+    bindInputKnob("specularColor",       &inputs.k_specularColor);
+    bindInputKnob("metallic",            &inputs.k_metallic);
+    bindInputKnob("roughness",           &inputs.k_roughness);
+    bindInputKnob("clearcoat",           &inputs.k_clearcoat);
+    bindInputKnob("clearcoatRoughness",  &inputs.k_clearcoatRoughness);
+    bindInputKnob("opacity",             &inputs.k_opacity);
+    bindInputKnob("opacityThreshold",    &inputs.k_opacityThreshold);
+    bindInputKnob("ior",                 &inputs.k_ior);
+    bindInputKnob("normal",              &inputs.k_normal);
+    bindInputKnob("displacement",        &inputs.k_displacement);
+    bindInputKnob("occlusion",           &inputs.k_occlusion);
 }
 
 
 /*!
 */
-zprPreviewSurface::~zprPreviewSurface()
+zprPreviewSurface::zprPreviewSurface(const InputParams& input_params) :
+    RayShader(input_defs, output_defs),
+    inputs(input_params)
 {
+    // Point the knobs to their already-set values:
+    setInputKnobTarget("diffuseColor",        &inputs.k_diffuseColor);
+    setInputKnobTarget("emissiveColor",       &inputs.k_emissiveColor);
+    setInputKnobTarget("useSpecularWorkflow", &inputs.k_useSpecularWorkflow);
+    setInputKnobTarget("specularColor",       &inputs.k_specularColor);
+    setInputKnobTarget("metallic",            &inputs.k_metallic);
+    setInputKnobTarget("roughness",           &inputs.k_roughness);
+    setInputKnobTarget("clearcoat",           &inputs.k_clearcoat);
+    setInputKnobTarget("clearcoatRoughness",  &inputs.k_clearcoatRoughness);
+    setInputKnobTarget("opacity",             &inputs.k_opacity);
+    setInputKnobTarget("opacityThreshold",    &inputs.k_opacityThreshold);
+    setInputKnobTarget("ior",                 &inputs.k_ior);
+    setInputKnobTarget("normal",              &inputs.k_normal);
+    setInputKnobTarget("displacement",        &inputs.k_displacement);
+    setInputKnobTarget("occlusion",           &inputs.k_occlusion);
+}
+
+
+/*! Initialize any uniform vars prior to rendering.
+    This may be called without a RenderContext from the legacy shader system.
+*/
+/*virtual*/
+void
+zprPreviewSurface::updateUniformLocals(double  frame,
+                                       int32_t view)
+{
+    //std::cout << "  zprPreviewSurface::updateUniformLocals()"<< std::endl;
+    RayShader::updateUniformLocals(frame, view);
+
+    //m_diffuse_enabled = 
+    //m_specular_enabled =
+    //m_transmission_enabled =
+    //m_emission_enabled =
 }
 
 
@@ -176,11 +213,12 @@ zprPreviewSurface::~zprPreviewSurface()
 */
 /*virtual*/
 void
-zprPreviewSurface::validateShader(bool                 for_real,
-                                  const RenderContext& rtx)
+zprPreviewSurface::validateShader(bool                            for_real,
+                                  const RenderContext*            rtx,
+                                  const DD::Image::OutputContext* op_ctx)
 {
     //std::cout << "zprPreviewSurface::validateShader()" << std::endl;
-    RayShader::validateShader(for_real, rtx);
+    RayShader::validateShader(for_real, rtx, op_ctx);
 
 m_texture_channels = DD::Image::Mask_RGB; // this should be max of all input channels
 
@@ -200,44 +238,44 @@ zprPreviewSurface::evaluateSurface(RayShaderContext& stx,
     Fsr::Pixel& tex = stx.thread_ctx->binding_color;
     tex.setChannels(m_texture_channels);
 
-    Fsr::Vec3f diffuseColor(k_diffuseColor);
+    Fsr::Vec3f diffuseColor(inputs.k_diffuseColor);
     if (getInputShader(0))
     {
         getInputShader(0)->evaluateSurface(stx, tex);
         diffuseColor = tex.rgb();
     }
 
-    Fsr::Vec3f emissiveColor(k_emissiveColor);
+    Fsr::Vec3f emissiveColor(inputs.k_emissiveColor);
     if (getInputShader(1))
     {
         getInputShader(1)->evaluateSurface(stx, tex);
         emissiveColor = tex.rgb();
     }
 
-    float specularAmount = 1.0f;//k_;
+    float specularAmount = 1.0f;//inputs.k_;
 
-    Fsr::Vec3f specularColor(k_specularColor);
+    Fsr::Vec3f specularColor(inputs.k_specularColor);
     if (getInputShader(3))
     {
         getInputShader(3)->evaluateSurface(stx, tex);
         specularColor = tex.rgb();
     }
 
-    float specularRoughness = k_roughness;
+    float specularRoughness = inputs.k_roughness;
     if (getInputShader(5))
     {
         getInputShader(5)->evaluateSurface(stx, tex);
         specularRoughness = tex.r();
     }
 
-    Fsr::Vec3f normal(k_normal);
+    Fsr::Vec3f normal(inputs.k_normal);
     if (getInputShader(11))
     {
         getInputShader(11)->evaluateSurface(stx, tex);
         normal = tex.rgb();
     }
 
-    float occlusion = k_occlusion;
+    float occlusion = inputs.k_occlusion;
     if (getInputShader(13))
     {
         getInputShader(13)->evaluateSurface(stx, tex);
@@ -245,8 +283,8 @@ zprPreviewSurface::evaluateSurface(RayShaderContext& stx,
     }
 
     // Evaluate all lights.
-    Fsr::Vec3f illum(0.0f);
-    if (stx.master_light_shaders)
+    Fsr::Vec3f illum;
+    if (stx.master_light_materials)
         illum = evaluateLights(stx,
                                diffuseColor,
                                false/*useSpecularWorkflow*/,
@@ -259,9 +297,11 @@ zprPreviewSurface::evaluateSurface(RayShaderContext& stx,
                                Fsr::Vec3f(0.0f)/*clearcoatColor*/,
                                1.0f/*clearcoatRoughness*/,
                                occlusion);
+    else
+        illum = diffuseColor;
 
     out.rgb()   = illum + emissiveColor;
-    out.alpha() = k_opacity;
+    out.alpha() = inputs.k_opacity;
 }
 
 
@@ -283,13 +323,13 @@ zprPreviewSurface::evaluateLights(RayShaderContext& stx,
 {
     const Fsr::Vec3d V = stx.getViewVector(); // this may build a fake-stereo view-vector
 #if 0
-    Fsr::Vec3d Rrefl = V.reflect(stx.N); Rrefl.normalize();
+    const Fsr::Vec3d Rrefl(V.reflect(stx.N), 1.0f/*normalize*/);
 
     RayShaderContext Rrefl_stx(stx,
                                Rrefl,
                                std::numeric_limits<double>::epsilon(),
                                std::numeric_limits<double>::infinity(),
-                               Fsr::RayContext::GLOSSY | Fsr::RayContext::REFLECTION/*ray_type*/,
+                               Fsr::RayContext::glossyReflectionPath()/*ray_type*/,
                                RenderContext::SIDES_BOTH/*sides_mode*/);
 #endif
 
@@ -298,26 +338,30 @@ zprPreviewSurface::evaluateLights(RayShaderContext& stx,
 
 #if 1
     // TODO: finish the direct lighting! Need to test ray-traced light shadowing
-    Fsr::Pixel& light_color = stx.thread_ctx->light_color;
-    //light_color.setChannels(DD::Image::Mask_RGB);
+    Fsr::Pixel& lt_color = stx.thread_ctx->illum_color;
+    //lt_color.setChannels(DD::Image::Mask_RGB);
 
-    const uint32_t nLights = (uint32_t)stx.master_light_shaders->size();
+    const uint32_t nLights = (uint32_t)stx.master_light_materials->size();
     for (uint32_t i=0; i < nLights; ++i)
     {
-        LightShader* lshader = (*stx.master_light_shaders)[i];
-        if (!lshader)
+        LightMaterial* lt_material = (*stx.master_light_materials)[i];
+        if (!lt_material || !lt_material->getLightShader())
             continue;
 
         Fsr::RayContext Rlight; // ray from surface to light, for shadowing, etc.
         float direct_pdfW;
-        if (!lshader->illuminateSurface(stx, Rlight, direct_pdfW, light_color))
+        if (!lt_material->getLightShader()->illuminate(stx, Rlight, direct_pdfW, lt_color))
             continue; // not affecting this surface
+
+        lt_color.rgb() *= direct_pdfW;
+        if (lt_color.rgb().isZero())
+            continue;
 
         // Get shadowing factor for light (0=shadowed, 1=no shadow):
         //float shadow = 1.0f;
         RayShaderContext Rshadow_stx(stx,
                                      Rlight,
-                                     Fsr::RayContext::SHADOW/*ray_type*/,
+                                     Fsr::RayContext::shadowPath()/*ray_type*/,
                                      RenderContext::SIDES_BOTH/*sides_mode*/);
         Traceable::SurfaceIntersection Ishadow(std::numeric_limits<double>::infinity());
         if (stx.rtx->objects_bvh.getFirstIntersection(Rshadow_stx, Ishadow) > Fsr::RAY_INTERSECT_NONE &&
@@ -353,7 +397,7 @@ zprPreviewSurface::evaluateLights(RayShaderContext& stx,
 
         // Evaluate diffuse
         //Fsr::Vec3f diffuseContribution = diffuseColor*float(1.0 / M_PI);//evaluateDirectDiffuse();
-        Fsr::Vec3f diffuseContribution = diffuseColor*light_color.rgb()*N_dot_L;
+        Fsr::Vec3f diffuseContribution = diffuseColor*lt_color.rgb()*N_dot_L;
 
 #if 1
         // Naive specular lobe (phong):
@@ -362,7 +406,7 @@ zprPreviewSurface::evaluateLights(RayShaderContext& stx,
 
         // This is utter junk...:
         const float spec_wt = float(pow(Lrefl_dot_V, (1.0/specularRoughness)*10.0));
-        Fsr::Vec3f specularContribution = specularColor*light_color.rgb()*spec_wt;
+        Fsr::Vec3f specularContribution = specularColor*lt_color.rgb()*spec_wt;
         //Fsr::Vec3f specularContribution;
         //specularContribution.set(specularRoughness);//float(pow(Lrefl_dot_V, 1.0/0.01)));
 

@@ -31,7 +31,6 @@
 #define zprModify_h
 
 #include <zprender/RayShader.h>
-#include <zprender/RenderContext.h> // for GeoInfoContext
 
 namespace zpr {
 
@@ -90,8 +89,9 @@ class zprModify : public RayShader
     zprModify(const InputParams& _inputs);
 
     /*virtual*/ InputBinding* getInputBinding(uint32_t input);
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
+    /*virtual*/ void validateShader(bool                            for_real,
+                                    const RenderContext*            rtx,
+                                    const DD::Image::OutputContext* op_ctx);
     /*virtual*/ void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
     /*virtual*/ void evaluateSurface(RayShaderContext& stx,
                                      Fsr::Pixel&       out);

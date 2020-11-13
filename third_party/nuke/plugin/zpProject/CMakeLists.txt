@@ -1,6 +1,6 @@
 set(PXR_PACKAGE zpProject)
 
-pxr_plugin(zprProject}
+pxr_plugin(zprProject
     LIBRARIES
         zprender
         Fuser

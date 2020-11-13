@@ -13,10 +13,14 @@ if menu is not None:
     if gmenu is not None:
         gmenu.addCommand("ViewGeoAttributes", "nuke.createNode('ViewGeoAttributes')", icon="Modify.png")
 
-    #ltmenu = menu.findItem("Lights")
+    ltmenu = menu.findItem("Lights")
+    if ltmenu is not None:
+        ltmenu.addCommand("RectangleLight", "nuke.createNode('zpRectangleLight')", icon="Card.png")
+        ltmenu.addCommand("ReflectionCard", "nuke.createNode('zpRectangleLight')", icon="Card.png")
 
     #modmenu = menu.findItem("Modify")
     #if modmenu is not None:
+    #    modmenu.addCommand("MergeGeo",     "nuke.createNode('MergeGeo2')",     icon="Modify.png")
     #    modmenu.addCommand("TransformGeo", "nuke.createNode('TransformGeo2')", icon="Modify.png")
 
     shdmenu = menu.findItem("Shader")

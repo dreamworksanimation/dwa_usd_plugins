@@ -1,5 +1,5 @@
 //
-// Copyright 2019 DreamWorks Animation
+// Copyright 2020 DreamWorks Animation
 //
 // Licensed under the Apache License, Version 2.0 (the "Apache License")
 // with the following modification; you may not use this file except in
@@ -29,53 +29,47 @@
 
 #include <Fuser/SceneXform.h>
 #include <Fuser/SceneLoader.h>
+#include <Fuser/ObjectFilterKnob.h>
 
-#include <DDImage/TransformGeo.h>
+#include <DDImage/GeoOp.h>
+#include <DDImage/AxisOp.h>
 #include <DDImage/Knobs.h>
 
 using namespace DD::Image;
 
 
-/*! Fuser replacement for the stock Nuke TranformGeo plugin that adds
+/*! Fuser replacement for the stock Nuke TransformGeo plugin that adds
     scene file loading capabilities (usd/abc/fbx/etc.)
 */
-class TransformGeo2 : public TransformGeo,
+class TransformGeo2 : public GeoOp,
                       public Fsr::SceneXform,
                       public Fsr::SceneLoader
 {
   protected:
-    bool    k_transform_normals;    //!< Apply the xform to the normals in all GeoInfo
-
-    // From DD::Image::TransformGeo:
-    //Matrix4 matrix_;            //!< Object matrix - parent * local
-    //Matrix4 concat_matrix_;     //!< Concatented input matrix * matrix_
-    //GeoOp*  concat_input_;      //!< Op this one concatenates its matrix with
-
-    // From DD::Image::LookAt:
-    //Matrix4    my_local;        //!< For the Axis_Knob to store into
-    //bool       my_transform_normals;
-    //int        my_lookat_axis;
-    //bool       my_rotate_x;
-    //bool       my_rotate_y;
-    //bool       my_rotate_z;
-    //bool       my_lookat_use_quat;
-    //double     my_lookat_strength;
+    Fsr::ObjectFilter k_object_filter;
 
 
   public:
     static const Description description;
     /*virtual*/ const char* Class() const { return description.name; }
+    /*virtual*/ const char* node_help() const { return __DATE__ " " __TIME__ "\n"
+        "Modify or assign the transform of the incoming geometry objects, "
+        "optionally using the filter to select one or more objects to affect.\n"
+        "\n"
+        "The default is to affect the transform of all input objects.";
+    }
 
+    /*virtual*/ const char* displayName() const { return "TransformGeo"; }
 
     /*!
     */
     TransformGeo2(Node* node) :
-        TransformGeo(node),
+        GeoOp(node),
         Fsr::SceneXform(),
-        Fsr::SceneLoader(),
-        k_transform_normals(false)
+        Fsr::SceneLoader()
     {
-        //
+        // Lookat aim location from pivot location is better for geometry:
+        k_look_vals.setToDefault(Fsr::LookatVals::AIM_FROM_PIVOT/*aim_location_mode*/);
     }
 
     //------------------------------------------------------------
@@ -87,9 +81,6 @@ class TransformGeo2 : public TransformGeo,
     //! SceneXform:: Return the lookat input number, or -1 if the lookat source is local. Must implement.
     /*virtual*/ int lookatInput() const { return 2; }
 
-    //! SceneXform:: If attached Op has an Axis_knob to fill in for the local transform, return it. Must implement.
-    ///*virtual*/ Knob* localTransformKnob() const { return this->knob("transform"); }
-
 
     //------------------------------------------------------------
     // SceneExtender/SceneLoader virtual methods:
@@ -100,9 +91,56 @@ class TransformGeo2 : public TransformGeo,
     //! SceneExtender:: If extender is attached to an GeoOp subclass return 'this'.
     /*virtual*/ GeoOp* asGeoOp() { return this; }
 
+    //! Allow subclasses to gain access to sibling functions:
+    /*virtual*/ SceneXform*  asSceneXform()   { return this; }
+    /*virtual*/ SceneLoader* asSceneLoader()  { return this; }
+
 
     //------------------------------------------------------------
-    // DD::Image::Op/GeoOp/TransformGeo virtual methods.
+    // DD::Image::Op/GeoOp virtual methods.
+
+    /*virtual*/ int minimum_inputs() const { return 3; }
+    /*virtual*/ int maximum_inputs() const { return 3; }
+
+
+    //! Only GeoOp allowed on input 0, only AxisOp allowed on input 1
+    /*virtual*/
+    bool test_input(int input,
+                    Op* op) const
+    {
+        if      (input == 0)
+            return GeoOp::test_input(input, op);
+        else if (input == 1)
+            return dynamic_cast<AxisOp*>(op) != NULL;
+        else if (input == 2)
+            return dynamic_cast<AxisOp*>(op) != NULL;
+        return false;
+    }
+
+
+    //! Return a default GeoOp for input 0, and a NULL for input 1.
+    /*virtual*/
+    Op* default_input(int input) const
+    {
+        if (input == 0)
+           return GeoOp::default_input(input);
+        return NULL;
+    }
+
+
+    /*virtual*/
+    const char* input_label(int   input,
+                            char* buffer) const
+    {
+        if      (input == 0)
+            return "";
+        else if (input == 1)
+            return "axis";
+        else if (input == 2)
+            return "look";
+        return NULL;
+    }
+
 
     /*virtual*/
     void knobs(Knob_Callback f)
@@ -114,28 +152,32 @@ class TransformGeo2 : public TransformGeo,
                                               true/*show_hierarchy*/);
 
         //---------------------------------------------
-        Divider(f);
-        GeoOp::knobs(f);
 
-        Bool_knob(f, &my_transform_normals, "transform_normals", "transform normals");
-            Tooltip(f, "Apply the transform to the normals in all selected GeoInfo");
+        DD::Image::BeginGroup(f, "object_filter", "object filter");
+        {
+            SetFlags(f, DD::Image::Knob::CLOSED | Knob::DO_NOT_WRITE);
+            Fsr::ObjectFilter_knob(f, &k_object_filter, "material_filter", "object filter:");
+            Divider(f);
+        }
+        DD::Image::EndGroup(f);
+
+        GeoOp::knobs(f);
+        bool dummy_bool = false;
+        Bool_knob(f, &dummy_bool, "transform_normals", "transform normals");
+            Tooltip(f, "Apply the transform to the normals in all selected GeoInfo"
+                       "\n"
+                       "Disabled: it's not necessary to transform the normals unless "
+                       "the point locations are being baked, which is not an option "
+                       "right now");
+            SetFlags(f, Knob::DISABLED);
+        Newline(f);
 
         //---------------------------------------------
-        addParentingKnobs(f, true/*group_open*/);
-        DD::Image::Newline(f);
+        Fsr::SceneXform::addParentingKnobs(f, true/*group_open*/);
+        Newline(f);
 
-#if 0
-        /* Allow protected Op knobs to be set by SceneXform interface by passing
-           their target vars in.
-        */
-        SceneXform::_addOpTransformKnobs(f, &this->my_local);
-        //SceneXform::addLookatKnobs(f);
-#else
-        Axis_knob(f, &my_local, "transform"); // 'my_local' in LookAt class
-#endif
-
-        //=====================================================================
-        LookAt::knobs(f); // makes a 'Look' tab
+        Fsr::SceneXform::_addGeoOpTransformKnobs(f);
+        Fsr::SceneXform::addLookatKnobs(f);
     }
 
 
@@ -145,111 +187,69 @@ class TransformGeo2 : public TransformGeo,
         int call_again = 0;
 
         // Let interfaces handle their changes:
-        //call_again =  Fsr::SceneXform::knobChanged(k, call_again);
+        call_again =  Fsr::SceneXform::knobChanged(k, call_again);
         call_again = Fsr::SceneLoader::knobChanged(k, call_again);
+        if (call_again)
+            return call_again;
 
-        // Let base class handle their changes:
-        if (TransformGeo::knob_changed(k))
-            call_again = 1;
-
-        return call_again;
+        return GeoOp::knob_changed(k);
     }
 
 
-    /*! Validate our parent axis first, if any, then apply our local
-        transform to that.
-    */
+    //!
     /*virtual*/
     void _validate(bool for_real)
     {
-        // Check for any loader errors:
-        Fsr::SceneLoader::validateSceneLoader(for_real);
+        Op::_validate(for_real); // validate the inputs
 
-        TransformGeo::_validate(for_real);
+        Fsr::SceneLoader::validateSceneLoader(for_real); // check for any loader errors
 
-#if 0
-        // Concatenate scenegraph parent matrix from input1:
-        AxisOp* parent = axis_input();
-        if (parent)
-            matrix_ = parent->matrix() * my_local;
-        else
-            matrix_ = my_local;
+        // This will update the input, parent, etc matrices:
+        Fsr::SceneXform::_validateGeoOpMatrices(for_real);
 
-        // See if we can concatenate with input0, do so:
-        TransformGeo* previous = dynamic_cast<TransformGeo*>(input0());
-        if (!previous)
-        {
-            // No concatenate:
-            concat_input_ = input0();
-            concat_matrix_ = matrix_;
-        }
-        else
-        {
-            // Concatenate local matrix * parent matrix:
-            concat_input_ = previous->concat_input();
-            concat_matrix_ = matrix_ * previous->concat_matrix();
-        }
-
-        if (lookat_input())
-        {
-            lookat_input()->validate(for_real);
-            perform_lookat();
-        }
-
-        // Calculate the geometry hashes:
-        update_geometry_hashes();
-#endif
+        update_geometry_hashes(); // calls get_geometry_hash()
     }
+
 
     //! Hash the matrix so that any change causes the points to be invalid.
     /*virtual*/
     void get_geometry_hash()
     {
-#if 1
-        TransformGeo::get_geometry_hash();
-#else
-        // Get hashes from input0:
         GeoOp::get_geometry_hash();
 
-        // TODO: get the hash from the double-precision matrices instead
-        matrix_.append(geo_hash[Group_Matrix]);
-        if (lookat_input())
-            lookat_matrix_.append(geo_hash[Group_Matrix]);
-
-        geo_hash[Group_Attributes].append(k_transform_normals);
-#endif
+        // Controls that affect the Object matrices:
+        k_object_filter.append(geo_hash[Group_Matrix]);
+        geo_hash[Group_Matrix].append(m_world_matrix.array(), sizeof(Fsr::Mat4d));
     }
+
 
     //! Apply the concat matrix to all the GeoInfos.
     /*virtual*/
     void geometry_engine(Scene&        scene,
                          GeometryList& out)
     {
-#if 1
-        TransformGeo::geometry_engine(scene, out);
-#else
-        // Get the geometry from the concat input GeoOp:
-        concat_input_->get_geometry(scene, out);
+        GeoOp::geometry_engine(scene, out);
+        //std::cout << "TransformGeo2::geometry_engine(" << node_name() << "):" << std::endl;
+        //std::cout << "    input_matrix" << m_input_matrix  << std::endl;
+        //std::cout << "   parent_matrix" << m_parent_matrix << std::endl;
+        //std::cout << "     axis_matrix" << m_axis_matrix   << std::endl;
+        //std::cout << "    local_matrix" << m_local_matrix  << std::endl;
+        //std::cout << "    world_matrix" << m_world_matrix  << std::endl;
 
-        // TODO: apply the double-precision matrices instead
-        const uint32_t nObjects = out.size();
-        for (uint32_t i=0; i < nObjects; i++)
+        if (!m_world_matrix.isIdentity())
         {
-            // TODO: apply object filtering!
-            GeoInfo& info = out[i];
-
-	        info.matrix = (concat_matrix_ * info.matrix);
-
-#if 0
-            // TODO: what does this even mean unless we're baking the xform into the point locations
-            //       as well....?
-            const DD::Image::AttribContext* N = info.get_typed_attribcontext("N",  DD::Image::NORMAL_ATTRIB);
-            if (N)
-#endif
-                
+            // Apply the matrix to selected objects:
+            const size_t nObjects = out.size();
+            for (size_t obj=0; obj < nObjects; ++obj)
+            {
+                GeoInfo& info = out[obj];
+                if (!k_object_filter.matchObject(info))
+                    continue;
+                info.matrix = (m_world_matrix * Fsr::Mat4d(info.matrix)).asDDImage();
+            }
         }
-#endif
     }
+
 
     /*! The default GeoOp::build_handles will build a Scene object and draw
         it. This is not needed by TransformGeo, as it can just change the OpenGL
@@ -259,21 +259,98 @@ class TransformGeo2 : public TransformGeo,
     /*virtual*/
     void build_handles(ViewerContext* vtx)
     {
-#if 1
-        TransformGeo::build_handles(vtx);
-#else
-        // TODO: apply the double-precision matrix in OpenGL instead
-#endif
+        // Don't display at all if Viewer is in 2D *transform* mode:
+        if (vtx->transform_mode() == DD::Image::VIEWER_2D)
+            return;
+
+        DD::Image::Matrix4         saved_matrix    = vtx->modelmatrix;
+        DD::Image::ViewerConnected saved_connected = vtx->connected();
+
+        // Go up the inputs asking them to build their handles.
+        // Do this first so that other ops always have a chance to draw!
+
+        // Parent and look inputs draw in current world space:
+        DD::Image::Op::add_input_handle(1, vtx);
+        DD::Image::Op::add_input_handle(2, vtx);
+
+        // Draw the geometry if the node's enabled:
+        if (!node_disabled())
+        {
+            this->validate(false); // get transforms up to date
+
+            // If Viewer not in 2D display mode and it's asking to show objects
+            // we take ownership of connection so objects only draw once:
+            if (vtx->viewer_mode() > DD::Image::VIEWER_2D && vtx->connected() >= SHOW_OBJECT)
+            {
+                // GeoOp::add_draw_geometry() will construct the output geometry
+                // and add callbacks to draw it in the viewer.
+                // See notes in GeoOp.h about prep steps.
+                DD::Image::GeoOp::add_draw_geometry(vtx);
+
+                // We're the ones drawing objects:
+                vtx->connected(DD::Image::CONNECTED);
+            }
+        }
+
+        // Let other GeoOps draw their knobs, but they shouldn't draw geometry if
+        // we're enabled and CONNECTED:
+        DD::Image::Op::add_input_handle(0, vtx);
+
+        // Draw our knobs?
+        if (k_editable)
+        {
+            // Our Axis_knob is drawn/manipulated in the parent-space context,
+            // so mult in just the parent xform. vtx->modelmatrix will be saved
+            // in each build-knob entry:
+            vtx->modelmatrix = (Fsr::Mat4d(saved_matrix) * m_input_matrix * m_parent_matrix).asDDImage();
+
+            // Build the local-space handles (Axis_knob):
+            DD::Image::Op::build_knob_handles(vtx);
+        }
+
+        vtx->modelmatrix = saved_matrix; // don't leave matrix messed up
+        vtx->connected(saved_connected); // don't leave connected state messed up
     }
+
+
+    //! Select just the filtered objects.
+    /*virtual*/
+    void select_geometry(ViewerContext* vtx,
+                         GeometryList&  out)
+    {
+        // Pass it on so the upstream nodes can do their selections:
+        static_cast<GeoOp*>(Op::input0())->select_geometry(vtx, out);
+        if (!node_selected())
+            return; // no changes if the node's not selected
+
+        // Select only the objects that are filtered:
+        const size_t nObjects = out.size();
+        for (size_t obj=0; obj < nObjects; ++obj)
+        {
+            GeoInfo& info = out[obj];
+            if (info.selectable && info.display3d > DISPLAY_OFF &&
+                k_object_filter.matchObject(info))
+            {
+                info.selected   = true;
+                info.select_geo = this;
+            }
+            else
+            {
+                info.selected   = false;
+                info.select_geo = NULL;
+            }
+        }
+    }
+
 };
 
 
 static Op* build(Node* node) { return new TransformGeo2(node); }
-const Op::Description TransformGeo2::description("TransformGeo3", build);
+const Op::Description TransformGeo2::description("TransformGeo2", build);
 
 
 // end of TransformGeo2.cpp
 
 //
-// Copyright 2019 DreamWorks Animation
+// Copyright 2020 DreamWorks Animation
 //

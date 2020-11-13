@@ -59,6 +59,12 @@ class UsdArchiveContext : public GeoSceneFileArchiveContext
 class usdReaderFormat : public GeoSceneGraphReaderFormat
 {
   public:
+    bool        k_show_inactive_prims;      //!< Inactive prims will show up in scenegraph
+    bool        k_enable_inactive_prims;    //!< Allow the enabling of prims via masks
+    const char* k_inactive_mask;            //!< Which inactive prims to enable
+
+
+  public:
     static DD::Image::GeoReaderFormat* usdBuild(DD::Image::ReadGeo* geo) { return new usdReaderFormat(geo); }
 
     //!
@@ -76,26 +82,30 @@ class usdReaderFormat : public GeoSceneGraphReaderFormat
     const char* help() { return "usdReader"; }
 
     /*virtual*/
-    void knobs(DD::Image::Knob_Callback f) 
-    {
-        GeoSceneGraphReaderFormat::knobs(f);
-    }
+    void knobs(DD::Image::Knob_Callback f);
 
     /*virtual*/
-    void extraKnobs(DD::Image::Knob_Callback f)
-    {
-        GeoSceneGraphReaderFormat::extraKnobs(f);
-    }
+    void extraKnobs(DD::Image::Knob_Callback f);
+
+    //================================================================
+    // From GeoSceneGraphReaderFormat:
+    //================================================================
+
+    /*virtual*/
+    void addObjectSelectionKnobs(DD::Image::Knob_Callback f);
+
+    /*virtual*/
+    void addImportOptionsKnobs(DD::Image::Knob_Callback f);
+
+    /*virtual*/
+    void addSceneGraphKnobs(DD::Image::Knob_Callback f);
 
     //================================================================
     // From ReaderFormat (Reader.h):
     //================================================================
 
     /*virtual*/
-    void append(DD::Image::Hash& hash)
-    {
-        GeoSceneGraphReaderFormat::append(hash);
-    }
+    void append(DD::Image::Hash& hash);
 
 };
 
@@ -109,6 +119,9 @@ class usdReader : public GeoSceneGraphReader
 {
   protected:
     UsdArchiveContext*  m_stage_cache_ctx;  //!< Contains the stage cache id value
+
+    //!
+    void appendInactivePrimControls(DD::Image::Hash&);
 
 
   public:
@@ -139,6 +152,21 @@ class usdReader : public GeoSceneGraphReader
 
     //! Return a pointer to the implementation's GeoSceneFileArchiveContext object.
     /*virtual*/ GeoSceneFileArchiveContext* sceneFileArchiveContext() const { return m_stage_cache_ctx; }
+
+    /*virtual*/ void _getFileHash(DD::Image::Hash&);
+    /*virtual*/ void _getReaderUIHash(DD::Image::Hash&);
+
+    /*virtual*/ void get_geometry_hash(DD::Image::Hash* geo_hashes);
+
+    //! Add or modify args to pass to node or execution contexts.
+    /*virtual*/ void _appendNodeContextArgs(ArgSet& node_args);
+    /*virtual*/ void _appendExecuteContextArgs(const Fsr::ArgSet& node_args,
+                                               Fsr::NodeContext&  exec_ctx);
+
+    //! Knob changed callbacks need to be handled in the GeoReader, not the GeoReaderFormat.
+    /*virtual*/
+    int knob_changed(DD::Image::Knob*);
+
 
 }; // usdReader
 

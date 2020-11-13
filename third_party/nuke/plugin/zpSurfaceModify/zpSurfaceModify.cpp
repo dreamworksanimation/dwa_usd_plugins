@@ -87,23 +87,32 @@ class zpSurfaceModify : public SurfaceMaterialOp
 
     /*virtual*/
     const char* input_label(int   input,
-                            char* buf) const
+                            char* buffer) const
     {
-        if (input == 0)
-            buf[0] = 0;
-        else
-            buf = const_cast<char*>("map");
-        return buf;
+        if      (input == 0) buffer = const_cast<char*>("");
+        else if (input == 1) buffer = const_cast<char*>("map");
+        return buffer;
     }
+
+
+    //----------------------------------------------------------------------------------
 
 
     //! Return the InputBinding for an input.
     /*virtual*/
-    InputBinding* getInputBinding(uint32_t input)
+    InputBinding* getInputBindingForOpInput(uint32_t op_input)
     {
-        if      (input == 0) return &k_inputs.k_bindings[zprModify::BG0 ];
-        else if (input == 1) return &k_inputs.k_bindings[zprModify::MAP1];
+        if      (op_input == 0) return &k_inputs.k_bindings[zprModify::BG0 ];
+        else if (op_input == 1) return &k_inputs.k_bindings[zprModify::MAP1];
         return NULL;
+    }
+
+    //! Return the Op input for a shader input, or -1 if binding is not exposed.
+    /*virtual*/ int32_t getOpInputForShaderInput(uint32_t shader_input)
+    {
+        if      (shader_input == zprModify::BG0 ) return 0;
+        else if (shader_input == zprModify::MAP1) return 1;
+        return -1;
     }
 
 

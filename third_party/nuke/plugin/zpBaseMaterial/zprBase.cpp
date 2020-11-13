@@ -30,7 +30,7 @@
 #include "zprBase.h"
 
 #include <zprender/ThreadContext.h>
-#include <zprender/LightShader.h>
+#include <zprender/LightMaterial.h>
 
 
 namespace zpr {
@@ -167,10 +167,11 @@ zprBase::getInputBinding(uint32_t input)
 
 /*virtual*/
 void
-zprBase::validateShader(bool                 for_real,
-                        const RenderContext& rtx)
+zprBase::validateShader(bool                            for_real,
+                        const RenderContext*            rtx,
+                        const DD::Image::OutputContext* op_ctx)
 {
-    RayShader::validateShader(for_real, rtx); // < get the inputs
+    RayShader::validateShader(for_real, rtx, op_ctx); // validate inputs, update uniforms
 
     updateLocals(inputs, locals);
 
@@ -212,7 +213,7 @@ zprBase::evaluateSurface(RayShaderContext& stx,
 
     // TODO: make this a debug assert and move logic to RayShader base class call
     // Don't bother if it's a shadow ray:
-    if (stx.Rtx.type_mask & Fsr::RayContext::SHADOW)
+    if (stx.Rtx.type_mask & Fsr::RayContext::shadowPath())
         return;
 
     // Always output RGBA:
@@ -369,7 +370,7 @@ zprBase::evaluateSurface(RayShaderContext& stx,
     //------------------------------------------------------------------
     // Direct lighting
     //
-    if (stx.direct_lighting_enabled && stx.master_light_shaders)
+    if (stx.direct_lighting_enabled && stx.master_light_materials)
     {
         //------------------------------------------------------------------
         // Direct diffuse
@@ -383,17 +384,20 @@ zprBase::evaluateSurface(RayShaderContext& stx,
 
 // TODO: finish the direct lighting! Need to test ray-traced light shadowing
 #if 1
-                Fsr::Pixel& light_color = stx.thread_ctx->light_color;
+                Fsr::Pixel& light_color = stx.thread_ctx->illum_color;
                 light_color.channels = DD::Image::Mask_RGB;
 
-                const uint32_t nLights = (uint32_t)stx.master_light_shaders->size();
+                const uint32_t nLights = (uint32_t)stx.master_light_materials->size();
                 for (uint32_t i=0; i < nLights; ++i)
                 {
-                    LightShader* lshader = (*stx.master_light_shaders)[i];
-                    lshader->evaluateSurface(stx, light_color);
-                    illum.x += light_color[DD::Image::Chan_Red  ];
-                    illum.y += light_color[DD::Image::Chan_Green];
-                    illum.z += light_color[DD::Image::Chan_Blue ];
+                    LightMaterial* ltmaterial = (*stx.master_light_materials)[i];
+                    if (ltmaterial->getLightShader())
+                    {
+                        ltmaterial->getLightShader()->evaluateSurface(stx, light_color);
+                        illum.x += light_color[DD::Image::Chan_Red  ];
+                        illum.y += light_color[DD::Image::Chan_Green];
+                        illum.z += light_color[DD::Image::Chan_Blue ];
+                    }
                     //std::cout << "  light_color" << light_color.color() << std::endl;
                     //std::cout << "  illum" << illum << std::endl;
                 }
@@ -469,17 +473,20 @@ zprBase::evaluateSurface(RayShaderContext& stx,
                 Fsr::Vec3f illum(0,0,0); // Direct illumination accumulator
 // TODO: finish the direct lighting! Need to test ray-traced light shadowing
 #if 1
-                Fsr::Pixel& light_color = stx.thread_ctx->light_color;
+                Fsr::Pixel& light_color = stx.thread_ctx->illum_color;
                 light_color.setChannels(DD::Image::Mask_RGB);
 
-                const uint32_t nLights = (uint32_t)stx.master_light_shaders->size();
+                const uint32_t nLights = (uint32_t)stx.master_light_materials->size();
                 for (uint32_t i=0; i < nLights; ++i)
                 {
-                    LightShader* lshader = (*stx.master_light_shaders)[i];
-                    lshader->evaluateSurface(stx, light_color);
-                    illum.x += light_color[DD::Image::Chan_Red  ];
-                    illum.y += light_color[DD::Image::Chan_Green];
-                    illum.z += light_color[DD::Image::Chan_Blue ];
+                    LightMaterial* ltmaterial = (*stx.master_light_materials)[i];
+                    if (ltmaterial->getLightShader())
+                    {
+                        ltmaterial->getLightShader()->evaluateSurface(stx, light_color);
+                        illum.x += light_color[DD::Image::Chan_Red  ];
+                        illum.y += light_color[DD::Image::Chan_Green];
+                        illum.z += light_color[DD::Image::Chan_Blue ];
+                    }
                     //std::cout << "  light_color" << light_color.color() << std::endl;
                     //std::cout << "  illum" << illum << std::endl;
                 }

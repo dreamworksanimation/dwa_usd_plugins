@@ -93,7 +93,7 @@ class FSR_EXPORT Mat4
     /*col 0*/ a00, a10, a20, a30,
     /*col 1*/ a01, a11, a21, a31,
     /*col 2*/ a02, a12, a22, a32,
-    /*col 2*/ a03, a13, a23, a33;
+    /*col 3*/ a03, a13, a23, a33;
 
     /*---------------------------*/
     /*       Constructors        */
@@ -474,7 +474,8 @@ class FSR_EXPORT Mat4
 
 
 #if 1
-    /*! Calculate ZXY rotations to align with direction vector.
+    /*! Calculate ZXY rotations to align with direction vector and the
+        suggested rotation order to apply them with.
         Return true if rotations have been affected.
     */
     template<typename S>
@@ -483,7 +484,8 @@ class FSR_EXPORT Mat4
                                   bool               do_rx,
                                   bool               do_ry,
                                   bool               do_rz,
-                                  Vec3<S>&           radian_rotations);
+                                  Vec3<S>&           radian_rotations,
+                                  RotationOrder&     rotation_order);
 #else
     //! Construct a transform to orient -Z towards the interest point.
     void lookAt(const Vec4<T>& eye,
@@ -532,7 +534,7 @@ class FSR_EXPORT Mat4
     //! Rotations are in degrees.
     bool extractSHRT(Vec3<T>&           scaling,
                      Vec3<T>&           shearing,
-                     Vec3<T>&           rotationAngles,
+                     Vec3<T>&           rotationsInDegrees,
                      Vec3<T>&           translation,
                      Fsr::RotationOrder order = Fsr::ZXY_ORDER) const;
 
@@ -1306,9 +1308,9 @@ Mat4<T>::vectorToRotations(const Vec3<S>&     dir_vec,
                            bool               do_rx,
                            bool               do_ry,
                            bool               do_rz,
-                           Vec3<S>&           rotations)
+                           Vec3<S>&           rotations,
+                           RotationOrder&     rotation_order)
 {
-#if 1
     rotations.set((S)0);
     S d;
     // Calculate the primary rotation first then the second, and which rotation axis we
@@ -1316,63 +1318,38 @@ Mat4<T>::vectorToRotations(const Vec3<S>&     dir_vec,
     switch (align_axis)
     {
         case AXIS_X_MINUS:
-            if (do_ry) { rotations.y = ::atan2(-dir_vec.z, dir_vec.x); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.x*dir_vec.x); } else d =  dir_vec.x;
-            if (do_rz) { rotations.z = ::atan2( dir_vec.y, d); }
-            break;
-        case AXIS_X_PLUS:
             if (do_ry) { rotations.y = ::atan2( dir_vec.z,-dir_vec.x); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.x*dir_vec.x); } else d = -dir_vec.x;
             if (do_rz) { rotations.z =-::atan2( dir_vec.y, d); }
+            rotation_order = XYZ_ORDER;
+            break;
+        case AXIS_X_PLUS:
+            if (do_ry) { rotations.y = ::atan2(-dir_vec.z, dir_vec.x); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.x*dir_vec.x); } else d =  dir_vec.x;
+            if (do_rz) { rotations.z = ::atan2( dir_vec.y, d); }
+            rotation_order = XYZ_ORDER;
             break;
         //
         case AXIS_Y_MINUS:
-            if (do_rx) { rotations.x = ::atan2( dir_vec.z, dir_vec.y); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.y*dir_vec.y); } else d =  dir_vec.y;
-            if (do_rz) { rotations.z =-::atan2( dir_vec.x, d); }
-            break;
-        case AXIS_Y_PLUS:
             if (do_rx) { rotations.x = ::atan2(-dir_vec.z,-dir_vec.y); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.y*dir_vec.y); } else d = -dir_vec.y;
             if (do_rz) { rotations.z = ::atan2( dir_vec.x, d); }
+            rotation_order = YZX_ORDER;
+            break;
+        case AXIS_Y_PLUS:
+            if (do_rx) { rotations.x = ::atan2( dir_vec.z, dir_vec.y); d = std::sqrt(dir_vec.z*dir_vec.z + dir_vec.y*dir_vec.y); } else d =  dir_vec.y;
+            if (do_rz) { rotations.z =-::atan2( dir_vec.x, d); }
+            rotation_order = YZX_ORDER;
             break;
         //
         case AXIS_Z_MINUS:
-            if (do_ry) { rotations.y = ::atan2( dir_vec.x, dir_vec.z); d = std::sqrt(dir_vec.x*dir_vec.x + dir_vec.z*dir_vec.z); } else d =  dir_vec.z;
-            if (do_rx) { rotations.x =-::atan2( dir_vec.y, d); }
-            break;
-        case AXIS_Z_PLUS:
             if (do_ry) { rotations.y = ::atan2(-dir_vec.x,-dir_vec.z); d = std::sqrt(dir_vec.x*dir_vec.x + dir_vec.z*dir_vec.z); } else d = -dir_vec.z;
             if (do_rx) { rotations.x = ::atan2( dir_vec.y, d); }
+            rotation_order = ZXY_ORDER;
+            break;
+        case AXIS_Z_PLUS:
+            if (do_ry) { rotations.y = ::atan2( dir_vec.x, dir_vec.z); d = std::sqrt(dir_vec.x*dir_vec.x + dir_vec.z*dir_vec.z); } else d =  dir_vec.z;
+            if (do_rx) { rotations.x =-::atan2( dir_vec.y, d); }
+            rotation_order = ZXY_ORDER;
             break;
     }
-#else
-    // Rotate the Y vector around the roll value:
-    const T r = radians(roll);
-    Vec4<T> Y(-std::sin(r), std::cos(r), (T)0);
-    Y.normalize();
-    // Find the reverse view(Z) vector(so that Z points away from the
-    // interest point).  For a right-handed system, subtract eye from center:
-    Vec4<T> Z;
-    if (left_handed)
-    {
-        Z = (eye - interest);
-        Z.normalize();
-    }
-    else
-    {
-        Z = (interest - eye);
-        Z.normalize();
-    }
-    // Find the X vector:
-    Vec4<T> X = Y.cross(Z);
-    X.normalize();
-    // Recompute Y(rotated about X):
-    Y = Z.cross(X);
-    Y.normalize();
-    Mat4<T> m;
-    m.a00 =  X.x; m.a01 =  Y.x; m.a02 =  Z.x; m.a03 = (T)0;
-    m.a10 =  X.y; m.a11 =  Y.y; m.a12 =  Z.y; m.a13 = (T)0;
-    m.a20 =  X.z; m.a21 =  Y.z; m.a22 =  Z.z; m.a23 = (T)0;
-    m.a30 = (T)0; m.a31 = (T)0; m.a32 = (T)0; m.a33 = (T)1;
-    *this *= m;
-#endif
 
     return true;
 }
@@ -1423,9 +1400,9 @@ Mat4<T>::getRotations(Fsr::RotationOrder order,
                       T&                 radian_rZ) const
 {
     // Normalize the local X, Y and Z axes to remove any scaling:
-    Vec3<T> X = getXAxis(); X.normalize();
-    Vec3<T> Y = getYAxis(); Y.normalize();
-    Vec3<T> Z = getZAxis(); Z.normalize();
+    const Vec3<T> X(getXAxis(), 1.0f/*normalize*/);
+    const Vec3<T> Y(getYAxis(), 1.0f/*normalize*/);
+    const Vec3<T> Z(getZAxis(), 1.0f/*normalize*/);
     switch (order)
     {
         case XYZ_ORDER:
@@ -1704,7 +1681,7 @@ template<typename T>
 inline bool 
 Mat4<T>::extractSHRT(Vec3<T>&           scaling,
                      Vec3<T>&           shearing,
-                     Vec3<T>&           rotationAngles,
+                     Vec3<T>&           rotationsInDegrees,
                      Vec3<T>&           translation,
                      Fsr::RotationOrder order) const
 {
@@ -1715,7 +1692,7 @@ Mat4<T>::extractSHRT(Vec3<T>&           scaling,
     if (!rotm.extractAndRemoveScalingAndShear(scaling, shearing))
         return false;
 
-    rotationAngles = rotm.getRotations(order).asDegrees();
+    rotationsInDegrees = rotm.getRotations(order).asDegrees();
 
     return true;
 }
@@ -1748,7 +1725,7 @@ lerp(const Mat4<T>& m0,
         // Normalizing the axes returns their lengths to use as scales:
         const Vec3<T> axes_scale(axisX.normalize(),
                                  axisY.normalize(),
-                                 axisZ.normalize()); // Use slow normalize as length may be > 1.0
+                                 axisZ.normalize());
 
         Mat4<T> mlerp;
         mlerp.setToTranslation(m0.getTranslation()*inv_Tt + m1.getTranslation()*Tt);

@@ -81,6 +81,11 @@ class FSR_EXPORT Vec3
     template<typename S>
     explicit Vec3(const Vec3<S>& v) : x(T(v.x)), y(T(v.y)), z(T(v.z)) {}
 
+    //! Constructor that normalizes vector after copy if 'n' is > 0.
+    template<typename S>
+    explicit Vec3(const Vec3<S>& v,
+                  float          n);
+
     //! Constructor that sets all components.
     Vec3(T _x, T _y , T _z) : x(_x), y(_y), z(_z) {}
 
@@ -232,9 +237,6 @@ class FSR_EXPORT Vec3
     //! Change the vector to be unit length. Returns the original length.
     T    normalize() { T d = this->length(); if (d > (T)0) *this /= d; return d; }
 
-    //! Approximate normalization, returns approximate length.
-    T    fastNormalize();
-
     //! Return a vector of this one reflected around a normal vector.
     Vec3 reflect(const Vec3& N) const { return (N * (this->dot(N) * (T)2) - *this); }
 
@@ -367,7 +369,29 @@ inline std::ostream& operator << (std::ostream& o, const Vec3<T>& v)
 
 //-----------------------------------------------------------
 
-//! Copy to/from a DD::Image::Vector3.
+// Copy and normalize in same ctor.
+template<typename T>
+template<typename S>
+inline Vec3<T>::Vec3(const Vec3<S>& v,
+                     float          n) :
+    x(T(v.x)),
+    y(T(v.y)),
+    z(T(v.z))
+{
+    if (n > 0.0f)
+    {
+        T d = this->length();
+        if (d > (T)0)
+        {
+            d = (T)1 / d;
+            x *= d;
+            y *= d;
+            z *= d;
+        }
+    }
+}
+
+// Copy to/from a DD::Image::Vector3.
 template<typename T>
 inline void
 Vec3<T>::toDDImage(DD::Image::Vector3& out) const { out.x = float(x); out.y = float(y); out.z = float(z); }
@@ -514,17 +538,6 @@ interpolateAtBaryCoord(const Fsr::Vec3<T>& v0,
 }
 
 //-----------------------------------------------------------
-
-#ifdef DWA_INTERNAL_BUILD
-// Use a non-releasable DWA fast normalize routine when building internally.
-#  include "FastNormalizeDWA.h"
-template<typename T>
-inline T Vec3<T>::fastNormalize() { return fastNormalizeDWA(this->array()); }
-#else
-// Public version uses slow normalize! TODO: find a public fast normalize routine to put here.
-template<typename T>
-inline T Vec3<T>::fastNormalize() { return this->normalize(); }
-#endif
 
 template<typename T>
 inline void

@@ -64,8 +64,8 @@ static const char* default_attribute_mappings =
 // This needs to stick around after the reader is deleted:
 static Fsr::StringSet attrib_const_strings;
 
-enum { SUBD_OFF, SUBD_LO, SUBD_HI, SUBD_DISPLAY, SUBD_1, SUBD_2, SUBD_3, SUBD_4, SUBD_5 };
-const char* const subd_levels[] = { "off", "subd_lo", "subd_hi", "subd_display", "1", "2", "3", "4", 0 };
+enum { SUBD_OFF, SUBD_LO, SUBD_HI, SUBD_1, SUBD_2, SUBD_3, SUBD_4 };
+const char* const subd_levels[] = { "off", "subd_lo", "subd_hi", "1", "2", "3", "4", 0 };
 
 enum { SUBD_TESSELLATOR_OPENSUBDIV, SUBD_TESSELLATOR_SIMPLESUBDIV };
 const char* const subd_tessellators[] = { "OpenSubdiv", "SimpleSubdiv", 0 };
@@ -80,13 +80,10 @@ const char* const points_modes[] = { "pointclouds-spheres", "pointcloud-discs", 
     "missing then this defaults to level 1.</li>" \
     "<li><i>subd_hi</i> - Use value of the 'subd_hi' attribute (typically level 2.)  If attribute is " \
     "missing then this defaults to level 2.</li>" \
-    "<li><i>subd_display</i> - Use value of the 'subd_display' attribute - this is typically a high value, " \
-    "but it can also be a low value.  If attribute is missing then this defaults to level 3.</li>" \
     "<li><i>1</i> - level 1</li>" \
     "<li><i>2</i> - level 2</li>" \
     "<li><i>3</i> - level 3</li>" \
-    "<li><i>4</i> - level 4</li>" \
-    "<li><i>5</i> - level 5</li>"
+    "<li><i>4</i> - level 4</li>"
 
 
 //-------------------------------------------------------------------------
@@ -1397,6 +1394,9 @@ FuserGeoReader::geometry_engine(DD::Image::Scene&        scene,
 
             //exec_ctx.setString("reader:enabled_facesets", enabled_facesets);
             //exec_ctx.setInt("reader:faceset_index_offset", faceset_index_offset);
+
+            // Let subclasses add their local execution args:
+            _appendExecuteContextArgs(node_args, exec_ctx);
         }
 
     } // add node_ctx args

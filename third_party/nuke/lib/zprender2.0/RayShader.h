@@ -261,7 +261,7 @@ class ZPR_EXPORT RayShader
 
 
     //! Print the shader knob values to stream.
-    void print(std::ostream&) const;
+    virtual void print(std::ostream&) const;
     friend std::ostream& operator << (std::ostream& o, const RayShader& b) { b.print(o); return o; }
 
 
@@ -321,9 +321,12 @@ class ZPR_EXPORT RayShader
     InputKnob*  knob(const char* input_name) const { return getInputKnob(std::string(input_name)); }
 
     //! Convenience method to assign the data value target of a named InputKnob, returning true if successful.
-    bool assignInputKnob(const char* input_name,
-                         void*       data,
-                         const char* default_val=NULL);
+    bool setInputKnobTarget(const char* input_name,
+                            void*       data);
+    //! Convenience method to assign and set the data value target of a named InputKnob, returning true if successful.
+    bool bindInputKnob(const char* input_name,
+                       void*       data,
+                       const char* default_val=NULL);
 
     //! Returns output knob or NULL if not available.
     OutputKnob* getOutputKnob(uint32_t output) const;
@@ -374,9 +377,37 @@ class ZPR_EXPORT RayShader
     virtual VolumeShader* isVolumeShader() { return NULL; }
 
 
-    //! Initialize any vars prior to rendering.
-    virtual void validateShader(bool                 for_real,
-                                const RenderContext& rtx);
+    /*! Initialize any uniform vars prior to rendering. Base class does nothing.
+
+        A typical shader will take input variables and do any costly pre-calcs
+        here to save on per-shade cost. Don't bother storing anything that may
+        change on a per-sample basis!
+
+        'frame' and 'view' are passed only because those are the non-image parts
+        of the OutputContext class that may be needed during uniform var state
+        calculation. They're not used by most shaders. TODO: maybe passing shutter
+        open/close times may be more useful.
+
+        This is normally called from RayShader::validateShader() or an Op::validate()
+        depending on the shader 'owner' class. For example a SurfaceMaterialOp or
+        LightMaterialOp subclass will only have Op::validate() as a pre-rendering
+        context.
+    */
+    virtual void updateUniformLocals(double  frame,
+                                     int32_t view=-1) {}
+
+
+    /*! Initialize any vars prior to rendering.
+
+        Base class calls validateShader() on any inputs then calls
+        updateUniformLocals(rtx.frame0, rtx.render_view)
+
+        RenderContext is optional so that this can be called by a legacy shading
+        context, passing an Op OutputContext instead.
+    */
+    virtual void validateShader(bool                            for_real,
+                                const RenderContext*            rtx,
+                                const DD::Image::OutputContext* op_ctx=NULL);
 
     //! Fill in a list with pointers to the *active* texture bindings this shader and its inputs has.
     virtual void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);

@@ -81,26 +81,33 @@ class FSR_EXPORT RayContext
 
 
   public:
-    // Ray types:
-    enum TypeMask
-    {
-        CAMERA       = 0x00000001,      //!< Ray coming from camera (to camera actually...)
-        SHADOW       = 0x00000002,      //!< Ray from surface to light
-        REFLECTION   = 0x00000004,      //!< Ray reflected off a surface
-        TRANSMISSION = 0x00000008,      //!< Ray refracted or transmitted through a surface
-        //
-        DIFFUSE      = 0x00000010,      //!< A hint about the last-hit surface this ray will contribute to
-        GLOSSY       = 0x00000020       //!< A hint about the last-hit surface this ray will contribute to
-    };
-
-    // Type mask convenience methods:
-    bool isCameraPath()        const { return (type_mask & CAMERA      ); }
-    bool isShadowPath()        const { return (type_mask & SHADOW      ); }
-    bool isReflectedPath()     const { return (type_mask & REFLECTION  ); }
-    bool isTransmittedPath()   const { return (type_mask & TRANSMISSION); }
+    //----------------------------------------------------------------------------
+    // Ray types, defined as uints vs. enums so they can be OR'd & AND'd together:
     //
-    bool isGlossyContributor()  const { return (type_mask & DIFFUSE     ); }
-    bool isDiffuseContributor() const { return (type_mask & GLOSSY      ); }
+    typedef uint32_t TypeMask;
+    static constexpr TypeMask       cameraPath() { return 0x01; }   //!< Ray coming from camera (to camera actually...)
+    static constexpr TypeMask       shadowPath() { return 0x02; }   //!< Ray from surface to light
+    static constexpr TypeMask   reflectionPath() { return 0x04; }   //!< Ray reflected off a surface
+    static constexpr TypeMask transmissionPath() { return 0x08; }   //!< Ray refracted or transmitted through a surface
+    //
+    static constexpr TypeMask      diffusePath() { return 0x10; }   //!< A hint about the last-hit surface this ray will contribute to
+    static constexpr TypeMask       glossyPath() { return 0x20; }   //!< A hint about the last-hit surface this ray will contribute to
+
+    // Commonly-used combos:
+    static constexpr TypeMask   diffuseReflectionPath() { return (diffusePath() |   reflectionPath()); }
+    static constexpr TypeMask diffuseTransmissionPath() { return (diffusePath() | transmissionPath()); }
+    static constexpr TypeMask    glossyReflectionPath() { return (glossyPath()  |   reflectionPath()); }
+    static constexpr TypeMask  glossyTransmissionPath() { return (glossyPath()  | transmissionPath()); }
+
+
+    // TypeMask convenience methods:
+    bool         isCameraPath() const { return (type_mask &       cameraPath()); }
+    bool         isShadowPath() const { return (type_mask &       shadowPath()); }
+    bool      isReflectedPath() const { return (type_mask &   reflectionPath()); }
+    bool    isTransmittedPath() const { return (type_mask & transmissionPath()); }
+    //
+    bool isDiffuseContributor() const { return (type_mask &      diffusePath()); }
+    bool  isGlossyContributor() const { return (type_mask &       glossyPath()); }
 
 
 
@@ -326,13 +333,44 @@ RayIntersectionType intersectSphere(const Fsr::Vec3<T>&    P,
 
 /*! Ray-plane intersect test.
 */
+template <typename T>
 FSR_EXPORT
-bool intersectPlane(const Fsr::Vec4d&      planeXYZD,
+bool intersectPlane(const Fsr::Vec3d&      planeOrigin,
+                    const Fsr::Vec3d&      planeNormal,
                     const Fsr::RayContext& Rtx);
+/*! Ray-plane intersect test.
+    If hit t is the distance to the plane, or inf if no intersection.
+    If t is 0 the ray's origin is on the plane.
+*/
+template <typename T>
 FSR_EXPORT
-bool intersectPlane(const Fsr::Vec4d&      planeXYZD,
+bool intersectPlane(const Fsr::Vec3d&      planeOrigin,
+                    const Fsr::Vec3d&      planeNormal,
                     const Fsr::RayContext& Rtx,
                     double&                t);
+
+
+//-------------------------------------------------------------------------
+
+
+/*! Ray-disc intersect test.
+*/
+template <typename T>
+FSR_EXPORT
+bool intersectDisc(const Fsr::Vec3d&      discOrigin,
+                   const Fsr::Vec3d&      discNormal,
+                   double                 discRadius,
+                   const Fsr::RayContext& Rtx);
+/*! Ray-disc intersect test.
+    If hit t is the distance to the plane, or inf if no intersection.
+*/
+template <typename T>
+FSR_EXPORT
+bool intersectDisc(const Fsr::Vec3d&      discOrigin,
+                   const Fsr::Vec3d&      discNormal,
+                   double                 discRadius,
+                   const Fsr::RayContext& Rtx,
+                   double&                t);
 
 
 //-------------------------------------------------------------------------
@@ -407,7 +445,7 @@ RayContext::RayContext(const Fsr::Vec3<T>& _origin,
     time(_time),
     mindist(_mindist),
     maxdist(_maxdist),
-    type_mask(CAMERA)
+    type_mask(cameraPath())
 {
     setOrigin(_origin);
     setDirection(_dir);
@@ -732,75 +770,80 @@ intersectSphere(const Fsr::Vec3<T>&    P,
 
 //-----------------------------------------------------------
 
+// TODO: add companion sided-test methods?
+template <typename T>
 inline bool
-intersectPlane(const Fsr::Vec4d&      planeXYZD,
-               const Fsr::RayContext& Rtx)
-{
-    const Fsr::Vec3d& N = (const Fsr::Vec3d&)planeXYZD;
-    if (::fabs(Rtx.dir().dot(N)) < std::numeric_limits<double>::epsilon())
-    {
-        if (::fabs(Rtx.origin.dot(N) + planeXYZD.w) < std::numeric_limits<double>::epsilon())
-            return true; // ray is contained inside the plane
-        return false; // ray is parallel to plane
-    }
-    return true;
-}
-
-inline bool
-intersectPlane(const Fsr::Vec4d&      planeXYZD,
+intersectPlane(const Fsr::Vec3<T>&    planeOrigin,
+               const Fsr::Vec3<T>&    planeNormal,
                const Fsr::RayContext& Rtx,
                double&                t)
 {
-    const Fsr::Vec3d& N = (const Fsr::Vec3d&)planeXYZD;
-    const double rd_dot_n = Rtx.dir().dot(N);
-    if (::fabs(rd_dot_n) < std::numeric_limits<double>::epsilon())
+    // Is ray contained inside the plane or is parallel to plane?
+    const T rd_dot_n = Rtx.dir().dot(planeNormal);
+    if (::fabs(rd_dot_n) < std::numeric_limits<T>::epsilon())
     {
-        t = Rtx.origin.dot(N) + planeXYZD.w;
-        if (::fabs(t) < std::numeric_limits<double>::epsilon())
-        {
-            t = 0.0;
-            return true; // ray origin is on plane
-        }
         t = std::numeric_limits<double>::infinity();
         return false; // ray is parallel to plane
     }
-    t = Rtx.origin.dot(N) + planeXYZD.w;
-    return true;
+
+    // Intersection distance:
+    t = planeNormal.dot(planeOrigin - Rtx.origin) / rd_dot_n;
+
+    return !(t < Rtx.mindist || t > Rtx.maxdist);
+}
+
+template <typename T>
+inline bool
+intersectPlane(const Fsr::Vec3<T>&    planeOrigin,
+               const Fsr::Vec3<T>&    planeNormal,
+               const Fsr::RayContext& Rtx)
+{
+    double t;
+    return intersectPlane(planeOrigin, planeNormal, Rtx, t);
 }
 
 //-----------------------------------------------------------
 
+// TODO: add companion sided-test methods?
+template <typename T>
 inline bool
-intersectDisc(const Fsr::Vec3d&      P,
-              const Fsr::Vec3d&      N,
-              double                 radius,
+intersectDisc(const Fsr::Vec3<T>&    discOrigin,
+              const Fsr::Vec3<T>&    discNormal,
+              double                 discRadius,
               const Fsr::RayContext& Rtx,
               double&                t)
 {
-    // First do a plane intersection:
-    const double rd_dot_n = Rtx.dir().dot(N);
-
-    // Is ray contained inside the disk plane or is parallel to plane?
-    if (::fabs(rd_dot_n) < std::numeric_limits<double>::epsilon())
+    // First do a plane intersection.
+    // Is ray contained inside the disc plane or is parallel to plane?
+    const T rd_dot_n = Rtx.dir().dot(discNormal);
+    if (::fabs(rd_dot_n) < std::numeric_limits<T>::epsilon())
+    {
+        t = std::numeric_limits<double>::infinity();
         return false; // ray is parallel to plane
+    }
 
-    // Distance from intersection to P:
-    const double D = -P.dot(N); // distance to origin (plane's D value)
-    t = -(Rtx.origin.dot(N) + D) / rd_dot_n;
+    // Intersection distance:
+    t = discNormal.dot(discOrigin - Rtx.origin) / rd_dot_n;
+    if (t < Rtx.mindist || t > Rtx.maxdist)
+    {
+        t = std::numeric_limits<double>::infinity();
+        return false;
+    }
 
-    const Fsr::Vec3d iP = Rtx.getPositionAt(t / rd_dot_n);
-
-    return (iP.distanceSquared(P) > radius*radius);
+    // Is inside radius?
+    const Fsr::Vec3d Pi = Rtx.getPositionAt(t);
+    return (Pi.distanceSquared(discOrigin) > discRadius*discRadius);
 }
 
+template <typename T>
 inline bool
-intersectDisc(const Fsr::Vec3d&      P,
-              const Fsr::Vec3d&      N,
-              double                 radius,
+intersectDisc(const Fsr::Vec3<T>&    discOrigin,
+              const Fsr::Vec3<T>&    discNormal,
+              double                 discRadius,
               const Fsr::RayContext& Rtx)
 {
     double t;
-    return intersectDisc(P, N, radius, Rtx, t);
+    return intersectDisc(discOrigin, discNormal, discRadius, Rtx, t);
 }
 
 //-----------------------------------------------------------

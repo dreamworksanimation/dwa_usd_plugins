@@ -31,7 +31,6 @@
 #define zprProject_h
 
 #include <zprender/RayShader.h>
-#include <zprender/RenderContext.h> // for GeoInfoContext
 
 namespace zpr {
 
@@ -60,37 +59,31 @@ class zprProject : public RayShader
         NUM_INPUTS
     };
 
+
     struct InputParams
     {
         InputBinding k_bindings[NUM_INPUTS];
 
-        int                   k_operation;                  //!< Merge operation to perform on A
-        int                   k_faces_mode;                 //!< Project on front, back or both sides
-        bool                  k_crop_to_format;             //!< Crop projection at edge of projection
-        DD::Image::ChannelSet k_proj_channels;              //!< Set of channels to project
-        DD::Image::TextureFilter k_texture_filter;             //!< Filter to use for texture filtering
-        int                   k_zclip_mode;                 //!< 
-        double                k_near_clip, k_far_clip;      //!< Near/far Z clipping planes
-
-
-        InputParams();
-
-    };
-
-    struct LocalVars
-    {
-        DD::Image::CameraOp*  m_proj_cam;
-        Fsr::Mat4d            m_projectxform, m_projectproj, m_projectconcat;
-        double                m_near_clip, m_far_clip;
-        double                m_cam_near,  m_cam_far;
-
-        DD::Image::ChannelSet m_project_channels;
+        int                      k_operation;               //!< Merge operation to perform on A
+        int                      k_faces_mode;              //!< Project on front, back or both sides
+        bool                     k_crop_to_format;          //!< Crop projection at edge of projection
+        DD::Image::ChannelSet    k_proj_channels;           //!< Set of channels to project
+        DD::Image::Filter        k_texture_filter;          //!< Filter to use for texture filtering
+        int                      k_zclip_mode;              //!< 
+        double                   k_near_clip;               //!< Near Z clipping plane
+        double                   k_far_clip;                //!< Far Z clipping plane
     };
 
 
   public:
     InputParams inputs;
-    LocalVars   locals;
+
+    DD::Image::CameraOp*  m_proj_cam;
+    Fsr::Mat4d            m_projectxform, m_projectproj, m_projectconcat;
+    double                m_near_clip, m_far_clip;
+    double                m_cam_near,  m_cam_far;
+
+    DD::Image::ChannelSet m_project_channels;
 
 
   public:
@@ -102,15 +95,16 @@ class zprProject : public RayShader
     /*virtual*/ const OutputKnobList& getOutputKnobDefinitions() const { return output_defs; }
 
     zprProject();
-    zprProject(const InputParams& _inputs);
+    zprProject(const InputParams& input_params);
 
-    //!
-    static void updateLocals(const InputParams& _inputs,
-                             LocalVars&         _locals);
+    //! Initialize any uniform vars prior to rendering.
+    /*virtual*/ void updateUniformLocals(double  frame,
+                                         int32_t view=-1);
+    /*virtual*/ void validateShader(bool                            for_real,
+                                    const RenderContext*            rtx,
+                                    const DD::Image::OutputContext* op_ctx);
 
     /*virtual*/ InputBinding* getInputBinding(uint32_t input);
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
     /*virtual*/ void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
     /*virtual*/ void evaluateSurface(RayShaderContext& stx,
                                      Fsr::Pixel&       out);

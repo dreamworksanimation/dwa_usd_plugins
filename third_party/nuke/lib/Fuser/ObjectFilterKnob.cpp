@@ -47,7 +47,7 @@ ObjectFilter::ObjectFilter() :
     k_attrib("name"),
     k_mask("*"),
     k_invert(false),
-    m_do_all(true)
+    do_all(true)
 {
     //
 }
@@ -70,11 +70,12 @@ ObjectFilter::append(DD::Image::Hash& hash)
 bool
 ObjectFilter::matchObject(const DD::Image::GeoInfo& info) const
 {
-    //std::cout << "    ObjectFilter::matchObject() k_attrib='" << k_attrib << "'" << std::endl;
-    if (m_do_all)
+    //std::cout << "    ObjectFilter::matchObject() k_attrib='" << k_attrib << "' all-mode=" << do_all << std::endl;
+    if (do_all)
         return state(true);
 
     const DD::Image::Attribute* attrib = info.get_group_attribute(DD::Image::Group_Object, k_attrib);
+    //std::cout << "      attrib=" << attrib << ", size=" << ((attrib)?attrib->size():0) << std::endl;
     if (!attrib || attrib->size() == 0)
         return state(false); // can't eval attrib
 
@@ -99,9 +100,9 @@ ObjectFilter::globMatch(const char* s) const
 
     // Apply in order so the last mask takes precedence:
     bool match = false;
-    for (size_t i=0; i < m_mask_list.size(); ++i)
+    for (size_t i=0; i < mask_list.size(); ++i)
     {
-        const std::string& mask = m_mask_list[i];
+        const std::string& mask = mask_list[i];
         if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, s))
             match = false;
         else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, s))
@@ -250,10 +251,11 @@ ObjectFilterKnob::ObjectFilterKnob(DD::Image::Knob_Closure* cb,
 
     DD::Image::Knob_Callback f = *cb;
 
-    DD::Image::Newline(f, label);
-        DD::Image::SetFlags(f,DD::Image:: Knob::STARTLINE);
+    //DD::Image::Newline(f, label);
+    //    DD::Image::SetFlags(f,DD::Image:: Knob::STARTLINE);
     kObjectAttribString = DD::Image::String_knob(f, &k_attrib, m_knob_names[0], "attribute");
         DD::Image::SetFlags(f, DD::Image::Knob::NO_MULTIVIEW);
+        DD::Image::SetFlags(f, Knob::MODIFIES_GEOMETRY);
         DD::Image::Tooltip(f, "Object attribute to apply mask filter to.\n"
                               "\n"
                               "'name' or 'scene:path' can be used for objects loaded through the Fuser "
@@ -274,6 +276,7 @@ ObjectFilterKnob::ObjectFilterKnob(DD::Image::Knob_Closure* cb,
     DD::Image::Newline(f);
     kMaskString = DD::Image::String_knob(f, &k_mask, m_knob_names[2], "mask");
         DD::Image::SetFlags(f, DD::Image::Knob::NO_MULTIVIEW);
+        DD::Image::SetFlags(f, Knob::MODIFIES_GEOMETRY);
         DD::Image::Tooltip(f, "Mask string applied to object attribute value.  This is modal "
                               "depending on object attribute type:\n"
                               "\n"
@@ -294,6 +297,7 @@ ObjectFilterKnob::ObjectFilterKnob(DD::Image::Knob_Closure* cb,
                               "on again by an additional mask to the right.\n");
     kInvert = DD::Image::Bool_knob(f, &k_invert, m_knob_names[1], "invert");
         DD::Image::ClearFlags(f,DD::Image:: Knob::STARTLINE);
+        DD::Image::SetFlags(f, Knob::MODIFIES_GEOMETRY);
 }
 
 
@@ -347,13 +351,26 @@ ObjectFilterKnob::store(DD::Image::StoreType            type,
     kMaskString->store(        DD::Image::StringPtr, &filter->k_mask,   filter_hash, context);
     kInvert->store(            DD::Image::BoolPtr,   &filter->k_invert, filter_hash, context);
 
+    // Rebuild mask results if controls changed:
     if (filter_hash != m_filter_hash)
     {
-        m_filter_hash = filter_hash;
         filter->getMasks(filter->k_mask,
-                         filter->m_mask_list,
-                         filter->m_index_set,
-                         filter->m_do_all);
+                         m_mask_list,
+                         m_index_set,
+                         m_do_all);
+        m_filter_hash = filter_hash;
+    }
+
+    // Update mask results if filter results changed:
+    if (m_filter_hash != filter->m_filter_hash)
+    {
+        filter->mask_list     = m_mask_list;
+        filter->index_set     = m_index_set;
+        filter->do_all        = m_do_all;
+        filter->m_filter_hash = m_filter_hash;
+        //std::cout << "    ObjectFilterKnob::store(" << this << ")";
+        //std::cout << " UPDATE filter: hash=" << std::hex << m_filter_hash.value() << std::dec;
+        //std::cout << std::endl;
     }
     //std::cout << " filter_hash=" << std::hex << filter_hash.value() << std::dec;
     //std::cout << std::endl;
@@ -375,41 +392,59 @@ ObjectFilterKnob::changed()
 ObjectFilterKnob::updateUI(const DD::Image::OutputContext& context)
 {
     //std::cout << "    ObjectFilterKnob::updateUI(" << this << ")" << std::endl;
-    if (!DD::Image::Application::gui)
+    if (!kObjectAttributes || !DD::Image::Application::gui)
         return;
+
+    const int32_t m_input_num = 0; // TODO: expose an input arg to knob
 
     std::set<std::string> attrib_names;
     DD::Image::GeoOp* geo = dynamic_cast<DD::Image::GeoOp*>(op());
     if (geo)
     {
-        // Assume GeoOp owner is getting its geometry from input 0:
-        // TODO: expose an input arg to knob
-        DD::Image::GeoOp* input_geo = dynamic_cast<DD::Image::GeoOp*>(geo->node_input(0/*input*/, DD::Image::Op::INPUT_OP, &context));
-        if (!input_geo || input_geo->Op::hash() == m_geo_hash)
+        // Assume GeoOp owner is getting its geometry from input:
+        DD::Image::Op* input_op = geo->node_input(m_input_num, DD::Image::Op::EXECUTABLE_INPUT, &context);
+
+        // We check that not only is the input a GeoOp but that it's not
+        // the default (disconnected) input for this node:
+        DD::Image::GeoOp* input_geo = dynamic_cast<DD::Image::GeoOp*>(input_op);
+        if (input_geo && input_geo != geo->default_input(m_input_num))
         {
-            DD::Image::Knob::updateUI(context);
-            return; // don't change menu
-        }
-        m_geo_hash = input_geo->Op::hash();
-
-        input_geo->setupScene();
-        DD::Image::Scene* scene = input_geo->scene();
-        const unsigned nObjects = scene->objects();
-        //std::cout << "      nObjects=" << nObjects << std::endl;
-
-        for (unsigned obj=0; obj < nObjects; ++obj)
-        {
-            const DD::Image::GeoInfo& info = scene->object(obj);
-
-            const unsigned nAttribs = info.get_attribcontext_count();
-            for (unsigned i=0; i < nAttribs; ++i)
+            if (input_geo->tryValidate(true) && input_geo->valid())
             {
-                assert(info.get_attribcontext(i));
-                const DD::Image::AttribContext& attrib = *info.get_attribcontext(i);
-                if (attrib.group == DD::Image::Group_Object && !attrib.empty())
-                    attrib_names.insert(attrib.name);
-            }
+                // As additional safety we make sure the input Op's
+                // hash is not at the default value as that can indicate
+                // an invalid GeoOp:
+                static DD::Image::Hash empty_hash;
+                if (input_op->hash() == empty_hash || input_op->hash() == m_geo_hash)
+                    return; // no change
 
+                m_geo_hash = input_op->hash();
+
+                // Create and fill in a temporary Scene:
+                DD::Image::Scene* scene = new DD::Image::Scene();
+#if DEBUG
+                assert(scene);
+#endif
+                input_geo->build_scene(*scene);
+                const unsigned nObjects = scene->objects();
+                //std::cout << "      nObjects=" << nObjects << std::endl;
+
+                for (unsigned obj=0; obj < nObjects; ++obj)
+                {
+                    const DD::Image::GeoInfo& info = scene->object(obj);
+
+                    const unsigned nAttribs = info.get_attribcontext_count();
+                    for (unsigned i=0; i < nAttribs; ++i)
+                    {
+                        assert(info.get_attribcontext(i));
+                        const DD::Image::AttribContext& attrib = *info.get_attribcontext(i);
+                        if (attrib.group == DD::Image::Group_Object && !attrib.empty())
+                            attrib_names.insert(attrib.name);
+                    }
+                }
+
+                delete scene;
+            }
         }
     }
 

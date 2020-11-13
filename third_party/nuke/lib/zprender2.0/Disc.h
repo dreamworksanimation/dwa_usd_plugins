@@ -71,14 +71,14 @@ class ZPR_EXPORT Disc : public Traceable,
 
   public:
     //!
-    Disc(SurfaceContext*   stx,
-         double            motion_time,
-         const Fsr::Vec3d& P,
-         const Fsr::Vec3d& N,
-         double            radius);
+    Disc(const MaterialContext* material_ctx,
+         double                 motion_time,
+         const Fsr::Vec3d&      P,
+         const Fsr::Vec3d&      N,
+         double                 radius);
 
     //!
-    Disc(SurfaceContext*         stx,
+    Disc(const MaterialContext*  material_ctx,
          const Fsr::DoubleList&  motion_times,
          const Disc::SampleList& motion_discs);
 
@@ -124,23 +124,23 @@ class ZPR_EXPORT Disc : public Traceable,
 
 
 inline
-Disc::Disc(SurfaceContext*   stx,
-           double            motion_time,
-           const Fsr::Vec3d& P,
-           const Fsr::Vec3d& N,
-           double            radius) :
+Disc::Disc(const MaterialContext* material_ctx,
+           double                 motion_time,
+           const Fsr::Vec3d&      P,
+           const Fsr::Vec3d&      N,
+           double                 radius) :
     Traceable(),
-    RenderPrimitive(stx, motion_time)
+    RenderPrimitive(material_ctx, motion_time)
 {
     m_motion_discs.resize(1, Sample(P, N, radius));
 }
 
 inline
-Disc::Disc(SurfaceContext*         stx,
+Disc::Disc(const MaterialContext*  material_ctx,
            const Fsr::DoubleList&  motion_times,
            const Disc::SampleList& motion_discs) :
     Traceable(),
-    RenderPrimitive(stx, motion_times),
+    RenderPrimitive(material_ctx, motion_times),
     m_motion_discs(motion_discs)
 {
 #if DEBUG

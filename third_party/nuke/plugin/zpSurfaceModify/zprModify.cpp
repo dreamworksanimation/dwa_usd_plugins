@@ -28,7 +28,9 @@
 
 
 #include "zprModify.h"
+
 #include <zprender/ThreadContext.h>
+#include <zprender/RenderContext.h> // for GeoInfoContext
 
 namespace zpr {
 
@@ -103,10 +105,11 @@ zprModify::getInputBinding(uint32_t input)
 */
 /*virtual*/
 void
-zprModify::validateShader(bool                 for_real,
-                          const RenderContext& rtx)
+zprModify::validateShader(bool                            for_real,
+                          const RenderContext*            rtx,
+                          const DD::Image::OutputContext* op_ctx)
 {
-    RayShader::validateShader(for_real, rtx); // < get the inputs
+    RayShader::validateShader(for_real, rtx, op_ctx); // validate inputs, update uniforms
     //std::cout << "zprModify::validateShader() bg0=" << getInputShader(BG0) << ", map1=" << getInputShader(MAP1) << std::endl;
 
     m_texture_channels = DD::Image::Mask_None;
@@ -184,7 +187,7 @@ zprModify::evaluateSurface(RayShaderContext& stx,
         if (inputs.k_shader_target < TARGET_RGBA_OUT)
         {
 #if 1
-            const GeoInfoContext* gptx = stx.rprim->surface_ctx->parent_object_ctx->asGeoObject();
+            const GeoInfoContext* gptx = stx.rprim->getGeoInfoContext();
             if (!gptx)
             {
                 // Cannot evaluate as a surface, skip it:
@@ -204,9 +207,9 @@ zprModify::evaluateSurface(RayShaderContext& stx,
                     if (is_identity)
                         ; // do nothing
                     else if (inputs.k_matrix == XFORM_LOCAL_TO_WORLD)
-                        stx.PW = stx.PWg = stx.l2w->transform(Fsr::Vec3d(P));
+                        stx.PW = stx.l2w->transform(Fsr::Vec3d(P));
                     else if (inputs.k_matrix == XFORM_WORLD_TO_LOCAL)
-                        stx.PW = stx.PWg = stx.w2l->transform(Fsr::Vec3d(P));
+                        stx.PW = stx.w2l->transform(Fsr::Vec3d(P));
                     break;}
 
                 case TARGET_N_IN: {

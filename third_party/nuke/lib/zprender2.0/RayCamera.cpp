@@ -172,7 +172,7 @@ RayCamera::_constructRay(const Fsr::Vec2d&      pixelXY,
     Fsr::Vec2d screenWindowST;
     pixelXYToScreenWindowXY(pixelXY, screenWindowST);
 
-    Rout.type_mask = Fsr::RayContext::CAMERA;
+    Rout.type_mask = Fsr::RayContext::cameraPath();
 
     Rout.mindist = cam0.near + std::numeric_limits<double>::epsilon();
     Rout.maxdist = cam0.far;

@@ -45,13 +45,17 @@ namespace Fsr {
 class FSR_EXPORT ObjectFilter
 {
   public:
+    // Knob values:
     const char*              k_attrib;      //!< Object attribute name
     const char*              k_mask;        //!< Raw mask text as entered
     bool                     k_invert;      //!< Invert the match logic
 
-    std::vector<std::string> m_mask_list;   //!< Extracted mask entries in application order
-    std::set<unsigned>       m_index_set;   //!< Set of indices extracted from mask text
-    bool                     m_do_all;      //!< Filter applies to all objects
+    // Derived values:
+    std::vector<std::string> mask_list;     //!< Extracted mask entries in application order
+    std::set<unsigned>       index_set;     //!< Set of indices extracted from mask text
+    bool                     do_all;        //!< Filter applies to all objects
+
+    DD::Image::Hash          m_filter_hash; //!< Indicates when results need updating
 
 
   public:
@@ -66,6 +70,11 @@ class FSR_EXPORT ObjectFilter
         k_attrib = object_attrib;
         k_mask   = mask_text;
         k_invert = invert;
+        //
+        mask_list.clear();
+        index_set.clear();
+        do_all = true;
+        m_filter_hash.reset();
     }
 
 
@@ -73,7 +82,7 @@ class FSR_EXPORT ObjectFilter
     bool state(bool v) const { return (k_invert) ? !v : v; }
 
     //! The filter affects all objects.
-    bool all() const { return state(m_do_all); }
+    bool all() const { return state(do_all); }
 
     //!
     void append(DD::Image::Hash& hash);
@@ -86,7 +95,7 @@ class FSR_EXPORT ObjectFilter
     bool globMatch(const char* s) const;
 
     //! Return true if index is in set - NOT affected by invert state!
-    bool indexMatch(int32_t index) const { return (m_index_set.find(index) != m_index_set.end()); }
+    bool indexMatch(int32_t index) const { return (index_set.find(index) != index_set.end()); }
 
 
     //! Separate the list of masks and indices from a mask string in order of application.
@@ -114,8 +123,13 @@ DD::Image::Knob* ObjectFilter_knob(DD::Image::Knob_Callback f,
 class FSR_EXPORT ObjectFilterKnob : public DD::Image::Knob
 {
   protected:
-    DD::Image::Hash  m_filter_hash;         //!< Indicates when maska need recalcing
-    DD::Image::Hash  m_geo_hash;            //!< Indicated when object attribs need updating
+    DD::Image::Hash          m_filter_hash; //!< Indicates when results need updating
+    DD::Image::Hash          m_geo_hash;    //!< Indicated when object attribs need updating
+    // Saved results from getMasks() if m_filter_hash changes.
+    std::vector<std::string> m_mask_list;   //!< Extracted mask entries in application order
+    std::set<unsigned>       m_index_set;   //!< Set of indices extracted from mask text
+    bool                     m_do_all;      //!< Filter applies to all objects
+
     const char*      m_knob_names[3];       //!<
     DD::Image::Knob* kObjectAttribString;   //!< Object attribute StringKnob
     DD::Image::Knob* kObjectAttributes;     //!< List of input object attributes

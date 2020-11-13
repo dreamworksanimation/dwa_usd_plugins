@@ -35,12 +35,14 @@
 
 
 #include <DDImage/GeoOp.h>
+#include <DDImage/Material.h>
 #include <DDImage/Scene.h>
 #include <DDImage/Knob.h>
 #include <DDImage/Knobs.h>
 #include <DDImage/List_KnobI.h>
 
 #include <Fuser/NodePrimitive.h>
+#include <Fuser/MeshPrimitive.h>
 
 using namespace DD::Image;
 
@@ -72,7 +74,9 @@ const DD::Image::GroupType group_sort_order[] =
 };
 
 
-static char buf[1024];
+#define BUFSIZE 2048
+static char buf[BUFSIZE];
+
 
 
 /*!
@@ -163,6 +167,7 @@ SetFlags(f, Knob::ENDLINE);
         if (!input0())
             return true; // call this again
 
+        //std::cout << "updateUI()" << std::endl;
         // Let the GeoOp base class fill in the scene var:
         if (!scene_)
             scene_ = new Scene(); // Allocate a local scene
@@ -198,7 +203,7 @@ SetFlags(f, Knob::ENDLINE);
                     ++row;
                 }
 
-                snprintf(buf, 1024, "%d", obj); list->cell(row, 0) = buf; // obj index
+                snprintf(buf, BUFSIZE, "%d", obj); list->cell(row, 0) = buf; // obj index
 
                 const unsigned nAttribs = info.get_attribcontext_count();
                 int name_attrib = -1;
@@ -229,15 +234,15 @@ SetFlags(f, Knob::ENDLINE);
                                 list->cell(row, 3) = attrib_types[attrib.type]; // type
                             else
                             {
-                                snprintf(buf, 1024, "%s[%d]", attrib_types[attrib.type], attrib.attribute->size());
+                                snprintf(buf, BUFSIZE, "%s[%d]", attrib_types[attrib.type], attrib.attribute->size());
                                 list->cell(row, 3) = buf; // type
                             }
                             if (attrib.type == STRING_ATTRIB)
-                                snprintf(buf, 1024, "'%s'", attrib.attribute->string(0));
+                                snprintf(buf, BUFSIZE, "'%s'", attrib.attribute->string(0));
                             else if (attrib.type == STD_STRING_ATTRIB)
-                                snprintf(buf, 1024, "'%s'", attrib.attribute->stdstring(0).c_str());
+                                snprintf(buf, BUFSIZE, "'%s'", attrib.attribute->stdstring(0).c_str());
                             else
-                                snprintf(buf, 1024, "[error]");
+                                snprintf(buf, BUFSIZE, "[error]");
                             list->cell(row, 4) = buf; // value
                             ++row;
 
@@ -245,6 +250,83 @@ SetFlags(f, Knob::ENDLINE);
                         }
                     }
                 }
+
+                // Next list some of the hardcoded 'attributes' in the GeoInfo:
+                {
+                    list->cell(row, 1) = "<points>";         // name
+                    list->cell(row, 2) = "object(built-in)"; // scope
+                    const DD::Image::PointList* points = info.point_list();
+                    if (!points)
+                    {
+                        list->cell(row, 3) = "vector3";          // type
+                        list->cell(row, 4) = "<unassigned>";     // value
+                    }
+                    else
+                    {
+                        const uint32_t nVals = (uint32_t)points->size();
+                        snprintf(buf, BUFSIZE, "vector3[%d]", nVals);
+                        list->cell(row, 3) = buf;   // type
+
+                        if      (nVals == 0)
+                        {
+                            list->cell(row, 4) = "<empty>";     // value
+                        }
+                        else if (nVals == 1)
+                        {
+                            const Fsr::Vec3f* v = reinterpret_cast<const Fsr::Vec3f*>(points->data());
+                            snprintf(buf, BUFSIZE, "[%g %g %g]", v->x, v->y, v->z);
+                            list->cell(row, 4) = buf;   // value
+                        }
+                        else
+                        {
+                            const Fsr::Vec3f* v = reinterpret_cast<const Fsr::Vec3f*>(points->data());
+                            snprintf(buf, BUFSIZE, "[%g %g %g]", v->x, v->y, v->z);
+                            list->cell(row, 4) = buf;   // value
+                        }
+                    }
+                    ++row;
+                }
+                {
+                    const DD::Image::Matrix4& m = info.matrix;
+                    snprintf(buf, BUFSIZE,
+                               "%g %g %g %g "
+                               "%g %g %g %g "
+                               "%g %g %g %g "
+                               "%g %g %g %g",
+                                   m.a00, m.a10, m.a20, m.a30,
+                                   m.a01, m.a11, m.a21, m.a31,
+                                   m.a02, m.a12, m.a22, m.a32,
+                                   m.a03, m.a13, m.a23, m.a33);
+                    list->cell(row, 1) = "<matrix>";         // name
+                    list->cell(row, 2) = "object(built-in)"; // scope
+                    list->cell(row, 3) = "matrix4";          // type
+                    list->cell(row, 4) = buf;                // value
+                    ++row;
+                }
+                {
+                    if (info.material)
+                        snprintf(buf, BUFSIZE, "'%s' (0x%p)", info.material->node_name().c_str(), info.material);
+                    else
+                        snprintf(buf, BUFSIZE, "<not-assigned>");
+                    list->cell(row, 1) = "<material>";       // name
+                    list->cell(row, 2) = "object(built-in)"; // scope
+                    list->cell(row, 3) = "Node";             // type
+                    list->cell(row, 4) = buf;                // value
+                    ++row;
+                }
+                //info.render_mode
+                //info.display3d
+                //info.selected
+                //info.source_geo
+                //info.final_geo
+                //info.select_geo
+                //info.bbox()
+                //info.src_id()
+                //info.out_id()
+                //info.output_index()
+                
+
+
 
                 // Sort attributes by group:
                 for (unsigned j=0; j < DD::Image::Group_Last; ++j)
@@ -272,7 +354,7 @@ SetFlags(f, Knob::ENDLINE);
                             list->cell(row, 3) = attrib_types[attrib.type]; // type
                         else
                         {
-                            snprintf(buf, 1024, "%s[%d]", attrib_types[attrib.type], nVals);
+                            snprintf(buf, BUFSIZE, "%s[%d]", attrib_types[attrib.type], nVals);
                             list->cell(row, 3) = buf; // type
                         }
 
@@ -281,49 +363,49 @@ SetFlags(f, Knob::ENDLINE);
                         if (attrib.type == STRING_ATTRIB)
                         {
                             if (nVals == 1)
-                                snprintf(buf, 1024, "'%s'", attrib.attribute->string(0));
+                                snprintf(buf, BUFSIZE, "'%s'", attrib.attribute->string(0));
                             else
-                                snprintf(buf, 1024, "'%s', ...", attrib.attribute->string(0));
+                                snprintf(buf, BUFSIZE, "'%s', ...", attrib.attribute->string(0));
                         }
                         else if (attrib.type == STD_STRING_ATTRIB)
                         {
                             if (nVals == 1)
-                                snprintf(buf, 1024, "'%s'", attrib.attribute->stdstring(0).c_str());
+                                snprintf(buf, BUFSIZE, "'%s'", attrib.attribute->stdstring(0).c_str());
                             else
-                                snprintf(buf, 1024, "'%s', ...", attrib.attribute->stdstring(0).c_str());
+                                snprintf(buf, BUFSIZE, "'%s', ...", attrib.attribute->stdstring(0).c_str());
                         }
                         else if (attrib.type == INT_ATTRIB)
                         {
                             if (nVals == 1)
-                                snprintf(buf, 1024, "%d", attrib.attribute->integer(0));
+                                snprintf(buf, BUFSIZE, "%d", attrib.attribute->integer(0));
                             else
-                                snprintf(buf, 1024, "%d, ...", attrib.attribute->integer(0));
+                                snprintf(buf, BUFSIZE, "%d, ...", attrib.attribute->integer(0));
                         }
                         else if (attrib.type == POINTER_ATTRIB)
                         {
                             if (nVals == 1)
-                                snprintf(buf, 1024, "0x%p [mem]", attrib.attribute->pointer(0));
+                                snprintf(buf, BUFSIZE, "0x%p [mem]", attrib.attribute->pointer(0));
                             else
-                                snprintf(buf, 1024, "0x%p [mem], ...", attrib.attribute->pointer(0));
+                                snprintf(buf, BUFSIZE, "0x%p [mem], ...", attrib.attribute->pointer(0));
                         }
                         else if (attrib.type == FLOAT_ATTRIB)
                         {
                             if (nVals == 1)
-                                snprintf(buf, 1024, "%g", attrib.attribute->flt(0));
+                                snprintf(buf, BUFSIZE, "%g", attrib.attribute->flt(0));
                             else
-                                snprintf(buf, 1024, "%g, ...", attrib.attribute->flt(0));
+                                snprintf(buf, BUFSIZE, "%g, ...", attrib.attribute->flt(0));
                         }
                         else if (attrib.type == VECTOR2_ATTRIB)
                         {
                             if (nVals == 1)
                             {
                                 const Vector2& v = attrib.attribute->vector2(0);
-                                snprintf(buf, 1024, "[%g %g]", v.x, v.y);
+                                snprintf(buf, BUFSIZE, "[%g %g]", v.x, v.y);
                             }
                             else
                             {
                                 const Vector2& v = attrib.attribute->vector2(0);
-                                snprintf(buf, 1024, "[%g %g], ...", v.x, v.y);
+                                snprintf(buf, BUFSIZE, "[%g %g], ...", v.x, v.y);
                             }
                         }
                         else if (attrib.type == VECTOR3_ATTRIB)
@@ -331,12 +413,12 @@ SetFlags(f, Knob::ENDLINE);
                             if (nVals == 1)
                             {
                                 const Vector3& v = attrib.attribute->vector3(0);
-                                snprintf(buf, 1024, "[%g %g %g]", v.x, v.y, v.z);
+                                snprintf(buf, BUFSIZE, "[%g %g %g]", v.x, v.y, v.z);
                             }
                             else
                             {
                                 const Vector3& v = attrib.attribute->vector3(0);
-                                snprintf(buf, 1024, "[%g %g %g], ...", v.x, v.y, v.z);
+                                snprintf(buf, BUFSIZE, "[%g %g %g], ...", v.x, v.y, v.z);
                             }
                         }
                         else if (attrib.type == NORMAL_ATTRIB)
@@ -344,12 +426,12 @@ SetFlags(f, Knob::ENDLINE);
                             if (nVals == 1)
                             {
                                 const Vector3& v = attrib.attribute->normal(0);
-                                snprintf(buf, 1024, "[%g %g %g]", v.x, v.y, v.z);
+                                snprintf(buf, BUFSIZE, "[%g %g %g]", v.x, v.y, v.z);
                             }
                             else
                             {
                                 const Vector3& v = attrib.attribute->normal(0);
-                                snprintf(buf, 1024, "[%g %g %g], ...", v.x, v.y, v.z);
+                                snprintf(buf, BUFSIZE, "[%g %g %g], ...", v.x, v.y, v.z);
                             }
                         }
                         else if (attrib.type == VECTOR4_ATTRIB)
@@ -357,12 +439,12 @@ SetFlags(f, Knob::ENDLINE);
                             if (nVals == 1)
                             {
                                 const Vector4& v = attrib.attribute->vector4(0);
-                                snprintf(buf, 1024, "[%g %g %g %g]", v.x, v.y, v.z, v.w);
+                                snprintf(buf, BUFSIZE, "[%g %g %g %g]", v.x, v.y, v.z, v.w);
                             }
                             else
                             {
                                 const Vector4& v = attrib.attribute->vector4(0);
-                                snprintf(buf, 1024, "[%g %g %g %g], ...", v.x, v.y, v.z, v.w);
+                                snprintf(buf, BUFSIZE, "[%g %g %g %g], ...", v.x, v.y, v.z, v.w);
                             }
                         }
                         else if (attrib.type == MATRIX3_ATTRIB)
@@ -370,7 +452,7 @@ SetFlags(f, Knob::ENDLINE);
                         else if (attrib.type == MATRIX4_ATTRIB)
                             ;//
                         else
-                            snprintf(buf, 1024, "[support this type!]");
+                            snprintf(buf, BUFSIZE, "[support this type!]");
                         list->cell(row, 4) = buf;
                         ++row;
 
@@ -415,7 +497,7 @@ SetFlags(f, Knob::ENDLINE);
                         ++row;
                     }
 
-                    snprintf(buf, 1024, "%d", j); list->cell(row, 0) = buf; // prim index
+                    snprintf(buf, BUFSIZE, "%d", j); list->cell(row, 0) = buf; // prim index
 
                     const Fsr::NodePrimitive* fsr_nprim = dynamic_cast<const Fsr::NodePrimitive*>(prim);
                     const Fsr::Node*          fsr_node  = dynamic_cast<const Fsr::Node*>(prim);
@@ -423,7 +505,7 @@ SetFlags(f, Knob::ENDLINE);
                     {
                         // Fuser node, get arg set sorted alphabetically:
                         list->cell(row, 1) = "<Class>";
-                        sprintf(buf, "%s[%s]", fsr_nprim->Class(), fsr_nprim->node()->fuserNodeClass());
+                        snprintf(buf, BUFSIZE, "%s[%s]", fsr_nprim->Class(), fsr_nprim->node()->fuserNodeClass());
                         list->cell(row, 2) = buf;
                         ++row;
 
@@ -445,6 +527,23 @@ SetFlags(f, Knob::ENDLINE);
                         list->cell(row, 1) = "<FsrClass>";
                         list->cell(row, 2) = fsr_node->fuserNodeClass();
                         ++row;
+
+                        // TODO: get rid of this hardcoding of class types in favor of some
+                        // other method of getting info from class:
+                        const Fsr::MeshPrimitive* fsr_mesh = dynamic_cast<const Fsr::MeshPrimitive*>(prim);
+                        if (fsr_mesh)
+                        {
+                            list->cell(row, 0) = "";            // prim index
+                            list->cell(row, 1) = "<numFaces>";  // name
+                            snprintf(buf, BUFSIZE, "%d", (uint32_t)fsr_mesh->numFaces());
+                            list->cell(row, 2) = buf; // value
+                            ++row;
+                            list->cell(row, 0) = "";            // prim index
+                            list->cell(row, 1) = "<numVerts>";  // name
+                            snprintf(buf, BUFSIZE, "%d", (uint32_t)fsr_mesh->numVerts());
+                            list->cell(row, 2) = buf; // value
+                            ++row;
+                        }
 
                         // Get arg set sorted alphabetically:
                         Fsr::KeyValueSortedMap sorted_args;
@@ -493,7 +592,7 @@ SetFlags(f, Knob::ENDLINE);
         ++row;
 
         // Fuser child node:
-        snprintf(buf, 1024, "   | %d", offset);
+        snprintf(buf, BUFSIZE, "   | %d", offset);
         list->cell(row, 0) = buf; // child index
         list->cell(row, 1) = "<Class>";
         list->cell(row, 2) = node->fuserNodeClass();

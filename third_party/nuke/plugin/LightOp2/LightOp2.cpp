@@ -27,22 +27,79 @@
 /// @author Jonathan Egstad
 ///
 
-#include <Fuser/LightOp.h>
+
+#include <zprender/LightMaterialOp.h>
+#include <zprender/zprPointLight.h>
+
 
 using namespace DD::Image;
 
 /*! Fuser replacement for the stock Nuke Light2 plugin that adds
     scene file loading capabilities (usd/abc/fbx/etc.)
 */
-class LightOp2 : public Fsr::FuserLightOp
+class LightOp2 : public zpr::LightMaterialOp
 {
+  public:
+    zpr::zprPointLight zprShader;       //!< Local shader allocation for knobs to write into
+
+
   public:
     static const Description description;
     /*virtual*/ const char* Class() const { return description.name; }
 
-    LightOp2(Node *node) : Fsr::FuserLightOp(node) {}
+    LightOp2(Node *node) : zpr::LightMaterialOp(node) {}
 
     /*virtual*/ const char* displayName() const { return "Light"; }
+
+
+    /*virtual*/
+    void addLightKnobs(DD::Image::Knob_Callback f)
+    {
+        //LightMaterialOp::addLightKnobs(f); // don't want the near/far controls from LightOp
+
+        Double_knob(f, &zprShader.inputs.k_near, IRange(0.001,  10.0), "near");
+        Double_knob(f, &zprShader.inputs.k_far,  IRange(1.0, 10000.0), "far" );
+    }
+
+
+    /*virtual*/
+    void _validate(bool for_real)
+    {
+        // Copy values from the LighOp to the InputParam:
+        zprShader.inputs.k_color.set(DD::Image::LightOp::color_[DD::Image::Chan_Red  ],
+                                     DD::Image::LightOp::color_[DD::Image::Chan_Green],
+                                     DD::Image::LightOp::color_[DD::Image::Chan_Blue ]);
+        zprShader.inputs.k_intensity = DD::Image::LightOp::intensity_;
+        zprShader.inputs.k_illuminate_atmosphere = Fsr::FuserLightOp::k_illuminate_atmosphere;
+
+        // Updates the legacy-mode output LightShader:
+        LightMaterialOp::_validate(for_real);
+    }
+
+
+    //------------------------------------------------------------------
+    // From LightMaterialOp
+    //------------------------------------------------------------------
+
+
+    /*! Create the shaders for one input, returning the output surface shader.
+    */
+    /*virtual*/
+    zpr::LightShader* _createOutputLightShader(const zpr::RenderContext*     rtx,
+                                               const Fsr::DoubleList&        motion_times,
+                                               const Fsr::Mat4dList&         motion_xforms,
+                                               std::vector<zpr::RayShader*>& shaders)
+
+    {
+        // Create a zprPointLight by default and set its color and intensity
+        // values:
+        zpr::LightShader* ltshader = new zpr::zprPointLight(zprShader.inputs,
+                                                            motion_times,
+                                                            motion_xforms);
+
+        shaders.push_back(ltshader);
+        return ltshader;
+    }
 
 };
 

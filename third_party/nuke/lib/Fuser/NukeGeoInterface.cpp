@@ -43,22 +43,18 @@ namespace Fsr {
 //-----------------------------------------------------------------------------
 
 
-/*! Copy a string pointer to a constant one stored in a static map.
-
-    This is primarily used for DD::Image::Attribute names which need
-    to stick around so that the const char*s used to reference the
-    names don't suddenly disappear!
+/*!
 */
-static const char*
-getConstStr(const char* var,
-            bool        lock=true)
+const char*
+getConstString(const char* str,
+               bool        lock)
 {
     static std::set<std::string> attrib_const_strings;
     static DD::Image::Lock       attrib_const_lock;
 
     if (lock)
         attrib_const_lock.lock();
-    std::pair<std::set<std::string>::const_iterator, bool> it = attrib_const_strings.insert(std::string(var));
+    std::pair<std::set<std::string>::const_iterator, bool> it = attrib_const_strings.insert(std::string(str));
     if (lock)
         attrib_const_lock.unlock();
 
@@ -197,7 +193,7 @@ setObjectString(const char*              attrib_name,
     DD::Image::Attribute* attrib =
         geometry_list.writable_attribute(obj_index,
                                          DD::Image::Group_Object,
-                                         getConstStr(attrib_name),
+                                         getConstString(attrib_name),
                                          DD::Image::STD_STRING_ATTRIB);
     assert(attrib); // shouldn't happen...
     attrib->resize(1); // just in case...
@@ -217,7 +213,7 @@ setObjectInt(const char*              attrib_name,
     DD::Image::Attribute* attrib =
         geometry_list.writable_attribute(obj_index,
                                          DD::Image::Group_Object,
-                                         getConstStr(attrib_name),
+                                         getConstString(attrib_name),
                                          DD::Image::INT_ATTRIB);
     assert(attrib); // shouldn't happen...
     attrib->resize(1); // just in case...
@@ -237,7 +233,7 @@ setObjectFloat(const char*              attrib_name,
     DD::Image::Attribute* attrib =
         geometry_list.writable_attribute(obj_index,
                                          DD::Image::Group_Object,
-                                         getConstStr(attrib_name),
+                                         getConstString(attrib_name),
                                          DD::Image::FLOAT_ATTRIB);
     assert(attrib); // shouldn't happen...
     attrib->resize(1); // just in case...
@@ -422,21 +418,38 @@ GeoOpGeometryEngineContext::GeoOpGeometryEngineContext(int                      
     m_multithreaded(num_threads > 1),
     m_write_owner(0)
 {
+    //std::cout << "GeoOpGeometryEngineContext::ctor(" << this << ") node=" << geo->node();
     assert(geo); // shouldn't happen...
 
 #if __cplusplus <= 201103L
-    typedef std::map<void*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
+    typedef std::map<uint64_t, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
 #else
-    typedef std::unordered_map<void*, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
+    typedef std::unordered_map<uint64_t, GeoOpGeometryEngineContext::GeoOpContext*> GeoOpContextMap;
 #endif
     static GeoOpContextMap geoop_context_map;
 
-    //std::cout << "GeoOpGeometryEngineContext::ctor(" << this << ") node=" << geo->node();
-    const GeoOpContextMap::const_iterator it = geoop_context_map.find(geo->node());
+    // Use both the GeoOp's Node pointer as well as the GeoOp pointer itself
+    // as the key for the map so that a reused GeoOp on a different Node won't
+    // return the same context.
+    //
+    // Since we're trying to get reuse when the frame changes but the object_id
+    // doesn't in Nuke's current Op architecture I think this is all we can do
+    // for now.
+    //
+    // TODO: we don't clean up these GeoOpContext allocations! Luckily they're
+    // small...
+
+    DD::Image::Hash geo_ctx_hash;
+
+    void* node_address = geo->node();
+    geo_ctx_hash.append(&node_address, sizeof(void*));
+    geo_ctx_hash.append(&geo,          sizeof(void*));
+
+    const GeoOpContextMap::const_iterator it = geoop_context_map.find(geo_ctx_hash.value());
     if (it == geoop_context_map.end())
     {
         geoop_context = new GeoOpContext();
-        geoop_context_map[geo->node()] = geoop_context;
+        geoop_context_map[geo_ctx_hash.value()] = geoop_context;
         //std::cout << ", geo=" << geo << " - NEW geoop_context=" << geoop_context << std::endl;
     }
     else
@@ -444,6 +457,7 @@ GeoOpGeometryEngineContext::GeoOpGeometryEngineContext(int                      
         geoop_context = it->second;
         //std::cout << ", geo=" << geo << " - REUSE geoop_context=" << geoop_context << std::endl;
     }
+
     assert(geoop_context);
 }
 
@@ -594,6 +608,26 @@ GeoOpGeometryEngineContext::getObjectThreadSafe(const std::string& object_id,
         if (geoinfo_cache.obj >= 0)
             geoinfo_cache.updateFromGeometryList(*geometry_list);
     }
+
+#if 0
+    std::cout << "          GeoOpGeometryEngineContext::getObjectThreadSafe(" << this << ")";
+    std::cout << ", geo_ctx=" << getGeoOpContext();
+    std::cout << ", geo=" << geo;
+    std::cout << ", thread=" << std::hex << m_write_owner << std::dec;
+    std::cout << ", obj=" << geoinfo_cache.obj;
+    std::cout << ", id='" << object_id << "'";
+    std::cout << ", points=" << geoinfo_cache.points_list;
+    std::cout << ", prims=" << geoinfo_cache.primitives_list;
+    //if (geoinfo_cache.attributes_list)
+    //    std::cout << ", attribs=" << geoinfo_cache.attributes_list->data();
+    //else
+    //    std::cout << ", attribs=NULL";
+    DD::Image::GeoInfo& info = (*geometry_list)[geoinfo_cache.obj];
+    std::cout << ", src_id=0x" << std::hex << info.src_id().value() << std::dec;
+    std::cout << ", out_id=0x" << std::hex << info.out_id().value() << std::dec;
+    std::cout << std::endl; 
+#endif
+
     releaseWriteLock();
 
     return geoinfo_cache.obj;
@@ -703,19 +737,25 @@ GeoOpGeometryEngineContext::addObjectThreadSafe(const std::string& object_id,
         geoinfo_cache.updateFromGeometryList(*geometry_list);
 
 #if 0
-        std::cout << "          GeoOpGeometryEngineContext::addObjectThreadSafe(" << std::hex << m_write_owner << std::dec << ")";
-        std::cout << " obj=" << geoinfo_cache.obj;
-        std::cout << ", id='" << object_id << "'";
-        std::cout << ", points=" << geoinfo_cache.points_list;
-        std::cout << ", prims=" << geoinfo_cache.primitives_list;
-        //if (geoinfo_cache.attributes_list)
-        //    std::cout << ", attribs=" << geoinfo_cache.attributes_list->data();
-        //else
-        //    std::cout << ", attribs=NULL";
-        DD::Image::GeoInfo& info = (*geometry_list)[geoinfo_cache.obj];
-        std::cout << ", src_id=0x" << std::hex << info.src_id().value() << std::dec;
-        std::cout << ", out_id=0x" << std::hex << info.out_id().value() << std::dec;
-        std::cout << std::endl; 
+        if (is_new_object)
+        {
+            std::cout << "          GeoOpGeometryEngineContext::addObjectThreadSafe(" << this << ")";
+            std::cout << ", geo_ctx=" << getGeoOpContext();
+            std::cout << ", geo=" << geo;
+            std::cout << ", thread=" << std::hex << m_write_owner << std::dec;
+            std::cout << ", obj=" << geoinfo_cache.obj;
+            std::cout << ", id='" << object_id << "'";
+            std::cout << ", points=" << geoinfo_cache.points_list;
+            std::cout << ", prims=" << geoinfo_cache.primitives_list;
+            //if (geoinfo_cache.attributes_list)
+            //    std::cout << ", attribs=" << geoinfo_cache.attributes_list->data();
+            //else
+            //    std::cout << ", attribs=NULL";
+            DD::Image::GeoInfo& info = (*geometry_list)[geoinfo_cache.obj];
+            std::cout << ", src_id=0x" << std::hex << info.src_id().value() << std::dec;
+            std::cout << ", out_id=0x" << std::hex << info.out_id().value() << std::dec;
+            std::cout << std::endl; 
+        }
 #endif
 
     }
@@ -869,7 +909,7 @@ GeoOpGeometryEngineContext::setObjectStringThreadSafe(GeoInfoCacheRef&   geoinfo
     DD::Image::Attribute* attrib =
         createWritableAttributeThreadSafe(geoinfo_cache,
                                           DD::Image::Group_Object,
-                                          getConstStr(attrib_name),
+                                          getConstString(attrib_name),
                                           DD::Image::STD_STRING_ATTRIB);
     assert(attrib); // shouldn't happen...
     attrib->resize(1); // just in case...
@@ -886,7 +926,7 @@ GeoOpGeometryEngineContext::setObjectIntThreadSafe(GeoInfoCacheRef& geoinfo_cach
     DD::Image::Attribute* attrib =
         createWritableAttributeThreadSafe(geoinfo_cache,
                                           DD::Image::Group_Object,
-                                          getConstStr(attrib_name),
+                                          getConstString(attrib_name),
                                           DD::Image::INT_ATTRIB);
     assert(attrib); // shouldn't happen...
     attrib->resize(1); // just in case...
@@ -903,7 +943,7 @@ GeoOpGeometryEngineContext::setObjectFloatThreadSafe(GeoInfoCacheRef& geoinfo_ca
     DD::Image::Attribute* attrib =
         createWritableAttributeThreadSafe(geoinfo_cache,
                                           DD::Image::Group_Object,
-                                          getConstStr(attrib_name),
+                                          getConstString(attrib_name),
                                           DD::Image::FLOAT_ATTRIB);
     assert(attrib); // shouldn't happen...
     attrib->resize(1); // just in case...
@@ -928,7 +968,7 @@ GeoOpGeometryEngineContext::setPrimitiveStringThreadSafe(GeoInfoCacheRef&   geoi
     DD::Image::Attribute* attrib =
         createWritableAttributeThreadSafe(geoinfo_cache,
                                           DD::Image::Group_Primitives,
-                                          getConstStr(attrib_name),
+                                          getConstString(attrib_name),
                                           DD::Image::STD_STRING_ATTRIB);
     assert(attrib); // shouldn't happen...
     if (prim_index >= (uint32_t)attrib->size())
@@ -947,7 +987,7 @@ GeoOpGeometryEngineContext::setPrimitiveIntThreadSafe(GeoInfoCacheRef& geoinfo_c
     DD::Image::Attribute* attrib =
         createWritableAttributeThreadSafe(geoinfo_cache,
                                           DD::Image::Group_Primitives,
-                                          getConstStr(attrib_name),
+                                          getConstString(attrib_name),
                                           DD::Image::INT_ATTRIB);
     assert(attrib); // shouldn't happen...
     if (prim_index >= (uint32_t)attrib->size())
@@ -966,7 +1006,7 @@ GeoOpGeometryEngineContext::setPrimitiveFloatThreadSafe(GeoInfoCacheRef& geoinfo
     DD::Image::Attribute* attrib =
         createWritableAttributeThreadSafe(geoinfo_cache,
                                           DD::Image::Group_Primitives,
-                                          getConstStr(attrib_name),
+                                          getConstString(attrib_name),
                                           DD::Image::FLOAT_ATTRIB);
     assert(attrib); // shouldn't happen...
     if (prim_index >= (uint32_t)attrib->size())

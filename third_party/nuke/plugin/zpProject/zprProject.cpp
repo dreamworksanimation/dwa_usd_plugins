@@ -59,93 +59,29 @@ static RayShader* shaderBuilder() { return new zprProject(); }
 };
 
 
-//!
-zprProject::InputParams::InputParams() :
-    k_texture_filter(DD::Image::Filter::Cubic)
-{
-    k_operation      = MERGE_REPLACE;
-    k_faces_mode     = FACES_BOTH;
-    k_crop_to_format = true;
-    k_proj_channels  = DD::Image::Mask_All;
-    k_zclip_mode     = Z_CLIP_CAM;
-    k_near_clip      = 100.0;
-    k_far_clip       = 10000.0;
-}
-
-
 /*!
 */
 zprProject::zprProject() :
     RayShader(input_defs, output_defs)
 {
-    //
+    inputs.k_operation      = MERGE_REPLACE;
+    inputs.k_faces_mode     = FACES_BOTH;
+    inputs.k_crop_to_format = true;
+    inputs.k_proj_channels  = DD::Image::Mask_All;
+    inputs.k_zclip_mode     = Z_CLIP_CAM;
+    inputs.k_near_clip      = 100.0;
+    inputs.k_far_clip       = 10000.0;
+    inputs.k_texture_filter.type(DD::Image::Filter::Cubic);
 }
 
 
 /*!
 */
-zprProject::zprProject(const InputParams& _inputs) :
+zprProject::zprProject(const InputParams& input_params) :
     RayShader(input_defs, output_defs),
-    inputs(_inputs)
+    inputs(input_params)
 {
-    //std::cout << "zprProject::ctor(" << this << ")" << std::endl;
     //
-}
-
-
-/*static*/
-void
-zprProject::updateLocals(const InputParams& _inputs,
-                         LocalVars&         _locals)
-{
-    // Make projection fit into UV range 0-1, correcting for format w/h ratio:
-    _locals.m_project_channels = DD::Image::Mask_None;
-
-    DD::Image::Iop* texture = _inputs.k_bindings[MAP1].asTextureIop();
-    if (texture)
-    {
-        texture->validate(true/*for_real*/);
-        const DD::Image::Format& f = texture->format();
-
-        _locals.m_projectproj.setToTranslation(0.5, 0.5, 0.0);
-        _locals.m_projectproj.scale(0.5, 0.5*double(f.w())*f.pixel_aspect()/double(f.h()), 0.5);
-
-        _locals.m_project_channels = texture->channels();
-        _locals.m_project_channels &= _inputs.k_proj_channels;
-    }
-    else
-    {
-        _locals.m_projectproj.setToIdentity();
-    }
-
-    // Get camera transforms from inputs:
-    _locals.m_proj_cam = _inputs.k_bindings[CAMERA2].asCameraOp();
-    if (_locals.m_proj_cam)
-    {
-        _locals.m_proj_cam->validate(true/*for_real*/);
-        _locals.m_projectproj  *= _locals.m_proj_cam->projection();
-        _locals.m_projectxform  = _locals.m_proj_cam->imatrix();
-
-        _locals.m_projectconcat  = _locals.m_projectproj;
-        _locals.m_projectconcat *= _locals.m_projectxform;
-
-        _locals.m_cam_near = ::fabs(_locals.m_proj_cam->Near());
-        _locals.m_cam_far  = ::fabs(_locals.m_proj_cam->Far());
-    }
-    else
-    {
-        _locals.m_projectxform.setToIdentity();
-        _locals.m_projectconcat.setToIdentity();
-        _locals.m_cam_near = _locals.m_cam_far = 0.0;
-    }
-
-    _locals.m_near_clip = ::fabs(_inputs.k_near_clip);
-    _locals.m_far_clip  = ::fabs(_inputs.k_far_clip);
-
-    //std::cout << "m_proj_cam=" << _locals.m_proj_cam << std::endl;
-    //std::cout << "m_projectxform" << _locals.m_projectxform << std::endl;
-    //std::cout << "m_projectproj" << _locals.m_projectproj << std::endl;
-    //std::cout << "m_project_channels=" << _locals.m_project_channels << std::endl;
 }
 
 
@@ -158,21 +94,82 @@ zprProject::getInputBinding(uint32_t input)
 }
 
 
+/*! Initialize any uniform vars prior to rendering.
+    This is called without a RenderContext from the legacy shader system.
+*/
 /*virtual*/
 void
-zprProject::validateShader(bool                 for_real,
-                           const RenderContext& rtx)
+zprProject::updateUniformLocals(double  frame,
+                                int32_t view)
 {
-    RayShader::validateShader(for_real, rtx); // < get the inputs
+    //std::cout << "  zprProject::updateUniformLocals(" << this << ")"<< std::endl;
+    RayShader::updateUniformLocals(frame, view);
 
-    updateLocals(inputs, locals);
+    // Make projection fit into UV range 0-1, correcting for format w/h ratio:
+    m_project_channels = DD::Image::Mask_None;
+
+    DD::Image::Iop* texture = inputs.k_bindings[MAP1].asTextureIop();
+    if (texture)
+    {
+        texture->validate(true/*for_real*/);
+        const DD::Image::Format& f = texture->format();
+
+        m_projectproj.setToTranslation(0.5, 0.5, 0.0);
+        m_projectproj.scale(0.5, 0.5*double(f.w())*f.pixel_aspect()/double(f.h()), 0.5);
+
+        m_project_channels = texture->channels();
+        m_project_channels &= inputs.k_proj_channels;
+    }
+    else
+    {
+        m_projectproj.setToIdentity();
+    }
+
+    // Get camera transforms from inputs:
+    m_proj_cam = inputs.k_bindings[CAMERA2].asCameraOp();
+    if (m_proj_cam)
+    {
+        m_proj_cam->validate(true/*for_real*/);
+        m_projectproj  *= m_proj_cam->projection();
+        m_projectxform  = m_proj_cam->imatrix();
+
+        m_projectconcat  = m_projectproj;
+        m_projectconcat *= m_projectxform;
+
+        m_cam_near = ::fabs(m_proj_cam->Near());
+        m_cam_far  = ::fabs(m_proj_cam->Far());
+    }
+    else
+    {
+        m_projectxform.setToIdentity();
+        m_projectconcat.setToIdentity();
+        m_cam_near = m_cam_far = 0.0;
+    }
+
+    m_near_clip = ::fabs(inputs.k_near_clip);
+    m_far_clip  = ::fabs(inputs.k_far_clip);
+
+    //std::cout << "m_proj_cam=" << m_proj_cam << std::endl;
+    //std::cout << "m_projectxform" << m_projectxform << std::endl;
+    //std::cout << "m_projectproj" << m_projectproj << std::endl;
+    //std::cout << "m_project_channels=" << m_project_channels << std::endl;
+}
+
+
+/*virtual*/
+void
+zprProject::validateShader(bool                            for_real,
+                           const RenderContext*            rtx,
+                           const DD::Image::OutputContext* op_ctx)
+{
+    RayShader::validateShader(for_real, rtx, op_ctx); // validate inputs, update uniforms
 
     m_texture_channels  = DD::Image::Mask_None;
     for (uint32_t i=0; i < NUM_INPUTS; ++i)
         m_texture_channels += inputs.k_bindings[i].getChannels();
 
     m_output_channels = m_texture_channels;
-    m_output_channels += locals.m_project_channels;
+    m_output_channels += m_project_channels;
 }
 
 
@@ -273,12 +270,12 @@ zprProject::evaluateSurface(RayShaderContext& stx,
         out.rgba().set(0.0f, 0.0f, 0.0f, 1.0f);
 
     // If no projection enabled we're done:
-    if (locals.m_project_channels == DD::Image::Mask_None || inputs.k_operation == MERGE_NONE)
+    if (m_project_channels == DD::Image::Mask_None || inputs.k_operation == MERGE_NONE)
         return;
 
     // Possibly motion-blur interpolate the input camera xform matrix:
-    Fsr::Mat4d proj_xform  = locals.m_projectxform;
-    Fsr::Mat4d proj_concat = locals.m_projectconcat;
+    Fsr::Mat4d proj_xform  = m_projectxform;
+    Fsr::Mat4d proj_concat = m_projectconcat;
 
 #if 0
     // If motion blur enabled find the motionblur 'sibling' shader to interpolate with.
@@ -319,26 +316,26 @@ zprProject::evaluateSurface(RayShaderContext& stx,
             const double f0 = stx.rtx->shutter_times[stx.frame_shutter_step  ];
             const double f1 = stx.rtx->shutter_times[stx.frame_shutter_step+1];
             const float t = float((stx.frame_time - f0) / (f1 - f0));
-            proj_xform = lerp(locals.m_projectxform, mb_projector->locals.m_projectxform, t);
-            proj_concat = locals.m_projectproj * proj_xform;
-            //if (stx.x==820&&stx.y==801) std::cout << "0: " << locals.m_projectxform << " 1: " << mb_projector->locals.m_projectxform << " proj_xform: " << proj_xform << std::endl;
+            proj_xform = lerp(m_projectxform, mb_projector->m_projectxform, t);
+            proj_concat = m_projectproj * proj_xform;
+            //if (stx.x==820&&stx.y==801) std::cout << "0: " << m_projectxform << " 1: " << mb_projector->m_projectxform << " proj_xform: " << proj_xform << std::endl;
         }
 #endif
     }
 #endif
 
     // Handle front/back clipping:
-    if (inputs.k_faces_mode != FACES_BOTH && locals.m_proj_cam)
+    if (inputs.k_faces_mode != FACES_BOTH && m_proj_cam)
     {
         // Don't project on surfaces facing away from projection camera:
-        const Fsr::Vec3d Vp = (Fsr::Vec3d(locals.m_proj_cam->matrix().translation()) - stx.PW);
+        const Fsr::Vec3d Vp = (Fsr::Vec3d(m_proj_cam->matrix().translation()) - stx.PW);
         const double Vp_dot_N = Vp.dot(stx.Ni);
         if ((inputs.k_faces_mode == FACES_FRONT && Vp_dot_N < 0.0f) || 
             (inputs.k_faces_mode == FACES_BACK  && Vp_dot_N > 0.0f))
         {
             // Force this surface to be transparent, allowing further-back surfaces to appear.
             // If this isn't done then this surface will appear black:
-            out.erase(locals.m_project_channels);
+            out.erase(m_project_channels);
             out[DD::Image::Chan_Alpha] = 0.0f; // make sure alpha is zero too
             return;
         }
@@ -352,13 +349,13 @@ zprProject::evaluateSurface(RayShaderContext& stx,
         if (inputs.k_zclip_mode == Z_CLIP_USER)
         {
             // Clip project at the user-set near/far planes:
-            if (Z < locals.m_near_clip || Z > locals.m_far_clip)
+            if (Z < m_near_clip || Z > m_far_clip)
                 return;
         }
-        else if (inputs.k_zclip_mode == Z_CLIP_CAM && locals.m_proj_cam)
+        else if (inputs.k_zclip_mode == Z_CLIP_CAM && m_proj_cam)
         {
             // Clip project at the user-set near/far planes:
-            if (Z < locals.m_cam_near || Z > locals.m_cam_far)
+            if (Z < m_cam_near || Z > m_cam_far)
                 return;
         }
     }
@@ -376,7 +373,7 @@ zprProject::evaluateSurface(RayShaderContext& stx,
         return; // outside projection area
     }
 
-    Fsr::Pixel tex_pixel(locals.m_project_channels);
+    Fsr::Pixel tex_pixel(m_project_channels);
     tex_pixel.erase();
 
     if (inputs.k_bindings[MAP1].isActiveColor())
@@ -397,16 +394,16 @@ zprProject::evaluateSurface(RayShaderContext& stx,
     switch (inputs.k_operation)
     {
         case MERGE_REPLACE:
-            out.replace(tex_pixel, locals.m_project_channels);
+            out.replace(tex_pixel, m_project_channels);
             break;
 
         case MERGE_OVER:
-            out.over(tex_pixel/*A*/, tex_pixel[DD::Image::Chan_Alpha]/*alpha*/, locals.m_project_channels);
+            out.over(tex_pixel/*A*/, tex_pixel[DD::Image::Chan_Alpha]/*alpha*/, m_project_channels);
             break;
 
         case MERGE_UNDER:
         {
-            //out.under(tex_pixel/*A*/, tex_pixel[DD::Image::Chan_Alpha]/*alpha*/, locals.m_project_channels);
+            //out.under(tex_pixel/*A*/, tex_pixel[DD::Image::Chan_Alpha]/*alpha*/, m_project_channels);
             const float iBa = (1.0f - out[DD::Image::Chan_Alpha]);
             if (iBa < std::numeric_limits<float>::epsilon())
             {
@@ -414,12 +411,12 @@ zprProject::evaluateSurface(RayShaderContext& stx,
             }
             else if (iBa < 1.0f)
             {
-                foreach(z, locals.m_project_channels)
+                foreach(z, m_project_channels)
                     out[z] += tex_pixel[z]*iBa;
             }
             else
             {
-                foreach(z, locals.m_project_channels)
+                foreach(z, m_project_channels)
                     out[z] += tex_pixel[z];
             }
             break;
@@ -430,12 +427,12 @@ zprProject::evaluateSurface(RayShaderContext& stx,
             const float iAa = 1.0f - tex_pixel[DD::Image::Chan_Alpha];
             if (iAa < std::numeric_limits<float>::epsilon())
             {
-                foreach(z, locals.m_project_channels)
+                foreach(z, m_project_channels)
                     out[z] = 0.0f;
             }
             else if (iAa < 1.0f)
             {
-                foreach(z, locals.m_project_channels)
+                foreach(z, m_project_channels)
                     out[z] *= iAa;
             }
             else
@@ -450,12 +447,12 @@ zprProject::evaluateSurface(RayShaderContext& stx,
             const float Aa = tex_pixel[DD::Image::Chan_Alpha];
             if (Aa < std::numeric_limits<float>::epsilon())
             {
-                foreach(z, locals.m_project_channels)
+                foreach(z, m_project_channels)
                     out[z] = 0.0f;
             }
             else if (Aa < 1.0f)
             {
-                foreach(z, locals.m_project_channels)
+                foreach(z, m_project_channels)
                     out[z] *= Aa;
             }
             else
@@ -466,22 +463,22 @@ zprProject::evaluateSurface(RayShaderContext& stx,
         }
 
         case MERGE_PLUS:
-            foreach(z, locals.m_project_channels)
+            foreach(z, m_project_channels)
                 out[z] = (out[z] + tex_pixel[z]);
             break;
 
         case MERGE_AVG:
-            foreach(z, locals.m_project_channels)
+            foreach(z, m_project_channels)
                 out[z] = (out[z] + tex_pixel[z])*0.5f;
             break;
 
         case MERGE_MIN:
-            foreach(z, locals.m_project_channels)
+            foreach(z, m_project_channels)
                 out[z] = std::min(out[z], tex_pixel[z]);
             break;
 
         case MERGE_MAX:
-            foreach(z, locals.m_project_channels)
+            foreach(z, m_project_channels)
                 out[z] = std::max(out[z], tex_pixel[z]);
             break;
 

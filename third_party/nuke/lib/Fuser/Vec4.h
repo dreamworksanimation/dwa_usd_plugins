@@ -108,6 +108,8 @@ class FSR_EXPORT Vec4
     void set(T d) { x = y = z = d; w = (T)1; }
     //! Set all components, w defaults to 1.
     void set(T _x, T _y , T _z, T _w=(T)1) { x = _x; y = _y; z = _z; w = _w; }
+    //! Set xyz and w separately.
+    void set(const Vec3<T>& v, T vw=(T)1) { this->set(v.x, v.y, v.z, vw); }
     //! Set components to 0 or 1.
     void setToZero() { x = y = z = w = (T)0; }
     void setToOne()  { x = y = z = w = (T)1; }

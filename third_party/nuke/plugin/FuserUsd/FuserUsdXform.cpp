@@ -30,7 +30,7 @@
 #include "FuserUsdXform.h"
 
 #include <Fuser/ArgConstants.h> // for attrib names constants
-#include <Fuser/AxisKnob.h>     // for AxisKnobVals
+#include <Fuser/AxisKnob.h>     // for AxisVals
 #include <Fuser/ExecuteTargetContexts.h>
 #include <Fuser/NukeKnobInterface.h>
 #include <Fuser/NukeGeoInterface.h>
@@ -411,7 +411,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
 
 
     // This list gets filled in with the final transforms:
-    AxisKnobValsList axis_vals_list;
+    AxisValsList axis_vals_list;
 
     // Support parent translate/rotate knobs.
     // First check if target AxisOp has the parent knobs. If so sample the
@@ -529,7 +529,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
                                               Pxr::UsdTimeCode(input_frame) :
                                               Pxr::UsdTimeCode::Default();
 
-            AxisKnobVals& axis_vals = axis_vals_list[j];
+            AxisVals& axis_vals = axis_vals_list[j];
             if (!axis_vals.extractFromMatrix(getConcatenatedMatrixAtPrim(parent_prim, timecode),
                                              T_enable, R_enable, S_enable,
                                              Fsr::XYZ_ORDER,
@@ -539,7 +539,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
                 //TF_RUNTIME_ERROR("Unable to successfully decompose parent transform at USD prim <%s>", m_xformable_schema.GetPath().GetText());
                 break;
             }
-            axis_vals.parent_enable = true;
+            axis_vals.enableParentXformVals();
             if (!axis_vals.isParentXformValsDefault())
                 all_default_vals = false;
 
@@ -549,7 +549,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
         if (all_default_vals)
         {
             for (size_t j=0; j < axis_vals_list.size(); ++j)
-                axis_vals_list[j].parent_enable = false;
+                axis_vals_list[j].enableParentXformVals(false);
         }
 
 
@@ -586,7 +586,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
         // Get XformOps.
         // If there's only a single 'TypeTransform' (matrix4) Op then we can
         // decompose it, otherwise attempt to map each transform type to the
-        // parts of a AxisKnobVals and build the transform & rotation orders.
+        // parts of a AxisVals and build the transform & rotation orders.
 
         // When we find ops, we match the ops by suffix ("" will define the basic
         // translate, rotate, scale) and by order. If we find an op with a
@@ -629,7 +629,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
             //std::cout << "      nSamples=" << nSamples << ":" << std::endl;
             for (size_t j=0; j < nSamples; ++j)
             {
-                AxisKnobVals& axis_vals = axis_vals_list[j];
+                AxisVals& axis_vals = axis_vals_list[j];
 
                 axis_vals.xform_order = decompose_xform_order;
                 axis_vals.rot_order   = decompose_rot_order;
@@ -665,7 +665,7 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
         const size_t nSamples = axis_vals_list.size();
         for (size_t j=0; j < nSamples; ++j)
         {
-            AxisKnobVals& axis_vals = axis_vals_list[j];
+            AxisVals& axis_vals = axis_vals_list[j];
 
             axis_vals.xform_order = decompose_xform_order;
             axis_vals.rot_order   = decompose_rot_order;
@@ -691,10 +691,10 @@ FuserUsdXform::importSceneOp(DD::Image::Op*     op,
 
     // Apply euler filter to final decomposed rotations:
     if (euler_filter_enable)
-        AxisKnobVals::applyEulerFilter(decompose_rot_order, axis_vals_list);
+        AxisVals::applyEulerFilter(decompose_rot_order, axis_vals_list);
 
     // Stores all the AxisKnob entries in the AxisOp transform knobs:
-    AxisKnobVals::store(op, axis_vals_list);
+    AxisVals::store(axis_vals_list, op);
 
     DD::Image::CameraOp* camera = dynamic_cast<DD::Image::CameraOp*>(op);
     if (camera)

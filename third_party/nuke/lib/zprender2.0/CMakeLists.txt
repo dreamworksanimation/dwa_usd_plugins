@@ -14,7 +14,10 @@ pxr_static_library(${PXR_PACKAGE}
         ColorMapKnob.h
         ConeVolume.h
         Disc.h
+        LightMaterial.h
+        LightMaterialOp.h
         LightShader.h
+        LightVolume.h
         InputBinding.h
         Mesh.h
         Plane.h
@@ -38,8 +41,8 @@ pxr_static_library(${PXR_PACKAGE}
         Traceable.h
         Volume.h
         VolumeShader.h
-        VolumeMaterialOp.h
         zprAttributeReader.h
+        zprHomogeneousVolume.h
         zprIopUVTexture.h
         zprPointLight.h
         zprPreviewSurface.h
@@ -49,6 +52,8 @@ pxr_static_library(${PXR_PACKAGE}
     CPPFILES
         ColorMapKnob.cpp
         InputBinding.cpp
+        LightMaterial.cpp
+        LightMaterialOp.cpp
         LightShader.cpp
         Mesh.cpp
         Points.cpp
@@ -61,8 +66,8 @@ pxr_static_library(${PXR_PACKAGE}
         SurfaceMaterialOp.cpp
         Texture2dSampler.cpp
         VolumeShader.cpp
-        VolumeMaterialOp.cpp
         zprAttributeReader.cpp
+        zprHomogeneousVolume.cpp
         zprIopUVTexture.cpp
         zprPointLight.cpp
         zprReadUVTexture.cpp

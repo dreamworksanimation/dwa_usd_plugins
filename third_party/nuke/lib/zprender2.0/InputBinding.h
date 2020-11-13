@@ -41,6 +41,7 @@
 namespace zpr {
 
 class SurfaceMaterialOp;
+class Texture2dSampler;
 
 
 /*! RayShader input binding.
@@ -184,18 +185,58 @@ class ZPR_EXPORT InputBinding
 
     //! Return the binding's value (usually a color) depending on its type.
     void       getValue(RayShaderContext& stx,
-                        Fsr::Pixel&       out);
+                        Fsr::Pixel&       out) const;
     Fsr::Vec3f getValue(RayShaderContext& stx,
-                        float*            out_alpha=NULL);
+                        float*            out_alpha=NULL) const;
 
-    //! Sample the texture input filling in the binding's rgb and opacity channels in Pixel.
+    /*! Sample the texture input filling in the binding's rgb and opacity channels in Pixel.
+        Uses the UV coord and derivatives from RayShaderContext.
+    */
     void sampleTexture(RayShaderContext& stx,
-                       Fsr::Pixel&       tex_color);
+                       Fsr::Pixel&       tex_color) const;
+    /*! Sample the texture input filling in the binding's rgb and opacity channels in Pixel.
+        Overrides UV coord and derivatives in RayShaderContext but uses the texture
+        filter and samplers from it.
+    */
+    void sampleTexture(const Fsr::Vec2f& UV,
+                       const Fsr::Vec2f& dUVdx,
+                       const Fsr::Vec2f& dUVdy,
+                       RayShaderContext& stx,
+                       Fsr::Pixel&       tex_color) const;
+    /*! Sample the texture input filling in the binding's rgb and opacity channels in Pixel.
+        Uses slower Iop sample routines since there's no Texture2dSampler available.
+    */
+    void sampleTexture(const Fsr::Vec2f&        UV,
+                       const Fsr::Vec2f&        dUVdx,
+                       const Fsr::Vec2f&        dUVdy,
+                       const DD::Image::Filter* texture_filter,
+                       Fsr::Pixel&              tex_color) const;
 };
 
 
 //!
 std::ostream& operator << (std::ostream&, const InputBinding&);
+
+
+
+/*---------------------------------------------------------------------*/
+/*---------------------------------------------------------------------*/
+/*                   Inline Function Implementations                   */
+/*---------------------------------------------------------------------*/
+/*---------------------------------------------------------------------*/
+
+
+inline void
+InputBinding::sampleTexture(RayShaderContext& stx,
+                            Fsr::Pixel&       tex_color) const
+{
+    sampleTexture(stx.UV,
+                  stx.dUVdx,
+                  stx.dUVdy,
+                  stx,
+                  tex_color);
+                  
+}
 
 
 } // namespace zpr

@@ -88,6 +88,7 @@ FuserLightOp::FuserLightOp(::Node* node) :
     far_                    = 1.0;
     k_constrain_to_near_far = false;
     k_falloff_rate_bias     = 1.0;
+    k_illuminate_atmosphere = true;
     k_light_identifier      = "";
     k_object_mask           = "*";
 }
@@ -152,15 +153,35 @@ FuserLightOp::knobs(DD::Image::Knob_Callback f)
 #ifdef FUSER_USE_KNOB_RTTI
     // HACK!!!!: Dummy knob so we can test for class without using RTTI...:
     int dflt=0; DD::Image::Int_knob(f, &dflt, FuserLightOpRTTIKnob, DD::Image::INVISIBLE);
-        DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE | DD::Image::Knob::NO_ANIMATION | DD::Image::Knob::NO_RERENDER);
+        DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE |
+                               DD::Image::Knob::NO_ANIMATION |
+                               DD::Image::Knob::NO_RERENDER);
 #endif
 
-    Fsr::SceneLoader::addSceneLoaderKnobs(f);
+    Fsr::SceneLoader::addSceneLoaderKnobs(f,
+                                          false/*group_open*/,
+                                          true/*show_xform_knobs*/,
+                                          true/*show_hierarchy*/);
 
     DD::Image::Divider(f);
     addDisplayOptionsKnobs(f);
 
-    addLightKnobs(f);
+    DD::Image::Newline(f);
+    bool dummy_val=true;
+    DD::Image::Bool_knob(f, &dummy_val, "sync_light_controls", "sync light controls");
+        DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE);
+        DD::Image::Tooltip(f, "If enabled and 'read from file' is true, sync the light controls to "
+                              "the scene file data, overwriting (*destroying*) any user-assigned values.\n"
+                              "\n"
+                              "When disabled the light controls are *not* overwritten and remain "
+                              "available for user-assigned values.");
+
+    DD::Image::Newline(f);
+    addColorKnobs(f);
+    addLightKnobs(f); // << most subclasses implement this
+
+    DD::Image::Divider(f);
+    addGlobalOptionsKnobs(f);
 
     DD::Image::Divider(f);
     addTransformKnobs(f);
@@ -183,6 +204,72 @@ FuserLightOp::addDisplayOptionsKnobs(DD::Image::Knob_Callback f)
         DD::Image::Tooltip(f, "Turn off to prevent picking with the mouse in the viewer.");
     // Adds the 'editable' switch:
     Fsr::SceneLoader::addDisplayOptionsKnobs(f);
+}
+
+
+
+/*! Adds the base class light color knobs, by default appearing below display options.
+
+    Base class calls DD::Image::ComplexLightOp::color_knobs().
+*/
+/*virtual*/
+void
+FuserLightOp::addColorKnobs(DD::Image::Knob_Callback f)
+{
+    DD::Image::ComplexLightOp::color_knobs(f);
+}
+
+
+/*! Adds the light control knobs, by default appearing below color knobs and above mask knobs.
+
+    Base class adds the controls for a point light.
+*/
+/*virtual*/
+void
+FuserLightOp::addLightKnobs(DD::Image::Knob_Callback f)
+{
+    DD::Image::Double_knob(f, &near_, DD::Image::IRange(0.001, 10.0), "near");
+    DD::Image::Double_knob(f, &far_,  DD::Image::IRange(1.0, 1000.0), "far" );
+}
+
+
+/*! Adds light ID, mask etc knobs, by default appearing below light knobs and above transform controls.
+
+    Base class adds the light ID, object mask and global illumination controls.
+*/
+/*virtual*/
+void
+FuserLightOp::addGlobalOptionsKnobs(DD::Image::Knob_Callback f)
+{
+    DD::Image::Newline(f);
+    DD::Image::Bool_knob(f, &k_illuminate_atmosphere, "illuminate_atmosphere", "illuminate atmosphere");
+       DD::Image::Tooltip(f, "Light can create atmosphere volume shaders to produce volumetric "
+                             "effects.\n"
+                             "If disabled the light affects surfaces but doesn't influence "
+                             "atmospherics which may lead to visual imbalance if rendering "
+                             "surface color in the same pass as atmosphere.");
+
+    //-----------------------------------
+    DD::Image::Newline(f);
+    DD::Image::String_knob(f, &k_light_identifier, "light_identifier", "light identifier");
+       DD::Image::Tooltip(f, "Identifier string used by object light masks.  If this is empty the "
+                             "node name is used.");
+    DD::Image::String_knob(f, &k_object_mask, "object_mask", "object mask");
+       DD::Image::Tooltip(f, "List of object names to illuminate.\n"
+                             "Supports wildcard characters '*' and '?'.");
+
+    //DD::Image::ComplexLightOp::shadow_knobs(f);
+
+    //------------------------
+
+    //depthmap_slope_bias 0.01
+
+    //DD::Image::Tab_knob(f, "Falloff Profile");
+    //DD::Image::Bool_knob(f, &kFalloffLutEnable, "falloff_profile_enable", "enable falloff profile");
+    //DD::Image::LookupCurves_knob(f, &kFalloffLut, "falloff_profile", "falloff profile");
+
+    //DD::Image::Double_knob(f, &k_falloff_rate, IRange(0.0, 2.0), "falloff_rate", "falloff rate");
+    //DD::Image::ComplexLightOp::attenuation_knobs(f);
 }
 
 
@@ -234,51 +321,6 @@ void
 FuserLightOp::addExtraFrontPanelKnobs(DD::Image::Knob_Callback f)
 {
     //
-}
-
-
-/*! Adds the light control knobs, by default appearing above transform controls.
-
-    Base class adds the controls for a point light.
-*/
-/*virtual*/
-void
-FuserLightOp::addLightKnobs(DD::Image::Knob_Callback f)
-{
-    Newline(f);
-    bool dummy_val=true;
-    Bool_knob(f, &dummy_val, "sync_light_controls", "sync light controls");
-        SetFlags(f, DD::Image::Knob::EARLY_STORE);
-        Tooltip(f, "If enabled and 'read from file' is true, sync the light controls to "
-                   "the scene file data, overwriting (*destroying*) any user-assigned values.\n"
-                   "\n"
-                   "When disabled the light controls are *not* overwritten and remain "
-                   "available for user-assigned values.");
-    Newline(f);
-
-    DD::Image::ComplexLightOp::color_knobs(f);
-    DD::Image::Double_knob(f, &near_, DD::Image::IRange(0.001, 10.0), "near");
-    DD::Image::Double_knob(f, &far_,  DD::Image::IRange(1.0, 1000.0), "far" );
-
-    //DD::Image::Double_knob(f, &k_falloff_rate, IRange(0.0, 2.0), "falloff_rate", "falloff rate");
-    //DD::Image::ComplexLightOp::attenuation_knobs(f);
-
-    DD::Image::String_knob(f, &k_light_identifier, "light_identifier", "light identifier");
-       DD::Image::Tooltip(f, "Identifier string used by object light masks.  If this is empty the "
-                             "node name is used.");
-    DD::Image::String_knob(f, &k_object_mask, "object_mask", "object mask");
-       DD::Image::Tooltip(f, "List of object names to illuminate.\n"
-                             "Supports wildcard characters '*' and '?'.");
-
-    //DD::Image::ComplexLightOp::shadow_knobs(f);
-
-    //------------------------
-
-    //depthmap_slope_bias 0.01
-
-    //DD::Image::Tab_knob(f, "Falloff Profile");
-    //DD::Image::Bool_knob(f, &kFalloffLutEnable, "falloff_profile_enable", "enable falloff profile");
-    //DD::Image::LookupCurves_knob(f, &kFalloffLut, "falloff_profile", "falloff profile");
 }
 
 

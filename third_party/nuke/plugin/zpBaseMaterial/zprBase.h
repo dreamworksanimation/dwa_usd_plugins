@@ -27,6 +27,9 @@
 /// @author Jonathan Egstad
 
 
+#ifndef zprBase_h
+#define zprBase_h
+
 #include <zprender/RayShader.h>
 
 namespace zpr {
@@ -137,8 +140,9 @@ class zprBase : public RayShader
                              LocalVars&         _locals);
 
     /*virtual*/ InputBinding* getInputBinding(uint32_t input);
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
+    /*virtual*/ void validateShader(bool                            for_real,
+                                    const RenderContext*            rtx,
+                                    const DD::Image::OutputContext* op_ctx);
     /*virtual*/ void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
     /*virtual*/ void evaluateSurface(RayShaderContext& stx,
                                      Fsr::Pixel&       color_out);
@@ -148,6 +152,8 @@ class zprBase : public RayShader
 
 
 } // namespace zpr
+
+#endif
 
 // end of zprBase.h
 

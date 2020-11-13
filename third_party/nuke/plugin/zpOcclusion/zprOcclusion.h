@@ -22,10 +22,13 @@
 // language governing permissions and limitations under the Apache License.
 //
 
-/// @file zprOcclusion.cpp
+/// @file zprOcclusion.h
 ///
 /// @author Jonathan Egstad
 
+
+#ifndef zprOcclusion_h
+#define zprOcclusion_h
 
 #include <zprender/RayShader.h>
 
@@ -58,23 +61,15 @@ class zprOcclusion : public RayShader
         // AOV outputs:
         DD::Image::Channel k_amb_ocl_output;
         DD::Image::Channel k_refl_ocl_output;
-
-
-        //!
-        InputParams();
-    };
-
-    struct LocalVars
-    {
-        float  m_amb_ocl_cone_angle, m_refl_ocl_cone_angle;
-        double m_amb_ocl_mindist,    m_refl_ocl_mindist;
-        double m_amb_ocl_maxdist,    m_refl_ocl_maxdist;
     };
 
 
   public:
     InputParams inputs;
-    LocalVars   locals;
+
+    float  m_amb_ocl_cone_angle, m_refl_ocl_cone_angle;
+    double m_amb_ocl_mindist,    m_refl_ocl_mindist;
+    double m_amb_ocl_maxdist,    m_refl_ocl_maxdist;
 
 
   public:
@@ -86,15 +81,14 @@ class zprOcclusion : public RayShader
     /*virtual*/ const OutputKnobList& getOutputKnobDefinitions() const { return output_defs; }
 
     zprOcclusion();
-    zprOcclusion(const InputParams& _inputs);
-
-    //!
-    static void updateLocals(const InputParams& _inputs,
-                             LocalVars&         _locals);
+    zprOcclusion(const InputParams& input_params);
 
     /*virtual*/ InputBinding* getInputBinding(uint32_t input);
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
+    /*virtual*/ void updateUniformLocals(double  frame,
+                                         int32_t view=-1);
+    /*virtual*/ void validateShader(bool                            for_real,
+                                    const RenderContext*            rtx,
+                                    const DD::Image::OutputContext* op_ctx);
     /*virtual*/ void evaluateSurface(RayShaderContext& stx,
                                      Fsr::Pixel&       out);
 
@@ -103,6 +97,8 @@ class zprOcclusion : public RayShader
 
 
 } // namespace zpr
+
+#endif
 
 // end of zprOcclusion.h
 

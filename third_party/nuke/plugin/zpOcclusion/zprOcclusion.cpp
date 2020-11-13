@@ -53,59 +53,36 @@ static RayShader* shaderBuilder() { return new zprOcclusion(); }
 };
 
 
-
-//!
-zprOcclusion::InputParams::InputParams()
-{
-    k_amb_ocl_enabled     = true;
-    k_refl_ocl_enabled    = false;
-    k_amb_ocl_mindist     =    0.0;
-    k_amb_ocl_maxdist     = 1000.0;
-    k_amb_ocl_cone_angle  =  180.0; // 180 degree cone
-    k_refl_ocl_mindist    =    0.0;
-    k_refl_ocl_maxdist    = 1000.0;
-    k_refl_ocl_cone_angle =   20.0; // 20 degree cone
-    k_gi_scale            =    1.0;
-    //
-    k_amb_ocl_output  = DD::Image::Chan_Black;
-    k_refl_ocl_output = DD::Image::Chan_Black;
-}
-
-
 /*!
 */
 zprOcclusion::zprOcclusion() :
     RayShader(input_defs, output_defs)
 {
+    inputs.k_amb_ocl_enabled     = true;
+    inputs.k_refl_ocl_enabled    = false;
+    inputs.k_amb_ocl_mindist     =    0.0;
+    inputs.k_amb_ocl_maxdist     = 1000.0;
+    inputs.k_amb_ocl_cone_angle  =  180.0; // 180 degree cone
+    inputs.k_refl_ocl_mindist    =    0.0;
+    inputs.k_refl_ocl_maxdist    = 1000.0;
+    inputs.k_refl_ocl_cone_angle =   20.0; // 20 degree cone
+    inputs.k_gi_scale            =    1.0;
     //
+    inputs.k_amb_ocl_output  = DD::Image::Chan_Black;
+    inputs.k_refl_ocl_output = DD::Image::Chan_Black;
+
+    //bindInputKnob("amb_ocl_enabled", &inputs.k_amb_ocl_enabled);
 }
 
 
 /*!
 */
-zprOcclusion::zprOcclusion(const InputParams& _inputs) :
+zprOcclusion::zprOcclusion(const InputParams& input_params) :
     RayShader(input_defs, output_defs),
-    inputs(_inputs)
+    inputs(input_params)
 {
     //std::cout << "zprOcclusion::ctor(" << this << ")" << std::endl;
-    //
-}
-
-
-/*static*/
-void
-zprOcclusion::updateLocals(const InputParams& _inputs,
-                           LocalVars&         _locals)
-{
-    // Precalculate and clamp some shader params:
-    _locals.m_amb_ocl_cone_angle = float(clamp(_inputs.k_amb_ocl_cone_angle, 0.0, 180.0));
-    _locals.m_amb_ocl_mindist = std::max(0.001, fabs(_inputs.k_amb_ocl_mindist));
-    _locals.m_amb_ocl_maxdist = std::min(fabs(_inputs.k_amb_ocl_maxdist), std::numeric_limits<double>::infinity());
-
-    _locals.m_refl_ocl_cone_angle = float(clamp(_inputs.k_refl_ocl_cone_angle, 0.0, 180.0));
-    _locals.m_refl_ocl_mindist = std::max(0.001, fabs(_inputs.k_refl_ocl_mindist));
-    _locals.m_refl_ocl_maxdist = std::min(fabs(_inputs.k_refl_ocl_maxdist), std::numeric_limits<double>::infinity());
-
+    //setInputKnobTarget("amb_ocl_enabled", &inputs.k_amb_ocl_enabled);
 }
 
 
@@ -118,20 +95,45 @@ zprOcclusion::getInputBinding(uint32_t input)
 }
 
 
+/*! Initialize any uniform vars prior to rendering.
+    This may be called without a RenderContext from the legacy shader system.
+*/
 /*virtual*/
 void
-zprOcclusion::validateShader(bool                 for_real,
-                             const RenderContext& rtx)
+zprOcclusion::updateUniformLocals(double  frame,
+                                   int32_t view)
 {
-    RayShader::validateShader(for_real, rtx); // < get the inputs
-    //std::cout << "zprOcclusion::validateShader() bg0=" << getInputShader(BG0) << std::endl;
+    //std::cout << "  zprOcclusion::updateUniformLocals()"<< std::endl;
+    RayShader::updateUniformLocals(frame, view);
 
-    updateLocals(inputs, locals);
+    // Precalculate and clamp some shader params:
+    m_amb_ocl_cone_angle = float(clamp(inputs.k_amb_ocl_cone_angle, 0.0, 180.0));
+    m_amb_ocl_mindist = std::max(0.001, fabs(inputs.k_amb_ocl_mindist));
+    m_amb_ocl_maxdist = std::min(fabs(inputs.k_amb_ocl_maxdist), std::numeric_limits<double>::infinity());
+
+    m_refl_ocl_cone_angle = float(clamp(inputs.k_refl_ocl_cone_angle, 0.0, 180.0));
+    m_refl_ocl_mindist = std::max(0.001, fabs(inputs.k_refl_ocl_mindist));
+    m_refl_ocl_maxdist = std::min(fabs(inputs.k_refl_ocl_maxdist), std::numeric_limits<double>::infinity());
+
+}
+
+
+/*virtual*/
+void
+zprOcclusion::validateShader(bool                            for_real,
+                             const RenderContext*            rtx,
+                             const DD::Image::OutputContext* op_ctx)
+{
+    RayShader::validateShader(for_real, rtx, op_ctx); // validate inputs, update uniforms
+    //std::cout << "zprOcclusion::validateShader() bg0=" << getInputShader(BG0) << std::endl;
 
     // Enable AOV output channels:
     m_output_channels  = DD::Image::Mask_RGBA;
     m_output_channels += inputs.k_amb_ocl_output;
     m_output_channels += inputs.k_refl_ocl_output;
+
+    m_texture_channels = DD::Image::Mask_None;
+    m_output_channels  = DD::Image::Mask_None;
 }
 
 
@@ -148,20 +150,20 @@ zprOcclusion::evaluateSurface(RayShaderContext& stx,
     if (inputs.k_amb_ocl_enabled)
     {
          amb_ocl_weight = getOcclusion(stx,
-                                       Fsr::RayContext::DIFFUSE,
-                                       locals.m_amb_ocl_mindist,
-                                       locals.m_amb_ocl_maxdist,
-                                       locals.m_amb_ocl_cone_angle,
+                                       Fsr::RayContext::diffusePath(),
+                                       m_amb_ocl_mindist,
+                                       m_amb_ocl_maxdist,
+                                       m_amb_ocl_cone_angle,
                                        float(inputs.k_gi_scale));
     }
 
     if (inputs.k_refl_ocl_enabled)
     {
          refl_ocl_weight = getOcclusion(stx,
-                                        Fsr::RayContext::GLOSSY,
-                                        locals.m_refl_ocl_mindist,
-                                        locals.m_refl_ocl_maxdist,
-                                        locals.m_refl_ocl_cone_angle,
+                                        Fsr::RayContext::glossyPath(),
+                                        m_refl_ocl_mindist,
+                                        m_refl_ocl_maxdist,
+                                        m_refl_ocl_cone_angle,
                                         float(inputs.k_gi_scale));
     }
 
@@ -169,7 +171,7 @@ zprOcclusion::evaluateSurface(RayShaderContext& stx,
     if (getInputShader(BG0))
         getInputShader(BG0)->evaluateSurface(stx, out);
     else
-        out.rgba().set(0.0f, 0.0f, 0.0f, 1.0f);
+        out.rgba().set(1.0f, 1.0f, 1.0f, 1.0f);
 
     // Apply occlusion weights:
     if (inputs.k_amb_ocl_enabled)

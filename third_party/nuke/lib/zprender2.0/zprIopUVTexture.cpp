@@ -57,11 +57,13 @@ zprIopUVTexture::zprIopUVTexture(DD::Image::Iop* iop) :
 {
     //std::cout << "zprIopUVTexture::ctor(" << this << ")" << std::endl;
     if (iop)
+    {
         m_binding = InputBinding::buildInputTextureBinding(iop,
                                                            DD::Image::Chan_Red,
                                                            DD::Image::Chan_Green,
                                                            DD::Image::Chan_Blue,
                                                            DD::Image::Chan_Alpha);
+    }
 }
 
 
@@ -75,15 +77,34 @@ zprIopUVTexture::zprIopUVTexture(const InputBinding& binding) :
 }
 
 
+/*! Initialize any uniform vars prior to rendering.
+    This may be called without a RenderContext from the legacy shader system.
+*/
+/*virtual*/
+void
+zprIopUVTexture::updateUniformLocals(double  frame,
+                                     int32_t view)
+{
+    //std::cout << "  zprIopUVTexture::updateUniformLocals()"<< std::endl;
+    RayShader::updateUniformLocals(frame, view);
+}
+
+
 /*!
 */
 /*virtual*/
 void
-zprIopUVTexture::validateShader(bool                 for_real,
-                                const RenderContext& rtx)
+zprIopUVTexture::validateShader(bool                            for_real,
+                                const RenderContext*            rtx,
+                                const DD::Image::OutputContext* op_ctx)
 {
+    //std::cout << "zprIopUVTexture::validateShader()" << std::endl;
+    RayShader::validateShader(for_real, rtx, op_ctx); // updates the uniform locals
+
     m_texture_channels = m_binding.getChannels();
     m_output_channels  = m_texture_channels;
+    //std::cout << "  texture_channels=" << m_texture_channels << std::endl;
+    //std::cout << "  output_channels=" << m_output_channels << std::endl;
 }
 
 
@@ -115,11 +136,12 @@ zprIopUVTexture::evaluateSurface(RayShaderContext& stx,
         //out[m_binding.opacity_chan] = 0.0f;
         out.rgb().set(0.0f);
         out.alpha() = 1.0f;
-        return;
     }
     else
     {
         m_binding.sampleTexture(stx, out);
+        if (!m_binding.hasAlpha())
+            out.alpha() = 1.0f;
     }
 }
 

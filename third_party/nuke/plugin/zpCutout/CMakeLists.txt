@@ -1,6 +1,6 @@
 set(PXR_PACKAGE zpCutout)
 
-pxr_plugin(zprCutout}
+pxr_plugin(zprCutout
     LIBRARIES
         zprender
         Fuser

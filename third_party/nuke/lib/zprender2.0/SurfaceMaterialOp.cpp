@@ -80,6 +80,24 @@ SurfaceMaterialOp::addSurfaceMaterialOpIdKnob(DD::Image::Knob_Callback f)
 #endif
 }
 
+    
+/*! Returns op cast to SurfaceMaterialOp if possible, otherwise NULL.
+
+    For a statically-linked zprender lib this is a hack - we test for a
+    dummy knob so we can test the class without using RTTI which
+    fails when dso plugins are statically linked to this class.
+*/
+/*static*/
+SurfaceMaterialOp*
+SurfaceMaterialOp::getOpAsSurfaceMaterialOp(DD::Image::Op* op)
+{
+#ifdef ZPR_USE_KNOB_RTTI
+    return (op->knob(zpClass())) ? static_cast<SurfaceMaterialOp*>(op) : NULL;
+#else
+    return dynamic_cast<SurfaceMaterialOp*>(op);
+#endif
+}
+
 
 /*!
 */
@@ -155,8 +173,8 @@ SurfaceMaterialOp::test_input(int            input,
 /*virtual*/
 const DD::Image::OutputContext&
 SurfaceMaterialOp::inputContext(int                       input,
-                              int                       offset,
-                              DD::Image::OutputContext& context) const
+                                int                       offset,
+                                DD::Image::OutputContext& context) const
 {
 #if 1
     // This implementation probably not required in SurfaceMaterialOp as setOutputContext() sets the
@@ -271,7 +289,7 @@ SurfaceMaterialOp::knobs(DD::Image::Knob_Callback f)
 void
 SurfaceMaterialOp::_validate(bool for_real)
 {
-    // This validates all inputs whic is important to get connected input
+    // This validates all inputs which is important to get connected input
     // SurfaceMaterialOp to build their local InputBindings:
     DD::Image::Op::_validate(for_real);
 
@@ -280,6 +298,22 @@ SurfaceMaterialOp::_validate(bool for_real)
     // the 2D source for a texture map (which they never are since
     // that doesn't make much sense...)
     copy_info();
+
+#if 0
+    // Validate the light shader to use for legacy shading calls:
+    RayShader* shader = _getOpOutputSurfaceShader();
+    if (shader && DD::Image::Op::hash() != m_shader_hash)
+    {
+        m_shader_hash = DD::Image::Op::hash();
+
+        // Delete any rayshaders connected to the output RayShader:
+        for (size_t i=0; i < m_shaders.size(); ++i)
+            delete m_shaders[i];
+        m_shaders.clear();
+
+        shader->validateShader(for_real, NULL/*rtx*/, &outputContext()/*op_ctx*/);
+    }
+#endif
 
     // Always output rgba:
     info_.turn_on(DD::Image::Mask_RGBA);
@@ -291,23 +325,30 @@ SurfaceMaterialOp::_validate(bool for_real)
 */
 /*virtual*/
 RayShader*
-SurfaceMaterialOp::createInputSurfaceShaders(uint32_t                 input,
-                                             const RenderContext&     rtx,
-                                             std::vector<RayShader*>& shaders)
+SurfaceMaterialOp::createInputShader(uint32_t                 input,
+                                     const RenderContext&     rtx,
+                                     std::vector<RayShader*>& shaders)
 {
     if (input >= (uint32_t)DD::Image::Op::inputs())
         return NULL;
 
+    // Let the subclass create a custom input shader:
+    RayShader* shader_for_input = _createInputShader(input, rtx, shaders);
+    if (shader_for_input)
+        return shader_for_input;
+
+    // No custom input shader, use InputBinding logic:
+
     // Skip input if it's not another SurfaceMaterialOp:
-    InputBinding* binding = getInputBinding(input);
+    InputBinding* binding = getInputBindingForOpInput(input);
     if (!binding || !binding->isSurfaceMaterialOp() || !binding->input_object)
         return NULL;
 
     SurfaceMaterialOp* input_material = static_cast<SurfaceMaterialOp*>(binding->input_object);
-    //std::cout << "  " <<  node_name() << "::createInputSurfaceShaders() input " << input << " input_material=" << input_material << " '" << input_material->node_name() << "'" << std::endl;
+    //std::cout << "  " <<  node_name() << "::createInputShader() input " << input << " input_material=" << input_material << " '" << input_material->node_name() << "'" << std::endl;
 
     // Create the input shader tree and return the output shader:
-    return input_material->createSurfaceShaders(rtx, shaders);
+    return input_material->createShaders(rtx, shaders);
 }
 
 
@@ -320,16 +361,16 @@ SurfaceMaterialOp::createInputSurfaceShaders(uint32_t                 input,
     SurfaceMaterialOp inputs.
 */
 RayShader*
-SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
-                                        std::vector<RayShader*>& shaders)
+SurfaceMaterialOp::createShaders(const RenderContext&     rtx,
+                                 std::vector<RayShader*>& shaders)
 {
-    //std::cout << node_name() << "::createSurfaceShaders():" << std::endl;
+    //std::cout << node_name() << "::createShaders():" << std::endl;
     RayShader* output_shader = _createOutputSurfaceShader(rtx, shaders);
     //std::cout << "  output_shader=" << output_shader << std::endl;
 
     // If nothing created try connecting to input0:
     if (!output_shader)
-        return createInputSurfaceShaders(0, rtx, shaders);
+        return createInputShader(0, rtx, shaders);
 
     // Use the name of the Op as the shader name:
     std::string output_shader_name(node_name());
@@ -340,6 +381,10 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
     const uint32_t nInputKnobs = output_shader->numInputs();
     for (uint32_t input=0; input < nInputKnobs; ++input)
     {
+        const int32_t op_input = getOpInputForShaderInput(input);
+        if (op_input < 0 || op_input >= Op::inputs())
+            continue; // skip, no exposed Op connection
+
         InputBinding* input_binding = output_shader->getInputBinding(input);
         if (!input_binding)
             continue; // skip any null bindings
@@ -366,7 +411,7 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
             {
                 SurfaceMaterialOp* input_material = input_binding->asSurfaceMaterialOp();
 
-                RayShader* input_shader = createInputSurfaceShaders(input, rtx, shaders);
+                RayShader* input_shader = createInputShader(input, rtx, shaders);
                 //std::cout << "      input_shader=" << input_shader << std::endl;
 
                 if (input_shader)
@@ -400,7 +445,7 @@ SurfaceMaterialOp::createSurfaceShaders(const RenderContext&     rtx,
                 else
                 {
                     //std::cout << "      cannot connect, no input shader to connect to!" << std::endl;
-                    std::cerr << node_name() << "::createSurfaceShaders()";
+                    std::cerr << node_name() << "::createShaders()";
                     std::cerr << " warning cannot connect input '" << k_input->name << "'";
                     std::cerr << ", no shader to connect to.";
                     std::cerr << std::endl;
@@ -463,9 +508,9 @@ SurfaceMaterialOp::createMaterial(const RenderContext& rtx)
     std::vector<RayShader*> all_shaders;
     all_shaders.reserve(50);
 
-    RayShader* output_surface_shader      = createSurfaceShaders(rtx, all_shaders);
+    RayShader* output_surface_shader      = createShaders(rtx, all_shaders);
     RayShader* output_displacement_shader = NULL;//createDisplacementShaders(rtx, all_shaders);
-    RayShader* output_volume_shader       = NULL;//createVolumeShaders(rtx, all_shaders);
+    VolumeShader* output_volume_shader    = NULL;//createVolumeShaders(rtx, all_shaders);
 
     if (!output_surface_shader || all_shaders.size() == 0)
         return NULL;
@@ -511,6 +556,13 @@ SurfaceMaterialOp::fragment_shader(const DD::Image::VertexContext& vtx,
                                    DD::Image::Pixel&               out)
 {
     out.erase(); // do nothing
+#if 0
+    RayShader* shader = _getOpOutputSurfaceShader();
+    if (shader)
+    {
+        shader->fragmentShader(vtx, out);
+    }
+#endif
 }
 
 

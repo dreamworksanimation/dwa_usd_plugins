@@ -153,6 +153,9 @@ void
 CameraRigOp::draw_handle(DD::Image::ViewerContext* ctx)
 {
     //std::cout << "CameraRigOp::draw_handle(): event=" << ctx->event() << std::endl;
+    if (m_cam_params.size() == 0)
+        return; // not initialized yet, don't crash
+
     // TODO: change this logic if we want to view the stereo controls while locked!
     // If the user has locked to this camera, don't bother
     // drawing the icon in the 3D view since we won't see it.

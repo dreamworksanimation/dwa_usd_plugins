@@ -731,10 +731,14 @@ RayShader::RayShader(const InputKnobList&  inputs,
 
 /*! Print input and output knob values to stream.
 */
+/*virtual*/
 void
 RayShader::print(std::ostream& o) const
 {
-    o << m_name << ":" << std::endl;
+    if (m_name.empty())
+        o << "<unnamed shader>:" << std::endl;
+    else
+        o << m_name << ":" << std::endl;
     o << "  inputs:" << std::endl;
     for (uint32_t i=0; i < m_inputs.size(); ++i)
         o << "    " << m_inputs[i] << std::endl;
@@ -921,15 +925,30 @@ RayShader::_connectInput(uint32_t    input,
 
 
 /*! Convenience method to assign the data value target of a named InputKnob.
+    Returns true if data pointer was assigned and set successfully.
+*/
+bool
+RayShader::setInputKnobTarget(const char* input_name,
+                              void*       data)
+{
+    InputKnob* k = getInputKnob(input_name);
+    if (!k || !data)
+        return false;
+    k->data = data;
+    return true;
+}
+
+
+/*! Convenience method to assign the data value target of a named InputKnob.
     If default value string is provided it's updated in knob.
     If default value is non-null the assigned data pointer value is set to the
     default_value.
     Returns true if data pointer was assigned and set successfully.
 */
 bool
-RayShader::assignInputKnob(const char* input_name,
-                           void*       data,
-                           const char* default_val)
+RayShader::bindInputKnob(const char* input_name,
+                         void*       data,
+                         const char* default_val)
 {
     InputKnob* k = getInputKnob(input_name);
     if (!k || !data)
@@ -994,8 +1013,9 @@ RayShader::setInputValue(const char*                     input_name,
 */
 /*virtual*/
 void
-RayShader::validateShader(bool                 for_real,
-                          const RenderContext& rtx)
+RayShader::validateShader(bool                            for_real,
+                          const RenderContext*            rtx,
+                          const DD::Image::OutputContext* op_ctx)
 {
     if (m_valid)
         return;
@@ -1003,7 +1023,14 @@ RayShader::validateShader(bool                 for_real,
     const uint32_t nInputs = (uint32_t)m_inputs.size();
     for (uint32_t i=0; i < nInputs; ++i)
         if (getInputShader(i))
-            getInputShader(i)->validateShader(for_real, rtx);
+            getInputShader(i)->validateShader(for_real, rtx, op_ctx);
+
+    if (rtx)
+        updateUniformLocals(rtx->frame0, rtx->render_view);
+    else if (op_ctx)
+        updateUniformLocals(op_ctx->frame(), op_ctx->view());
+    else
+        updateUniformLocals(0.0/*frame*/, -1/*render_view*/);
 
     m_valid = true;
 }
@@ -1374,7 +1401,7 @@ RayShader::getIndirectDiffuse(RayShaderContext& stx,
                                  Rd,
                                  std::numeric_limits<double>::epsilon(),
                                  std::numeric_limits<double>::infinity(),
-                                 Fsr::RayContext::DIFFUSE | Fsr::RayContext::REFLECTION/*ray_type*/,
+                                 Fsr::RayContext::diffuseReflectionPath()/*ray_type*/,
                                  RenderContext::SIDES_BOTH/*sides_mode*/);
 
         Fsr::Pixel illum(out.channels);
@@ -1452,7 +1479,7 @@ RayShader::getIndirectGlossy(RayShaderContext& stx,
                                  Rd,
                                  std::numeric_limits<double>::epsilon(),
                                  std::numeric_limits<double>::infinity(),
-                                 Fsr::RayContext::GLOSSY | Fsr::RayContext::REFLECTION/*ray_type*/,
+                                 Fsr::RayContext::glossyReflectionPath()/*ray_type*/,
                                  RenderContext::SIDES_BOTH/*sides_mode*/);
 
         Fsr::Pixel illum(out.channels);
@@ -1530,7 +1557,7 @@ RayShader::getTransmission(RayShaderContext& stx,
                                  Rd,
                                  std::numeric_limits<double>::epsilon(),
                                  std::numeric_limits<double>::infinity(),
-                                 Fsr::RayContext::GLOSSY | Fsr::RayContext::REFLECTION/*ray_type*/,
+                                 Fsr::RayContext::glossyReflectionPath()/*ray_type*/,
                                  RenderContext::SIDES_BOTH/*sides_mode*/);
 
         Fsr::Pixel illum(out.channels);
@@ -1551,9 +1578,9 @@ RayShader::getTransmission(RayShaderContext& stx,
 
 /*! Get the occlusion of this surface point.
 
-    For ambient occlusion set 'occlusion_ray_type' to DIFFUSE and
-    for reflection occlusion use GLOSSY or REFLECTION, and
-    TRANSMISSION for refraction occlusion.
+    For ambient occlusion set 'occlusion_ray_type' to diffusePath() and
+    for reflection occlusion use glossyPath() or reflectionPath(), and
+    transmissionPath() for refraction occlusion.
 
     The value returned is between 0.0 and 1.0, where 0.0 means no
     occlusion (ie the point is completely exposed to the environment)
@@ -1575,12 +1602,12 @@ RayShader::getOcclusion(RayShaderContext& stx,
     switch (occlusion_ray_type)
     {
     default:
-    case Fsr::RayContext::DIFFUSE:
+    case Fsr::RayContext::diffusePath():
         samples = &stx.sampler->diffuse_samples;
         N = stx.N;
         break;
-    case Fsr::RayContext::REFLECTION:
-    case Fsr::RayContext::GLOSSY:
+    case Fsr::RayContext::reflectionPath():
+    case Fsr::RayContext::glossyPath():
     {
         samples = &stx.sampler->glossy_samples;
         Fsr::Vec3d V(-stx.Rtx.dir());
@@ -1588,15 +1615,15 @@ RayShader::getOcclusion(RayShaderContext& stx,
         N.normalize();
         break;
     }
-    case Fsr::RayContext::TRANSMISSION:
+    case Fsr::RayContext::transmissionPath():
         samples = &stx.sampler->refraction_samples;
         N = -stx.N;
         break;
-    case Fsr::RayContext::CAMERA:
+    case Fsr::RayContext::cameraPath():
         // Camera ray not supported for occlusion gathering:
         std::cerr << "RayShader::getOcclusion(): warning, camera ray type not supported." << std::endl;
         return 0.0f; // no occlusion
-    case Fsr::RayContext::SHADOW:
+    case Fsr::RayContext::shadowPath():
         // Shadow ray not supported for occlusion gathering:
         std::cerr << "RayShader::getOcclusion(): warning, shadow ray type not supported." << std::endl;
         return 0.0f; // no occlusion
@@ -1631,14 +1658,14 @@ RayShader::getOcclusion(RayShaderContext& stx,
                                  Rd,
                                  mindist,
                                  maxdist,
-                                 Fsr::RayContext::DIFFUSE | Fsr::RayContext::REFLECTION/*ray_type*/,
+                                 Fsr::RayContext::diffuseReflectionPath()/*ray_type*/,
                                  RenderContext::SIDES_BOTH/*sides_mode*/);
 
         Traceable::SurfaceIntersection Iocl(std::numeric_limits<double>::infinity());
         if (stx.rtx->objects_bvh.getFirstIntersection(stx_new, Iocl) > Fsr::RAY_INTERSECT_NONE)
         {
             // Diffuse occlusion reduces the visibility weight by the hit distance:
-            float vis = (occlusion_ray_type == Fsr::RayContext::DIFFUSE) ?
+            float vis = (occlusion_ray_type == Fsr::RayContext::diffusePath()) ?
                             float(1.0 / ((Iocl.t*::fabs(gi_scale)) + 1.0)) : 1.0f;
 
             if (Iocl.object)
@@ -1646,22 +1673,26 @@ RayShader::getOcclusion(RayShaderContext& stx,
                 zpr::RenderPrimitive* rprim = static_cast<zpr::RenderPrimitive*>(Iocl.object);
 
                 // Only check visibility if the rprim's material is a RayMaterial:
-                if (rprim->surface_ctx->raymaterial)
+                const MaterialContext* material_ctx = rprim->getMaterialContext();
+#if DEBUG
+                assert(material_ctx);
+#endif
+                if (material_ctx->raymaterial)
                 {
                     switch (occlusion_ray_type)
                     {
                     default:
-                    case Fsr::RayContext::DIFFUSE:
-                        if (!rprim->surface_ctx->raymaterial->getDiffuseVisibility())
+                    case Fsr::RayContext::diffusePath():
+                        if (!material_ctx->raymaterial->getDiffuseVisibility())
                             vis = 0.0f;
                         break;
-                    case Fsr::RayContext::REFLECTION:
-                    case Fsr::RayContext::GLOSSY:
-                        if (!rprim->surface_ctx->raymaterial->getSpecularVisibility())
+                    case Fsr::RayContext::reflectionPath():
+                    case Fsr::RayContext::glossyPath():
+                        if (!material_ctx->raymaterial->getSpecularVisibility())
                             vis = 0.0f;
                         break;
-                    case Fsr::RayContext::TRANSMISSION:
-                        if (!rprim->surface_ctx->raymaterial->getTransmissionVisibility())
+                    case Fsr::RayContext::transmissionPath():
+                        if (!material_ctx->raymaterial->getTransmissionVisibility())
                             vis = 0.0f;
                         break;
                     }

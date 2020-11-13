@@ -36,6 +36,9 @@ static RayShader* shaderBuilder() { return new zprCutout(); }
 /*static*/ const RayShader::InputKnobList zprCutout::input_defs =
 {
     {InputKnob("bg",       PIXEL_KNOB)}, // BG0
+#ifdef TRY_CUTOUT_MAP
+    {InputKnob("map",      PIXEL_KNOB)}, // MAP1
+#endif
 };
 /*static*/ const RayShader::OutputKnobList zprCutout::output_defs =
 {
@@ -100,10 +103,11 @@ zprCutout::getInputBinding(uint32_t input)
 
 /*virtual*/
 void
-zprCutout::validateShader(bool                 for_real,
-                          const RenderContext& rtx)
+zprCutout::validateShader(bool                            for_real,
+                          const RenderContext*            rtx,
+                          const DD::Image::OutputContext* op_ctx)
 {
-    RayShader::validateShader(for_real, rtx); // < get the inputs
+    RayShader::validateShader(for_real, rtx, op_ctx); // validate inputs, update uniforms
     //
 #ifdef TRY_CUTOUT_MAP
     m_texture_channels = inputs.k_cutout_map.getChannels();

@@ -40,7 +40,6 @@
 #include "zprIopUVTexture.h"
 #include "zprPreviewSurface.h"
 #include "zprReadUVTexture.h"
-#include "zprPointLight.h"
 
 
 namespace zpr {
@@ -73,7 +72,19 @@ RayMaterial::RayMaterial() :
     static zprIopUVTexture    dummyIopUVTexture;
     static zprPreviewSurface  dummyPreviewSurface;
     static zprReadUVTexture   dummyReadUVTexture;
-    static zprPointLight      dummyPointLight;
+}
+
+
+//!
+RayMaterial::RayMaterial(std::vector<RayShader*> shaders) :
+    m_shaders(shaders),
+    m_surface_shader(NULL),
+    m_displacement_shader(NULL),
+    m_volume_shader(NULL),
+    m_texture_channels(DD::Image::Mask_None),
+    m_output_channels(DD::Image::Mask_None)
+{
+    //
 }
 
 
@@ -81,7 +92,7 @@ RayMaterial::RayMaterial() :
 RayMaterial::RayMaterial(std::vector<RayShader*> shaders,
                          RayShader*              output_surface_shader,
                          RayShader*              output_displacement_shader,
-                         RayShader*              output_volume_shader) :
+                         VolumeShader*           output_volume_shader) :
     m_shaders(shaders),
     m_surface_shader(output_surface_shader),
     m_displacement_shader(output_displacement_shader),
@@ -95,6 +106,7 @@ RayMaterial::RayMaterial(std::vector<RayShader*> shaders,
 
 /*! Deletes any RayShader children.
 */
+/*virtual*/
 RayMaterial::~RayMaterial()
 {
     for (size_t i=0; i < m_shaders.size(); ++i)
@@ -125,6 +137,7 @@ RayMaterial::addShader(const char* shader_class)
 
 /*!
 */
+/*virtual*/
 void
 RayMaterial::validateMaterial(bool                 for_real,
                               const RenderContext& rtx)
@@ -133,7 +146,7 @@ RayMaterial::validateMaterial(bool                 for_real,
     m_output_channels  = DD::Image::Mask_None;
     if (m_surface_shader)
     {
-        m_surface_shader->validateShader(for_real, rtx);
+        m_surface_shader->validateShader(for_real, &rtx, NULL/*op_ctx*/);
         m_texture_channels = m_surface_shader->getTextureChannels();
         m_output_channels  = m_surface_shader->getChannels();
     }
@@ -142,6 +155,7 @@ RayMaterial::validateMaterial(bool                 for_real,
 
 /*!
 */
+/*virtual*/
 void
 RayMaterial::getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings)
 {
@@ -161,7 +175,7 @@ void
 RayMaterial::doShading(RayShaderContext& stx,
                        Fsr::Pixel&       out)
 {
-    //std::cout << "RayMaterial::doShading() shader=" << stx.surface_shader << ", material=" << stx.material << std::endl;
+    //std::cout << "RayMaterial::doShading() shader=" << stx.surface_material << ", material=" << stx.material << std::endl;
 
     // If the material is a RayShader then we call it directly, otherwise
     // we construct a VertexContext that's compatible with std Nuke shaders:
@@ -196,6 +210,7 @@ RayMaterial::doShading(RayShaderContext& stx,
         if (!transmission_visibility() && stx.Rtx.isTransmittedPath())
             return;
 #endif
+
         //------------------------------------------
         //------------------------------------------
         stx.surface_shader->evaluateSurface(stx, out);
@@ -225,6 +240,7 @@ RayMaterial::doShading(RayShaderContext& stx,
 //-----------------------------------------------------------------------------
 
 
+#if 0
 /*! Abstract displacement entry point allows legacy displacement shader or new ray-traced
     shader methods to be called.
 */
@@ -255,6 +271,7 @@ RayMaterial::doDisplacement(RayShaderContext& stx,
         memcpy(out.array(), stx.thread_ctx->varray.chan, sizeof(float)*/*DD::Image::*/VARRAY_CHANS);
     }
 }
+#endif
 
 
 //-----------------------------------------------------------------------------
@@ -276,16 +293,17 @@ RayMaterial::updateShaderContextFromIntersection(const Traceable::SurfaceInterse
     stx.rprim = static_cast<zpr::RenderPrimitive*>(I.object);
 
     // Assign shaders:
-    RayMaterial* raymaterial = stx.rprim->surface_ctx->raymaterial;
-    if (raymaterial)
-    {
-        stx.surface_shader        = raymaterial->getSurfaceShader();
-        stx.displacement_shader   = raymaterial->getDisplacementShader();
-    }
+    const zpr::MaterialContext* material_ctx = stx.rprim->getMaterialContext();
+#if DEBUG
+    assert(material_ctx);
+#endif
+
+    if (material_ctx->raymaterial)
+        stx.surface_shader =  material_ctx->raymaterial->getSurfaceShader();
     stx.atmosphere_shader     = NULL; // Current VolumeShader being evaluated
 
-    stx.material              = stx.rprim->surface_ctx->material;              // legacy Nuke shader (fragment_shader)
-    stx.displacement_material = stx.rprim->surface_ctx->displacement_material; // legacy Nuke shader (vertex shander)
+    stx.material              = material_ctx->material;              // legacy Nuke shader (fragment_shader)
+    stx.displacement_material = material_ctx->displacement_material; // legacy Nuke shader (vertex shander)
 
     // TODO: add w2l, t2w to surface context?
 #if 0
@@ -330,7 +348,6 @@ RayMaterial::updateShaderContextFromIntersection(const Traceable::SurfaceInterse
     */
 
     stx.PW    = I.PW;
-    stx.PWg   = I.PWg;   // PW non-displaced
     stx.dPWdx = (I.RxPW - I.PW); // PW x-derivative
     stx.dPWdy = (I.RyPW - I.PW); // PW y-derivative
     //
@@ -338,15 +355,15 @@ RayMaterial::updateShaderContextFromIntersection(const Traceable::SurfaceInterse
     stx.Rxst  = I.Rxst;
     stx.Ryst  = I.Ryst;
     //
+    stx.N     = I.N;         // May get updated by auto_bump()
+    stx.Nf    = RayShader::faceForward(stx.N,
+                                       -stx.Rtx.dir()/*view vector*/,
+                                       I.Ng/*geometric normal*/);  // Face-forward shading normal
+    stx.Ni    = I.Ni;       // Interpolated surface normal
+    stx.Ng    = I.Ng;       // Geometric normal
+    //
     stx.dNdx  = (I.RxN  - I.N);  // Surface normal x-derivative
     stx.dNdy  = (I.RyN  - I.N);  // Surface normal y-derivative
-    //
-    stx.N    = I.N;         // May get updated by auto_bump()
-    stx.Nf   = RayShader::faceForward(stx.N,
-                                      -stx.Rtx.dir()/*view vector*/,
-                                      I.Ng/*geometric normal*/);  // Face-forward shading normal
-    stx.Ni   = I.Ni;        // Interpolated surface normal
-    stx.Ng    = I.Ng;       // Geometric normal
 
     //------------------------------------------------------
     // Get interpolated vertex attributes from primitive:
@@ -436,8 +453,6 @@ RayMaterial::updateDDImageShaderContext(const RayShaderContext&   stx,
 {
 #if DEBUG
     assert(stx.rprim);
-    assert(stx.rprim->surface_ctx);
-    assert(stx.rprim->surface_ctx->parent_object_ctx);
 #endif
 
     // Always use the displaced point from the intersection test:
@@ -469,7 +484,10 @@ RayMaterial::updateDDImageShaderContext(const RayShaderContext&   stx,
 
     // Assign current scene, primitive, primitive transforms,
     // render primitive and render material for shader access:
-    const GeoInfoContext*         gptx = (const GeoInfoContext*)stx.rprim->surface_ctx->parent_object_ctx;
+    const GeoInfoContext* gptx = stx.rprim->getGeoInfoContext();
+#if DEBUG
+    assert(gptx);
+#endif
     const uint32_t                obj0 = gptx->motion_objects[0].index;
     const GeoInfoContext::Sample& gtx0 = gptx->motion_geoinfos[0];
 
@@ -490,7 +508,7 @@ RayMaterial::updateDDImageShaderContext(const RayShaderContext&   stx,
 
     // This is set by the first Iop that fragment_shader() is called
     // on and is used by the fragment blending logic.
-    vtx.blending_shader = 0;
+    vtx.blending_shader = NULL;
 
     // Whether the default shader should sample its texture map.
     // Relighting systems turn this off because they've already
@@ -929,12 +947,12 @@ RayMaterial::getIllumination(RayShaderContext&                stx,
         I_list.clear();
         double vol_tmin, vol_tmax;
         double vol_segment_min_size, vol_segment_max_size;
-        if (stx.atmosphere_shader->getVolumeIntersections(stx,
-                                                          vol_intersections,
-                                                          vol_tmin,
-                                                          vol_tmax,
-                                                          vol_segment_min_size,
-                                                          vol_segment_max_size))
+        if (VolumeShader::getVolumeIntersections(stx,
+                                                 vol_intersections,
+                                                 vol_tmin,
+                                                 vol_tmax,
+                                                 vol_segment_min_size,
+                                                 vol_segment_max_size))
         {
             //std::cout << "RayShader::getIllumination(): Rtx[" << stx.Rtx << "] atmo-shader=" << stx.atmosphere_shader;
             //std::cout << "  nVolumeIntersections=" << vol_intersections.size() << std::endl;
@@ -979,43 +997,37 @@ RayMaterial::getIllumination(RayShaderContext&                stx,
 
             if (do_march)
             {
-#if 0
                 if (stx.rtx->k_show_diagnostics == RenderContext::DIAG_VOLUMES)
                 {
-                    Raccum.red()   += float(vol_tmin);
-                    Raccum.green() += float(vol_tmax);
-                    Raccum.blue()  += float(vol_segment_min_size);
-                    Raccum.alpha() += float(vol_segment_max_size);
-                    // Take min Z:
-                    if (surface_Zf < accum_Z)
-                        accum_Z = surface_Zf;
-                    coverage += 1.0f;
-                    ++sample_count;
-                    continue;
+                    out.red()   += float(vol_tmin);
+                    out.green() += float(vol_tmax);
+                    out.blue()  += float(vol_segment_min_size);
+                    out.alpha() += float(vol_segment_max_size);
                 }
-#endif
-
-                // Ray march through volumes:
-                volume_color.clearAllChannels();
-                if (stx.atmosphere_shader->volumeMarch(stx,
-                                                       vol_tmin,
-                                                       vol_tmax,
-                                                       vol_segment_min_size,
-                                                       vol_segment_max_size,
-                                                       surface_Zf,
-                                                       out.alpha(),
-                                                       vol_intersections,
-                                                       volume_color,
-                                                       NULL/*deep_out*/))
+                else
                 {
-                    // Add volume illumination to final:
-                    out.color()       += volume_color.color();
-                    out.alpha()       += volume_color.alpha();
-                    out.cutoutAlpha() += volume_color.cutoutAlpha();
+                    // Ray march through volumes:
+                    volume_color.clearAllChannels();
+                    if (stx.atmosphere_shader->volumeMarch(stx,
+                                                           vol_tmin,
+                                                           vol_tmax,
+                                                           vol_segment_min_size,
+                                                           vol_segment_max_size,
+                                                           surface_Zf,
+                                                           out.alpha(),
+                                                           vol_intersections,
+                                                           volume_color,
+                                                           NULL/*deep_out*/))
+                    {
+                        // Add volume illumination to final:
+                        out.color()       += volume_color.color();
+                        out.alpha()       += volume_color.alpha();
+                        out.cutoutAlpha() += volume_color.cutoutAlpha();
 
-                    // Take min Z:
-                    if (volume_color.Z() < surface_Zf)
-                        surface_Zf = volume_color.Z();
+                        // Take min Z:
+                        if (volume_color.Z() < surface_Zf)
+                            surface_Zf = volume_color.Z();
+                    }
                 }
             }
 
@@ -1062,13 +1074,6 @@ createSurfaceShaders(const Fsr::ShaderNode*   fsr_shader,
         zprReadUVTexture* reader = dynamic_cast<zprReadUVTexture*>(RayShader::create("ReadUVTexture"));
         if (reader)
         {
-            // Change these to setValue calls:
-            reader->k_wrapS = 0;
-            reader->k_wrapT = 0;
-            reader->k_fallback.set(1.0f);
-            reader->k_scale.set(1.0f);
-            reader->k_bias.set(0.0f);
-
             output = reader;
         }
     }
@@ -1091,16 +1096,16 @@ createSurfaceShaders(const Fsr::ShaderNode*   fsr_shader,
         zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
         if (reader)
         {
+            output = reader;
         }
-        output = reader;
     }
     else if (shader_class == "UsdPrimvarReader_int")
     {
         zprAttributeReader* reader = dynamic_cast<zprAttributeReader*>(RayShader::create("AttributeReader"));
         if (reader)
         {
+            output = reader;
         }
-        output = reader;
     }
     else if (shader_class == "UsdPrimvarReader_float")
     {
@@ -1303,7 +1308,7 @@ RayMaterial::createUsdPreviewSurface(Fsr::ShaderNode* surface_output)
 
     RayShader* output_surface_shader      = createSurfaceShaders(surface_output, all_shaders);
     RayShader* output_displacement_shader = NULL;//createDisplacementShaders(rtx, all_shaders);
-    RayShader* output_volume_shader       = NULL;//createVolumeShaders(rtx, all_shaders);
+    VolumeShader* output_volume_shader    = NULL;//createVolumeShaders(rtx, all_shaders);
 
     if (!output_surface_shader || all_shaders.size() == 0)
         return NULL;
@@ -1326,7 +1331,7 @@ RayMaterial::createUsdPreviewSurface(Fsr::ShaderNode* surface_output)
 
 } // namespace zpr
 
-// end of zprender/RayShader.cpp
+// end of zprender/RayMaterial.cpp
 
 //
 // Copyright 2020 DreamWorks Animation

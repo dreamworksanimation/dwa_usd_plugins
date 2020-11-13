@@ -52,8 +52,7 @@ namespace zpr {
 class zpProject : public SurfaceMaterialOp
 {
   protected:
-    zprProject::InputParams k_inputs;
-    zprProject::LocalVars   m_locals;
+    zprProject zprShader;      //!< Local shader allocation for knobs to write into
 
 
   public:
@@ -82,7 +81,7 @@ class zpProject : public SurfaceMaterialOp
     RayShader* _createOutputSurfaceShader(const RenderContext&     rtx,
                                           std::vector<RayShader*>& shaders)
     {
-        RayShader* output = new zprProject(k_inputs);
+        RayShader* output = new zprProject(zprShader.inputs);
         shaders.push_back(output);
         return output;
     }
@@ -124,12 +123,21 @@ class zpProject : public SurfaceMaterialOp
 
     //! Return the InputBinding for an input.
     /*virtual*/
-    InputBinding* getInputBinding(uint32_t input)
+    InputBinding* getInputBindingForOpInput(uint32_t op_input)
     {
-        if      (input == 0) return &k_inputs.k_bindings[zprProject::BG0    ];
-        else if (input == 1) return &k_inputs.k_bindings[zprProject::MAP1   ];
-        else if (input == 2) return &k_inputs.k_bindings[zprProject::CAMERA2];
+        if      (op_input == 0) return &zprShader.inputs.k_bindings[zprProject::BG0    ];
+        else if (op_input == 1) return &zprShader.inputs.k_bindings[zprProject::MAP1   ];
+        else if (op_input == 2) return &zprShader.inputs.k_bindings[zprProject::CAMERA2];
         return NULL;
+    }
+
+    //! Return the Op input for a shader input, or -1 if binding is not exposed.
+    /*virtual*/ int32_t getOpInputForShaderInput(uint32_t shader_input)
+    {
+        if      (shader_input == zprProject::BG0    ) return 0;
+        else if (shader_input == zprProject::MAP1   ) return 1;
+        else if (shader_input == zprProject::CAMERA2) return 2;
+        return -1;
     }
 
 
@@ -154,32 +162,32 @@ class zpProject : public SurfaceMaterialOp
         // The top line of ray controls:
         addRayControlKnobs(f);
 
-        InputOp_knob(f,  &k_inputs.k_bindings[zprProject::BG0    ], 0/*input*/);
-        ColorMap_knob(f, &k_inputs.k_bindings[zprProject::MAP1   ], 1/*input*/, 4/*num_channels*/, "proj_map", "map");
-        InputOp_knob(f,  &k_inputs.k_bindings[zprProject::CAMERA2], 2/*input*/);
+        InputOp_knob(f,  &zprShader.inputs.k_bindings[zprProject::BG0    ], 0/*input*/);
+        ColorMap_knob(f, &zprShader.inputs.k_bindings[zprProject::MAP1   ], 1/*input*/, 4/*num_channels*/, "proj_map", "map");
+        InputOp_knob(f,  &zprShader.inputs.k_bindings[zprProject::CAMERA2], 2/*input*/);
 
         //----------------------------------------------------------------------------------------------
         Divider(f);
-        Enumeration_knob(f, &k_inputs.k_operation, zprProject::operation_modes, "operation");
+        Enumeration_knob(f, &zprShader.inputs.k_operation, zprProject::operation_modes, "operation");
             Tooltip(f, "Merge operation to perform between input 'img'(A) and input 0(B, unlabeled arrow)");
-        Enumeration_knob(f, &k_inputs.k_faces_mode, zprProject::face_names, "project_on", "project on");
+        Enumeration_knob(f, &zprShader.inputs.k_faces_mode, zprProject::face_names, "project_on", "project on");
             Tooltip(f, "Project onto front, back or both sides of geometry, using the shading normal.");
-        Bool_knob(f, &k_inputs.k_crop_to_format, "crop_to_format", "crop to format");
+        Bool_knob(f, &zprShader.inputs.k_crop_to_format, "crop_to_format", "crop to format");
             Tooltip(f, "Crop the incoming image, putting black outside the format area.");
         Newline(f);
-        Enumeration_knob(f, &k_inputs.k_zclip_mode, zprProject::zclip_modes, "zclip_mode", "z clip");
+        Enumeration_knob(f, &zprShader.inputs.k_zclip_mode, zprProject::zclip_modes, "zclip_mode", "z clip");
             Tooltip(f, "Projection Z-clip mode.  If set to 'user' the near/far clip knobs are used, "
                        "while 'cam' uses the projection camera's near & far plane settings.");
-        Double_knob(f, &k_inputs.k_near_clip, IRange(1.0,100000.0), "near_clip", "near");
+        Double_knob(f, &zprShader.inputs.k_near_clip, IRange(1.0,100000.0), "near_clip", "near");
             ClearFlags(f, Knob::LOG_SLIDER);
         Newline(f);
-        Double_knob(f, &k_inputs.k_far_clip,  IRange(1.0,100000.0), "far_clip",  "far");
+        Double_knob(f, &zprShader.inputs.k_far_clip,  IRange(1.0,100000.0), "far_clip",  "far");
             ClearFlags(f, Knob::LOG_SLIDER);
         Newline(f);
-        Input_ChannelSet_knob(f, &k_inputs.k_proj_channels, 1/*input*/, "channels");
+        Input_ChannelSet_knob(f, &zprShader.inputs.k_proj_channels, 1/*input*/, "channels");
             Tooltip(f, "The set of channels from the texture input to copy to the shader output.");
         Newline(f);
-        k_inputs.k_texture_filter.knobs(f, "texture_filter", "texture filter");
+        zprShader.inputs.k_texture_filter.knobs(f, "texture_filter", "texture filter");
             Tooltip(f, "The texture filter to use for projection.");
     }
 
@@ -191,8 +199,8 @@ class zpProject : public SurfaceMaterialOp
 
         if (k == &Knob::showPanel || k->name() == "zclip_mode")
         {
-            knob("near_clip")->enable(k_inputs.k_zclip_mode == zprProject::Z_CLIP_USER);
-            knob("far_clip" )->enable(k_inputs.k_zclip_mode == zprProject::Z_CLIP_USER);
+            knob("near_clip")->enable(zprShader.inputs.k_zclip_mode == zprProject::Z_CLIP_USER);
+            knob("far_clip" )->enable(zprShader.inputs.k_zclip_mode == zprProject::Z_CLIP_USER);
             return 1; // call this again
         }
 
@@ -229,21 +237,21 @@ class zpProject : public SurfaceMaterialOp
         // Call base class first to get InputBindings assigned:
         SurfaceMaterialOp::_validate(for_real);
 
-        zprProject::updateLocals(k_inputs, m_locals);
+        zprShader.updateUniformLocals(outputContext().frame(), outputContext().view());
 
-        info_.turn_on(m_locals.m_project_channels);
+        info_.turn_on(zprShader.m_project_channels);
     }
 
 
     /*virtual*/
     HandlesMode doAnyHandles(ViewerContext* ctx)
     {
-        if (!m_locals.m_proj_cam)
+        if (!zprShader.m_proj_cam)
             return eNoHandles;
 
         const int saved_mode = ctx->transform_mode();
         ctx->transform_mode(VIEWER_PERSP);
-        HandlesMode any = m_locals.m_proj_cam->anyHandles(ctx);
+        HandlesMode any = zprShader.m_proj_cam->anyHandles(ctx);
         ctx->transform_mode(saved_mode);
         return any;
     }
@@ -255,11 +263,11 @@ class zpProject : public SurfaceMaterialOp
     /*virtual*/
     void build_handles(ViewerContext* ctx)
     {
-        if (!m_locals.m_proj_cam)
+        if (!zprShader.m_proj_cam)
             return;
 
         // Add to viewer camera menu knob:
-        ctx->addCamera(m_locals.m_proj_cam);
+        ctx->addCamera(zprShader.m_proj_cam);
 
         // Let the camera draw itself:
         Matrix4 saved_matrix(ctx->modelmatrix);
@@ -301,36 +309,36 @@ class zpProject : public SurfaceMaterialOp
         glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 
         // Let's try the clipping plane to get rid of stuff behind projector
-        if (m_locals.m_proj_cam)
+        if (zprShader.m_proj_cam)
         {
             glPushMatrix();
             const Fsr::Mat4d cam_xform(ctx->cam_matrix());
-            const Fsr::Mat4d m = cam_xform * m_locals.m_proj_cam->matrix();
+            const Fsr::Mat4d m = cam_xform * zprShader.m_proj_cam->matrix();
             glLoadMatrixd(m.array());
 
-            if (k_inputs.k_zclip_mode == zprProject::Z_CLIP_NONE)
+            if (zprShader.inputs.k_zclip_mode == zprProject::Z_CLIP_NONE)
             {
                 // Just clip behind camera:
                 enableClipPlane(GL_CLIP_PLANE0, Fsr::Vec3d(0.0, 0.0, -1.0), Fsr::Vec3d(0.0, 0.0, 0.0));
             }
-            else if (k_inputs.k_zclip_mode == zprProject::Z_CLIP_CAM)
+            else if (zprShader.inputs.k_zclip_mode == zprProject::Z_CLIP_CAM)
             {
                 // Clip projection at the camera near & far planes:
-                enableClipPlane(GL_CLIP_PLANE0, Fsr::Vec3d(0.0, 0.0, -1.0), Fsr::Vec3d(0.0, 0.0, -::fabs(m_locals.m_proj_cam->Near())));
-                enableClipPlane(GL_CLIP_PLANE1, Fsr::Vec3d(0.0, 0.0,  1.0), Fsr::Vec3d(0.0, 0.0, -::fabs(m_locals.m_proj_cam->Far() )));
+                enableClipPlane(GL_CLIP_PLANE0, Fsr::Vec3d(0.0, 0.0, -1.0), Fsr::Vec3d(0.0, 0.0, -::fabs(zprShader.m_proj_cam->Near())));
+                enableClipPlane(GL_CLIP_PLANE1, Fsr::Vec3d(0.0, 0.0,  1.0), Fsr::Vec3d(0.0, 0.0, -::fabs(zprShader.m_proj_cam->Far() )));
             }
-            else if (k_inputs.k_zclip_mode == zprProject::Z_CLIP_USER)
+            else if (zprShader.inputs.k_zclip_mode == zprProject::Z_CLIP_USER)
             {
                 // Clip project at the user-set near/far planes:
-                enableClipPlane(GL_CLIP_PLANE0, Fsr::Vec3d(0.0, 0.0, -1.0), Fsr::Vec3d(0.0, 0.0, -::fabs(k_inputs.k_near_clip)));
-                enableClipPlane(GL_CLIP_PLANE1, Fsr::Vec3d(0.0, 0.0,  1.0), Fsr::Vec3d(0.0, 0.0, -::fabs(k_inputs.k_far_clip )));
+                enableClipPlane(GL_CLIP_PLANE0, Fsr::Vec3d(0.0, 0.0, -1.0), Fsr::Vec3d(0.0, 0.0, -::fabs(zprShader.inputs.k_near_clip)));
+                enableClipPlane(GL_CLIP_PLANE1, Fsr::Vec3d(0.0, 0.0,  1.0), Fsr::Vec3d(0.0, 0.0, -::fabs(zprShader.inputs.k_far_clip )));
             }
 
-            if (k_inputs.k_faces_mode != zprProject::FACES_BOTH)
+            if (zprShader.inputs.k_faces_mode != zprProject::FACES_BOTH)
             {
                 glLoadMatrixd(cam_xform.array());
 
-                const Matrix4& pm = m_locals.m_proj_cam->matrix();
+                const Matrix4& pm = zprShader.m_proj_cam->matrix();
                 glPushAttrib(GL_LIGHTING_BIT | GL_TRANSFORM_BIT | GL_COLOR_BUFFER_BIT);
                 glDisable(GL_COLOR_MATERIAL); // stop the material vals coming from vertex colors
                 glDisable(GL_NORMALIZE);
@@ -351,7 +359,7 @@ class zpProject : public SurfaceMaterialOp
                 glLightf( GL_LIGHT0, GL_SPOT_CUTOFF, 90.0f);
                 // Avoid diffuse falloff by using a really bright light:
                 t.set(10.0f, 10.0f, 10.0f, 1.0f);
-                if (k_inputs.k_faces_mode == zprProject::FACES_FRONT)
+                if (zprShader.inputs.k_faces_mode == zprProject::FACES_FRONT)
                     glMaterialfv(GL_FRONT, GL_DIFFUSE, t.array());
                 else
                     glMaterialfv(GL_BACK, GL_DIFFUSE, t.array());
@@ -363,7 +371,7 @@ class zpProject : public SurfaceMaterialOp
             glPopMatrix();
         }
 
-        if (k_inputs.k_crop_to_format)
+        if (zprShader.inputs.k_crop_to_format)
         {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
@@ -372,7 +380,7 @@ class zpProject : public SurfaceMaterialOp
         static GLfloat yplane[4] = { 0,1,0,0 };
         static GLfloat zplane[4] = { 0,0,1,0 };
         glMatrixMode(GL_TEXTURE);
-        glMultMatrixd(m_locals.m_projectconcat.array());
+        glMultMatrixd(zprShader.m_projectconcat.array());
         glMultMatrixf(info.matrix.array());
         ctx->non_default_texture_matrix(true);
         glMatrixMode(GL_MODELVIEW);
@@ -393,11 +401,11 @@ class zpProject : public SurfaceMaterialOp
     /*virtual*/
     void unset_texturemap(ViewerContext* ctx)
     {
-        if (Op::input(2) && k_inputs.k_faces_mode != zprProject::FACES_BOTH)
+        if (Op::input(2) && zprShader.inputs.k_faces_mode != zprProject::FACES_BOTH)
             glPopAttrib(); // GL_LIGHTING_BIT | GL_TRANSFORM_BIT | GL_COLOR_BUFFER_BIT
 
         glDisable(GL_CLIP_PLANE0);
-        if (k_inputs.k_zclip_mode != zprProject::Z_CLIP_NONE)
+        if (zprShader.inputs.k_zclip_mode != zprProject::Z_CLIP_NONE)
             glDisable(GL_CLIP_PLANE1);
         glDisable(GL_TEXTURE_GEN_S);
         glDisable(GL_TEXTURE_GEN_T);

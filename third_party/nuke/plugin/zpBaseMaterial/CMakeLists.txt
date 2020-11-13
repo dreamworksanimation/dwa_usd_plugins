@@ -1,6 +1,6 @@
 set(PXR_PACKAGE zpBaseMaterial)
 
-pxr_plugin(zprBase}
+pxr_plugin(zprBase
     LIBRARIES
         zprender
         Fuser

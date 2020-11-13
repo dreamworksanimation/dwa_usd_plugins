@@ -35,15 +35,88 @@
 namespace zpr {
 
 
-/*! Is displacement enabled for this prim? */
-/*virtual*/
-/*! How many subd level to displace to.
+/*!
 */
+RenderPrimitive::RenderPrimitive(const MaterialContext* material_ctx,
+                                 double                 motion_time) :
+    m_material_ctx(const_cast<MaterialContext*>(material_ctx))
+    //surface_ctx(stx),
+    //index(0)
+{
+#if DEBUG
+    assert(m_material_ctx);
+#endif
+    m_motion_times.resize(1, motion_time);
+}
+
+
+/*!
+*/
+RenderPrimitive::RenderPrimitive(const MaterialContext* material_ctx,
+                                 const Fsr::DoubleList& motion_times) :
+    m_material_ctx(const_cast<MaterialContext*>(material_ctx)),
+    m_motion_times(motion_times)
+    //surface_ctx(stx),
+    //index(0)
+{
+#if DEBUG
+    assert(m_material_ctx);
+    assert(m_motion_times.size() > 0);
+#endif
+}
+
+
+/*!
+*/
+const SurfaceContext*
+RenderPrimitive::getSurfaceContext() const
+{
+#if DEBUG
+    assert(m_material_ctx);
+    assert(m_material_ctx->surface_ctx);
+#endif
+    return m_material_ctx->surface_ctx;
+}
+
+
+/*!
+*/
+const GeoInfoContext*
+RenderPrimitive::getGeoInfoContext() const
+{
+#if DEBUG
+    assert(m_material_ctx);
+    assert(m_material_ctx->surface_ctx);
+    assert(m_material_ctx->surface_ctx->parent_object_ctx);
+#endif
+    return m_material_ctx->surface_ctx->parent_object_ctx->asGeoObject();
+}
+
+
+/*!
+*/
+const LightVolumeContext*
+RenderPrimitive::getLightVolumeContext() const
+{
+#if DEBUG
+    assert(m_material_ctx);
+    assert(m_material_ctx->surface_ctx);
+    assert(m_material_ctx->surface_ctx->parent_object_ctx);
+#endif
+    return m_material_ctx->surface_ctx->parent_object_ctx->asLightVolume();
+}
+
+
+/*! Which subd level to displace to.
+*/
+/*virtual*/
 int
 RenderPrimitive::getDisplacementSubdivisionLevel() const
 {
-    assert(surface_ctx);
-    return surface_ctx->displacement_subdivision_level;
+#if DEBUG
+    assert(m_material_ctx);
+#endif
+    return m_material_ctx->displacement_subdivision_level;
 }
 
 /*! Return a maximum displacement vector for this prim.
@@ -52,8 +125,10 @@ RenderPrimitive::getDisplacementSubdivisionLevel() const
 Fsr::Vec3f
 RenderPrimitive::getDisplacementBounds() const
 {
-    assert(surface_ctx);
-    return surface_ctx->displacement_bounds;
+#if DEBUG
+    assert(m_material_ctx);
+#endif
+    return m_material_ctx->displacement_bounds;
 }
 
 

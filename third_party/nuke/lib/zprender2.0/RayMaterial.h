@@ -31,6 +31,7 @@
 #define zprender_RayMaterial_h
 
 #include "RayShader.h"
+#include "VolumeShader.h"
 
 #include <Fuser/NukePixelInterface.h> // for Fsr::Pixel
 #include <Fuser/MaterialNode.h>
@@ -74,13 +75,15 @@ class ZPR_EXPORT RayMaterial
     std::vector<RayShader*> m_shaders;              //!< List of child shaders
     RayShader*              m_surface_shader;       //!< Output surface shader
     RayShader*              m_displacement_shader;  //!< Output displacement shader
-    RayShader*              m_volume_shader;        //!< Output volume shader
+    VolumeShader*           m_volume_shader;        //!< Output volume shader
 
     Visibility              m_visibility;
 
     DD::Image::ChannelSet   m_texture_channels;     //!< Set of channels output by all texture bindings
     DD::Image::ChannelSet   m_output_channels;      //!< Set of all output channels
 
+
+  protected:
     //! Fill in a list with pointers to the *active* texture bindings this shader and its inputs has.
     //virtual void _getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
 
@@ -93,13 +96,15 @@ class ZPR_EXPORT RayMaterial
     //!
     RayMaterial();
     //!
+    RayMaterial(std::vector<RayShader*> shaders);
+    //!
     RayMaterial(std::vector<RayShader*> shaders,
                 RayShader*              output_surface_shader,
                 RayShader*              output_displacement_shader=NULL,
-                RayShader*              output_volume_shader=NULL);
+                VolumeShader*           output_volume_shader=NULL);
 
     //! Deletes any RayShader children.
-    ~RayMaterial();
+    virtual ~RayMaterial();
 
 
     //! Adds a shader to the group list, taking ownership of shader allocation.
@@ -109,12 +114,12 @@ class ZPR_EXPORT RayMaterial
     //!
     void setSurfaceShader(RayShader* shader)      { m_surface_shader = shader; }
     void setDisplacementShader(RayShader* shader) { m_displacement_shader = shader; }
-    void setVolumeShader(RayShader* shader)       { m_volume_shader = shader; }
+    void setVolumeShader(VolumeShader* shader)    { m_volume_shader = shader; }
 
     //!
-    RayShader* getSurfaceShader()      const { return m_surface_shader; }
-    RayShader* getDisplacementShader() const { return m_displacement_shader; }
-    RayShader* getVolumeShader()       const { return m_volume_shader; }
+    RayShader*    getSurfaceShader()      const { return m_surface_shader; }
+    RayShader*    getDisplacementShader() const { return m_displacement_shader; }
+    VolumeShader* getVolumeShader()       const { return m_volume_shader; }
 
 
     //! Current modes for this material.
@@ -127,11 +132,11 @@ class ZPR_EXPORT RayMaterial
 
 
     //! Initialize any vars prior to rendering.
-    void validateMaterial(bool                 for_real,
-                          const RenderContext& rtx);
+    virtual void validateMaterial(bool                 for_real,
+                                  const RenderContext& rtx);
 
     //! Fill in a list with pointers to the *active* texture bindings this shader and its inputs has.
-    void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
+    virtual void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
 
 
     /*! Return true if the vertex_shader() method is implemented and should be called.
@@ -188,11 +193,13 @@ class ZPR_EXPORT RayMaterial
                           Fsr::Pixel&       out);
 
 
+#if 0
     /*! Abstracted displacement entry point allows legacy displacement shader or new ray-traced
         shader methods to be called.  Shader being called is contained in the RayShaderContext.
     */
     static void doDisplacement(RayShaderContext& stx,
                                Fsr::Pixel&       out);
+#endif
 
 
 };

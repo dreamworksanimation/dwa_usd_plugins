@@ -58,6 +58,20 @@ namespace Fsr {
 //-------------------------------------------------------------------------
 
 
+/*! Copy a string pointer to a constant one stored in a static std::string set.
+
+    This is primarily used for DD::Image::Attribute names which need
+    to stick around so that the const char*s used to reference the
+    names don't suddenly disappear!
+*/
+FSR_EXPORT const char*
+getConstString(const char* str,
+               bool        lock=true);
+
+
+//-------------------------------------------------------------------------
+
+
 /*! These utility functions are not thread safe! Only use them if you're
     sure you're not within a GeoOp::geometry_engine() context that's
     managed by a GeoOpGeometryEngineContext.

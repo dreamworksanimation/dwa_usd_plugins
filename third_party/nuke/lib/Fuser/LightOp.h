@@ -41,6 +41,11 @@
 #include <DDImage/ViewerContext.h>
 
 
+// Extend the hardcoded Foundry light type enumerations.
+// These are in one place to make it easier to add new ones.
+#define FUSER_LIGHT_TYPE   (DD::Image::LightOp::LightType)(DD::Image::LightOp::eOtherLight+123)
+
+
 namespace Fsr {
 
 
@@ -50,7 +55,7 @@ namespace Fsr {
     Fsr::FuserLightOp may be a little redundant but it's easier to keep straight.
 
     We're not bothering with wrapping the LightOp base class since ComplexLightOp only
-    adds a few extra parameters which could've easily been added to LightOp...sigh...) 
+    adds a few extra parameters (which could've easily been added to LightOp...sigh...) 
 
     This may duplicate some code on FuserAxisOp and FuserCameraOp, but we have
     to since these are subclassed off separate DD::Image::AxisOp branches.
@@ -126,6 +131,7 @@ class FSR_EXPORT FuserLightOp : public DD::Image::ComplexLightOp,
     double      k_falloff_rate_bias;        //!< Bias to the standard presets
     DD::Image::LookupCurves k_falloff_profile; //!< User-defined falloff curve lut
     //
+    bool        k_illuminate_atmosphere;    //!< Light will create atmosphere shaders for volumetric effects
     const char* k_light_identifier;         //!< Light identifier string (used for grouping, etc)
     const char* k_object_mask;              //!< Object name filter
 
@@ -184,19 +190,41 @@ class FSR_EXPORT FuserLightOp : public DD::Image::ComplexLightOp,
 
 
     //------------------------------------------------------------
-
+    // Knob methods - base knobs() method calls in this order:
+    //      
+    //      Fsr::SceneLoader::addSceneLoaderKnobs()
+    //      ------------------------------
+    //      addDisplayOptionsKnobs()
+    //        <add 'sync_light_controls' switch>
+    //      addColorKnobs()
+    //      addLightKnobs()  <<<< most subclasses implement this one
+    //      ------------------------------
+    //      addGlobalOptionsKnobs()
+    //      ------------------------------
+    //      addTransformKnobs()
+    //      addExtraFrontPanelKnobs()
+    //
 
     //! Adds the OpenGL display option controls. This is duplicated on the FuserAxisOp and FuserCameraOp classes.
     virtual void addDisplayOptionsKnobs(DD::Image::Knob_Callback f);
 
+    //! Adds the base class light color knobs, by default appearing below display options.
+    virtual void addColorKnobs(DD::Image::Knob_Callback);
+
+    /*! Adds other light control knobs, by default appearing below color knobs and above global knobs.
+
+        ***  Most subclasses need to only implement this one for their unique options.  ***
+    */
+    virtual void addLightKnobs(DD::Image::Knob_Callback);
+
+    //! Adds light ID, mask etc knobs, by default appearing below light knobs and above transform controls.
+    virtual void addGlobalOptionsKnobs(DD::Image::Knob_Callback);
+
     //! Adds the front-panel transform knobs. This is duplicated on the FuserAxisOp and FuserCameraOp classes.
     virtual void addTransformKnobs(DD::Image::Knob_Callback f);
 
-    //! Adds addl front-panel knobs. Called after addTransformKnobs() but before addLightKnobs().
+    //! Adds addl front-panel knobs. Called after addTransformKnobs().
     virtual void addExtraFrontPanelKnobs(DD::Image::Knob_Callback f);
-
-    //! Adds the light control knobs, by default appearing above transform controls.
-    virtual void addLightKnobs(DD::Image::Knob_Callback);
 
 
     //------------------------------------------------------------

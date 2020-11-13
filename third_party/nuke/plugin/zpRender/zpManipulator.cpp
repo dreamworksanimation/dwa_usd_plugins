@@ -57,41 +57,53 @@ zpRender::intersectScene(DD::Image::ViewerContext* ctx,
     if (!scene0 || !rtx.render_format)
         return false; // just in case...
 #ifdef DEBUG_MANIPULATOR
-  std::cout << "  scene0=" << scene0 << ", frame=" << scene0->frame << ", motion_step=" << scene0->motion_step << std::endl;
+    std::cout << "  scene0=" << scene0 << ", frame=" << scene0->frame << ", motion_step=" << scene0->motion_step << std::endl;
 #endif
 
     // Build the view ray:
     Fsr::RayContext Rtx;
     if (ctx->viewer_mode() == DD::Image::VIEWER_2D/* && ctx->transform_mode() == VIEWER_PERSP*/)
     {
-#if 0
         scene0->camera->validate();
-        zpr::RayCamera rayCam;
-        rayCam.build(rtx, scene0->camera/*cam0*/, 0/*cam1*/, outputContext());
-        rayCam.constructRay(ctx->x()+0.5f, ctx->y()+0.5f,
-                            0.0f/*lensU*/, 0.0f/*lensV*/,
-                            0.0f/*motion-step-time*/,
-                            R);
+
+        // RenderContext will allocate a RayCamera subclass based on type:
+        // TODO: change this to sending a camera type string vs. an enumeration!
+        const RenderContext::CameraProjectionType proj_mode = getRayCameraType(rtx.k_projection_mode);
+        zpr::RayCamera* rayCam = rtx.buildRayCamera(proj_mode);
+#if DEBUG
+        assert(rayCam); // shouldn't happen...
 #endif
+        // TODO: this build method may not work in all projection modes, make it a virtual call:
+        rayCam->build(rtx,
+                      scene0->camera/*cam0*/,
+                      NULL/*cam1*/,
+                      outputContext());
+        rayCam->constructRay(Fsr::Vec2d(ctx->x() + 0.5, ctx->y() + 0.5)/*pixelXY*/,
+                             Fsr::Vec2d(0.0, 0.0)/*lensDuDv*/,
+                             0.0f/*shutter_percentage*/,
+                             Rtx);
+        delete rayCam;
+
     }
     else
     {
-#if 0
-        Matrix4 cm  = ctx->cam_matrix().inverse();
-        R.set_origin(cm.translation());
-        Fsr::Vec3d dir = (Fsr::Vec3d(ctx->x(), ctx->y(), ctx->z()) - cm.translation());
+        // Build view ray from DD::Image::ViewerContext:
+        const Fsr::Mat4d viewer_xform = Fsr::Mat4d(ctx->cam_matrix()).inverse();
+        Rtx.setOrigin(viewer_xform.getTranslation());
+        
+        Fsr::Vec3d dir = (Fsr::Vec3d(ctx->x(), ctx->y(), ctx->z()) - Rtx.origin);
         dir.normalize();
+
         // Negate direction if facing away from camera:
-        Fsr::Vec3d negZ = cm.transform(Fsr::Vec3d(0,0,-1.0)) - cm.translation();
+        Fsr::Vec3d negZ = viewer_xform.transform(Fsr::Vec3d(0.0, 0.0, -1.0)) - Rtx.origin;
         negZ.normalize();
         if (negZ.dot(dir) < 0.0)
             dir = -dir;
-        R.set(cm.translation(), dir);
-#endif
+
+        Rtx.setDirection(dir);
     }
 #ifdef DEBUG_MANIPULATOR
-    std::cout << "  Rtx[" << R.origin.x << " " << R.origin.y << " " << R.origin.z << "]";
-    std::cout << "[" << R.direction().x << " " << R.direction().y << " " << R.direction().z << "]" << std::endl;
+    std::cout << "  Rtx" << Rtx << std::endl;
 #endif
 
     if (!rtx.objects_initialized)
@@ -174,14 +186,13 @@ zpRender::intersectScene(DD::Image::ViewerContext* ctx,
         //
         //
         stx.surface_shader       = NULL; // Current RayShader being evaluated (NULL if legacy material)
-        stx.displacement_shader  = NULL; // Current RayShader being evaluated (NULL if legacy material)
         stx.atmosphere_shader    = NULL; // Current atmospheric VolumeShader being evaluated
         //
         stx.direct_lighting_enabled   = false;
         stx.indirect_lighting_enabled = false;
         //
-        stx.master_light_shaders       = NULL; //List of all light shaders in scene
-        stx.per_object_light_shaders   = NULL; //Per-object list of light shaders
+        stx.master_light_materials     = NULL; //List of all light materials in scene
+        stx.per_object_light_materials = NULL; //Per-object list of light materials
         stx.master_lighting_scene      = NULL;//&lighting_scene;
         stx.per_object_lighting_scenes = NULL; //&per_object_lighting_scenes;
         //
@@ -234,26 +245,7 @@ rtx.k_debug = k_debug_saved;
     camPW  =  Rtx.origin;
     camV   = -Rtx.dir();
     surfPW =  I.PW;
-
-#if 0
-    // Get the interpolated normal if the prim exists (should always happen!):
-    RenderPrimitive* prim = (RenderPrimitive*)I.object;
-    if (prim)
-    {
-        DD::Image::VArray vP;
-        rprim->getAttributesAt(I, vP);
-        surfN = vP.N();
-        // TODO: Can we use the stx method?
-        //rprim->getAttributesAt(I, stx);
-        //surfN = stx.N;
-    }
-    else
-    {
-       surfN = I.N;
-    }
-#else
     surfN = I.N;
-#endif
 
 #ifdef DEBUG_MANIPULATOR
     std::cout << "  intersection t=" << I.t;

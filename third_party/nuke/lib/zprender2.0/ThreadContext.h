@@ -62,9 +62,10 @@ class ZPR_EXPORT ThreadContext
 {
   private:
     // Thread info:
-    RenderContext* m_rtx;           //!< Parent RenderContext
-    uint32_t       m_index;         //!< Thread index in RenderContext thread list
-    pthread_t      m_ID;            //!< pthread ID
+    RenderContext* m_rtx;               //!< Parent RenderContext
+    int            m_render_version;    //!< If different from m_rtx this context must be refreshed
+    uint32_t       m_index;             //!< Thread index in RenderContext thread list
+    pthread_t      m_ID;                //!< pthread ID
 
     // TODO: deprecate these when no longer supporting legacy lighting shaders:
     zpr::Scene        m_master_lighting_scene;          //!< Lighting contexts set to the frame time
@@ -93,12 +94,12 @@ class ZPR_EXPORT ThreadContext
     Fsr::Pixel texture_color;       //!< Used for sampling texture map Iops
     Fsr::Pixel binding_color;       //!< Used for InputBinding getValue() calls
     Fsr::Pixel surface_color;       //!< Used for RayShader surface evaluation
-    Fsr::Pixel light_color;         //!< Used for LightShader evaluation
+    Fsr::Pixel illum_color;         //!< Used for LightShader evaluation
     Fsr::Pixel volume_color;        //!< Used for VolumeShader evaluation
     DD::Image::InterestRatchet textureColorInterestRatchet;
     DD::Image::InterestRatchet bindingColorInterestRatchet;
     DD::Image::InterestRatchet surfaceColorInterestRatchet;
-    DD::Image::InterestRatchet lightColorInterestRatchet;
+    DD::Image::InterestRatchet illumColorInterestRatchet;
     DD::Image::InterestRatchet volumeColorInterestRatchet;
 
     // For calling legacy Iop-based materials:
@@ -106,12 +107,23 @@ class ZPR_EXPORT ThreadContext
     DD::Image::VertexContext vtx;
     DD::Image::VArray        varray;
 
+    // For passing to light shading methods:
+    Fsr::RayContext Rlight;         //!< Ray from surface to light, filled in by LightShader::illuminate()
+    float           direct_pdfW;    //!< Power distribution function weight, filled in by LightShader::illuminate()
+
 
   public:
     //! Constructor requires an zpr::Context, thread ID and it's index in the thread list.
     ThreadContext(RenderContext* rtx);
     //!
     ~ThreadContext();
+
+    //!
+    RenderContext* getRenderContext() const { return m_rtx; }
+
+    //!
+    int  getRenderVersion() const { return m_render_version; }
+    void setRenderVersion(int v) { m_render_version = v; }
 
     //! Assign the thread info.
     void setThreadID(uint32_t  index,
@@ -147,20 +159,34 @@ class ZPR_EXPORT ThreadContext
     // RayShaderContext management:
     //-------------------------------------------------------
 
-    //! Get the shader context for index i.
-    RayShaderContext& getShaderContext(uint32_t i) { assert(i < m_stx_list.size()); return m_stx_list[i]; }
-
-    //! Add a RayShaderContext to the end of the list, and return its index.
-    uint32_t          pushShaderContext(const RayShaderContext* current=0);
-
-    //! Remove a RayShaderContext from the end of the list, and return the new index or -1 if empty.
-    int               popShaderContext();
-
     //! Clear the shader context list but keep the memory allocation.
     void              clearShaderContexts() { m_stx_list.clear(); }
 
-    //! Clears the shader context list and deletes the memory allocation.
-    void              destroyShaderContexts() { m_stx_list = std::vector<RayShaderContext>(); }
+    //! Get the current RayShaderContext (the last in the list.)
+    RayShaderContext& currentShaderContext() { assert(m_stx_list.size() > 0); return m_stx_list[m_stx_list.size()-1]; }
+
+    //! Get the shader context for index i.
+    RayShaderContext& getShaderContext(uint32_t i) { assert(i < m_stx_list.size()); return m_stx_list[i]; }
+
+    //! Add a RayShaderContext to the end of the list, and return it, copying 'stx' if it's not NULL.
+    RayShaderContext& pushShaderContext(const RayShaderContext* src_stx=NULL);
+
+    RayShaderContext& pushShaderContext(const RayShaderContext&          src_stx,
+                                        const Fsr::Vec3d&                Rdir,
+                                        double                           tmin,
+                                        double                           tmax,
+                                        uint32_t                         ray_type,
+                                        uint32_t                         sides_mode,
+                                        const Fsr::RayDifferentials*     Rdif=NULL);
+
+    RayShaderContext& pushShaderContext(const RayShaderContext&          src_stx,
+                                        const Fsr::RayContext&           Rtx,
+                                        uint32_t                         ray_type,
+                                        uint32_t                         sides_mode,
+                                        const Fsr::RayDifferentials*     Rdif=NULL);
+
+    //! Remove a RayShaderContext from the end of the list, and return the new index or -1 if empty.
+    int               popShaderContext();
 
 
   private:

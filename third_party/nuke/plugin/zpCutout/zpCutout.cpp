@@ -77,12 +77,22 @@ class zpCutout : public SurfaceMaterialOp
 
     //! Return the InputBinding for an input.
     /*virtual*/
-    InputBinding* getInputBinding(uint32_t input)
+    InputBinding* getInputBindingForOpInput(uint32_t op_input)
     {
 #ifdef TRY_CUTOUT_MAP
-        if (input == 1) return &k_inputs.k_map;
+        if (op_input == 1) return &k_inputs.k_map;
 #endif
         return NULL;
+    }
+
+    //! Return the Op input for a shader input, or -1 if binding is not exposed.
+    /*virtual*/ int32_t getOpInputForShaderInput(uint32_t shader_input)
+    {
+        if      (shader_input == 0) return 0;
+#ifdef TRY_CUTOUT_MAP
+        else if (shader_input == 1) return 1;
+#endif
+        return -1;
     }
 
 

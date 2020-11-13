@@ -115,22 +115,63 @@ convertDDImagePrimitiveToMesh(RenderContext&     rtx,
                               bool               enable_subdivision,
                               const Fsr::ArgSet& subd_args)
 {
-#if DEBUG
     assert(stx.prim_index >= 0); // shouldn't happen...
     assert(gptx.getGeoInfoSample(0).info); // shouldn't happen...
-#endif
     const DD::Image::GeoInfo& info0 = *gptx.getGeoInfoSample(0).info;
 
     //std::cout << "----------------------------------------------" << std::endl;
     //std::cout << "convertDDImagePrimitiveToMesh('" << Fsr::getObjectString(info0, "name") << "')" << std::endl;
 
-    const uint32_t nGeoMotionSamples = gptx.numMotionSamples();
+    uint32_t nGeoMotionSamples = gptx.numMotionSamples();
     assert(nGeoMotionSamples > 0);
+
+    // Prescan motion samples to check for changing mesh topology:
+    uint32_t nPoints      = 0;
+    uint32_t nPrimVerts   = 0;
+    uint32_t nPrimFaces   = 0;
+    uint32_t nMatchingMotionSamples = 0;
+    for (uint32_t j=0; j < nGeoMotionSamples; ++j)
+    {
+        const GeoInfoContext::Sample& gtx = gptx.getGeoInfoSample(j);
+#if DEBUG
+        assert(gtx.info); // shouldn't happen...
+        assert(gtx.info->primitive(stx.prim_index)); // shouldn't happen...
+#endif
+        const DD::Image::GeoInfo&   info = *gtx.info;
+        const DD::Image::Primitive& prim = *info.primitive(stx.prim_index);
+
+        // Establish prim topology at first motion sample.
+        // TODO: also check for changing vert indices!
+        if (j == 0)
+        {
+            nPoints    = info.points();
+            nPrimVerts = prim.vertices();
+            nPrimFaces = prim.faces();
+            if (nPoints == 0 || nPrimVerts == 0 || nPrimFaces == 0)
+                return; // can't render it...!
+            ++nMatchingMotionSamples;
+        }
+        else
+        {
+            // Find count of matching motion samples:
+            if (info.points()   == nPoints    &&
+                prim.vertices() == nPrimVerts &&
+                prim.faces()    == nPrimFaces)
+                ++nMatchingMotionSamples;
+        }
+    }
+    // If the topology is changing only support motion sample 0:
+    if (nMatchingMotionSamples < nGeoMotionSamples)
+    {
+        //std::cout << "warning, mesh topology changing, only using sample 0" << std::endl;
+        nGeoMotionSamples = 1;
+    }
 
     const bool haveNs  = (info0.N_ref  && info0.N_ref->attribute );
     const bool haveUVs = (info0.UV_ref && info0.UV_ref->attribute);
     const bool haveCfs = (info0.Cf_ref && info0.Cf_ref->attribute);
 
+    Fsr::DoubleList                motion_times(nGeoMotionSamples);
     Fsr::Mat4dList                 motion_xforms(nGeoMotionSamples);
     Fsr::Uint32List                vertsPerFace;
     Fsr::Uint32List                vertIndicesList;
@@ -143,9 +184,6 @@ convertDDImagePrimitiveToMesh(RenderContext&     rtx,
     std::vector<const Fsr::Vec3f*> P_arrays(nGeoMotionSamples, NULL);
     std::vector<const Fsr::Vec3f*> N_arrays(nGeoMotionSamples, NULL);
 
-    uint32_t nPoints      = 0;
-    uint32_t nPrimFaces   = 0;
-    uint32_t nPrimVerts   = 0;
     uint32_t nOutVerts    = 0;
     uint32_t maxFaceVerts = 0;
 
@@ -160,22 +198,12 @@ convertDDImagePrimitiveToMesh(RenderContext&     rtx,
     for (uint32_t j=0; j < nGeoMotionSamples; ++j)
     {
         const GeoInfoContext::Sample& gtx = gptx.getGeoInfoSample(j);
-#if DEBUG
-        assert(gtx.info); // shouldn't happen...
-        assert(gtx.info->primitive(stx.prim_index)); // shouldn't happen...
-#endif
         const DD::Image::GeoInfo&   info = *gtx.info;
         const DD::Image::Primitive& prim = *info.primitive(stx.prim_index);
 
-        // Get prim topology at first motion sample only:
+        // Get vert/face topology at first motion sample only:
         if (j == 0)
         {
-            nPoints    = info.points();
-            nPrimVerts = prim.vertices();
-            nPrimFaces = prim.faces();
-            if (nPoints == 0 || nPrimVerts == 0 || nPrimFaces == 0)
-                return; // can't render it...!
-
             // Find the total face vert count:
             vertsPerFace.reserve(nPrimFaces);
             for (uint32_t f=0; f < nPrimFaces; ++f)
@@ -233,15 +261,18 @@ convertDDImagePrimitiveToMesh(RenderContext&     rtx,
 
                 }
             }
+
         }
         else
         {
-            // Double-check that the rest of the Mesh prims are topologically the same:
-            assert(info.points()   == nPoints   );
+#if DEBUG
+            assert(info.points()   == nPoints);
             assert(prim.vertices() == nPrimVerts);
             assert(prim.faces()    == nPrimFaces);
+#endif
         }
 
+        motion_times[j]  = gptx.motion_times[j];
         motion_xforms[j] = info.matrix;
         P_arrays[j]      = Fsr::getObjectPointArray(info);
 
@@ -290,10 +321,10 @@ convertDDImagePrimitiveToMesh(RenderContext&     rtx,
     // Build a zpr::Mesh RenderPrimitive:
     if (nPoints > 0 && vertIndicesList.size() > 0 && vertsPerFace.size() > 0)
     {
-        zpr::Mesh* mesh = new zpr::Mesh(&stx,
+        zpr::Mesh* mesh = new zpr::Mesh(stx.material_ctx,
                                         enable_subdivision,
                                         subd_args,
-                                        rtx.shutter_times,
+                                        motion_times,
                                         motion_xforms,
                                         nPoints/*numPoints*/,
                                         P_arrays.data(),
@@ -303,7 +334,7 @@ convertDDImagePrimitiveToMesh(RenderContext&     rtx,
                                         vertIndicesList.data(),
                                         (haveUVs)?UV_list.data():NULL/*UV_list*/,
                                         (haveCfs)?Cf_list.data():NULL/*Cf_list*/);
-        mesh->index = gptx.addPrim(mesh);
+        gptx.addPrim(mesh);
     }
 
 }
@@ -336,10 +367,9 @@ class DDImagePolysoupHandler : public SurfaceHandler
             std::cerr << "Incorrect ObjectContext type for DDImagePolysoup primitive, ignoring." << std::endl;
             return; // shouldn't happen
         }
-#if DEBUG
-        assert(stx.prim_index == -1);
+
+        assert(stx.prim_index == -1); // prim index is always -1 for Polysoup as there's no primary prim
         assert(gptx->getGeoInfoSample(0).info); // shouldn't happen...
-#endif
 
         const uint32_t nSoupPrims = (uint32_t)stx.polysoup_prims.size();
         if (nSoupPrims == 0)
@@ -350,54 +380,31 @@ class DDImagePolysoupHandler : public SurfaceHandler
         assert(nSoupPrims <= info0.primitives());
 #endif
 
-        const uint32_t nGeoMotionSamples = gptx->numMotionSamples();
+        uint32_t nGeoMotionSamples = gptx->numMotionSamples();
         assert(nGeoMotionSamples > 0);
         //std::cout << "  DDImagePolysoupHandler()::generateRenderPrims()";
         //std::cout << " nGeoMotionSamples=" << nGeoMotionSamples << ", nSoupPrims=" << nSoupPrims << std::endl;
 
-        const bool haveNs  = (info0.N_ref  && info0.N_ref->attribute );
-        const bool haveUVs = (info0.UV_ref && info0.UV_ref->attribute);
-        const bool haveCfs = (info0.Cf_ref && info0.Cf_ref->attribute);
-
-        Fsr::Mat4dList                 motion_xforms(nGeoMotionSamples);
-        Fsr::Uint32List                vertsPerFace;
-        Fsr::Uint32List                vertIndicesList;
-        //
-        std::vector<Fsr::Vec3fList>    P_lists(nGeoMotionSamples); //< only used if subdividing
-        std::vector<Fsr::Vec3fList>    N_lists(nGeoMotionSamples);
-        Fsr::Vec2fList                 UV_list;
-        Fsr::Vec4fList                 Cf_list;
-        //
-        std::vector<const Fsr::Vec3f*> P_arrays(nGeoMotionSamples, NULL);
-        std::vector<const Fsr::Vec3f*> N_arrays(nGeoMotionSamples, NULL);
-
+        // Prescan motion samples to check for changing soup topology:
         uint32_t nPoints    = 0;
         uint32_t nSoupVerts = 0;
-#if DEBUG
-        uint32_t nFaces     = 0;
-        uint32_t nVerts     = 0;
-#endif
-
-        DD::Image::VArray tmpV;
-        uint32_t attrib_indices[DD::Image::Group_Last];
-        memset(attrib_indices, 0, DD::Image::Group_Last*sizeof(uint32_t));
-        attrib_indices[DD::Image::Group_Object] = stx.obj_index;
-
-        DD::Image::PrimitiveContext ptx;
+        uint32_t nSoupFaces = 0;
+        Fsr::Uint32List vertsPerFace;
+        uint32_t nMatchingMotionSamples = 0;
         for (uint32_t j=0; j < nGeoMotionSamples; ++j)
         {
             const GeoInfoContext::Sample& gtx = gptx->getGeoInfoSample(j);
-#if DEBUG
-            assert(gtx.info); // shouldn't happen...
-#endif
             DD::Image::GeoInfo& info = *gtx.info;
             //std::cout << "    " << j << ": info=" << gtx.info << ":" << std::endl;
             //info.print_info(std::cout);
+#if DEBUG
+            assert(gtx.info); // shouldn't happen...
+#endif
 
-            // Get prim topology at first motion sample only:
+            // Establish soup topology at first motion sample.
             if (j == 0)
             {
-                // Copy the verts for prims that have only 1 face (Triangle and Polygon):
+                nPoints = info.points();
                 vertsPerFace.reserve(nSoupPrims);
                 for (uint32_t i=0; i < nSoupPrims; ++i)
                 {
@@ -411,23 +418,90 @@ class DDImagePolysoupHandler : public SurfaceHandler
                     if (nPrimVerts < 3 || nPrimFaces != 1)
                         continue; // invalid, skip
 
-                    nSoupVerts += nPrimVerts;
                     vertsPerFace.push_back(nPrimVerts);
+                    nSoupVerts += nPrimVerts;
+                    ++nSoupFaces;
                 }
 
-                nPoints = info.points();
-#if DEBUG
-                nVerts  = nSoupVerts;
-                nFaces  = (uint32_t)vertsPerFace.size();
-                //std::cout << "      nPoints=" << nPoints << ", nVerts=" << nVerts << ", nFaces=" << nFaces << std::endl;
-#endif
+                if (nPoints == 0 || nSoupVerts == 0 || nSoupFaces == 0)
+                    return; // can't render it...!
 
+                ++nMatchingMotionSamples;
+                //std::cout << "      nPoints=" << nPoints << ", nSoupVerts=" << nSoupVerts << ", nSoupFaces=" << nSoupFaces << std::endl;
+
+            }
+            else
+            {
+                // Double-check that the rest of the Mesh prims are topologically the same.
+                // This should not be required since the act of creating the polysoup_prims
+                // list should have checked for this already, but better safe than sorry:
+                uint32_t nSoupVerts1 = 0;
+                uint32_t nSoupFaces1 = 0;
+                for (uint32_t i=0; i < nSoupPrims; ++i)
+                {
+#if DEBUG
+                    assert(stx.polysoup_prims[i] < info.primitives());
+                    assert(info.primitive(stx.polysoup_prims[i])); // shouldn't happen...
+#endif
+                    const DD::Image::Primitive& prim = *info.primitive(stx.polysoup_prims[i]);
+                    const uint32_t nPrimVerts = prim.vertices();
+                    const uint32_t nPrimFaces = prim.faces();
+                    if (nPrimVerts < 3 || nPrimFaces == 0)
+                        continue; // invalid, skip
+
+                    nSoupVerts1 += nPrimVerts;
+                    ++nSoupFaces1;
+                }
+                //std::cout << "      info.points=" << nPoints << ", nSoupVerts1=" << nSoupVerts1 << ", nSoupFaces1=" << nSoupFaces1 << std::endl;
+
+                if (info.points() == nPoints &&
+                    nSoupVerts1   == nSoupVerts &&
+                    nSoupFaces1   == nSoupFaces)
+                    ++nMatchingMotionSamples;
+            }
+        }
+        // If the topology is changing only support motion sample 0:
+        if (nMatchingMotionSamples < nGeoMotionSamples)
+        {
+            //std::cout << "warning, soup topology changing, only using sample 0" << std::endl;
+            nGeoMotionSamples = 1;
+        }
+
+        const bool haveNs  = (info0.N_ref  && info0.N_ref->attribute );
+        const bool haveUVs = (info0.UV_ref && info0.UV_ref->attribute);
+        const bool haveCfs = (info0.Cf_ref && info0.Cf_ref->attribute);
+
+        Fsr::DoubleList                motion_times(nGeoMotionSamples);
+        Fsr::Mat4dList                 motion_xforms(nGeoMotionSamples);
+        Fsr::Uint32List                vertIndicesList;
+        //
+        std::vector<Fsr::Vec3fList>    P_lists(nGeoMotionSamples); //< only used if subdividing
+        std::vector<Fsr::Vec3fList>    N_lists(nGeoMotionSamples);
+        Fsr::Vec2fList                 UV_list;
+        Fsr::Vec4fList                 Cf_list;
+        //
+        std::vector<const Fsr::Vec3f*> P_arrays(nGeoMotionSamples, NULL);
+        std::vector<const Fsr::Vec3f*> N_arrays(nGeoMotionSamples, NULL);
+
+        DD::Image::VArray tmpV;
+        uint32_t attrib_indices[DD::Image::Group_Last];
+        memset(attrib_indices, 0, DD::Image::Group_Last*sizeof(uint32_t));
+        attrib_indices[DD::Image::Group_Object] = stx.obj_index;
+
+        DD::Image::PrimitiveContext ptx;
+        for (uint32_t j=0; j < nGeoMotionSamples; ++j)
+        {
+            const GeoInfoContext::Sample& gtx = gptx->getGeoInfoSample(j);
+            DD::Image::GeoInfo& info = *gtx.info;
+
+            // Get prim topology at first motion sample only:
+            if (j == 0)
+            {
                 // Copy the vert indices and non-animating vert attribs now that we know the total:
                 if (haveUVs)
                     UV_list.reserve(nSoupVerts);
                 if (haveCfs)
                     Cf_list.reserve(nSoupVerts);
-
                 vertIndicesList.resize(nSoupVerts);
                 uint32_t* vp = vertIndicesList.data();
                 for (uint32_t i=0; i < nSoupPrims; ++i)
@@ -468,35 +542,8 @@ class DDImagePolysoupHandler : public SurfaceHandler
                 }
 
             }
-            else
-            {
-                // Double-check that the rest of the Mesh prims are topologically the same:
-                uint32_t nSoupVerts = 0;
-                uint32_t nSoupFaces = 0;
-                for (uint32_t i=0; i < nSoupPrims; ++i)
-                {
-#if DEBUG
-                    assert(stx.polysoup_prims[i] < info.primitives());
-                    assert(info.primitive(stx.polysoup_prims[i])); // shouldn't happen...
-#endif
-                    const DD::Image::Primitive& prim = *info.primitive(stx.polysoup_prims[i]);
-                    const uint32_t nPrimVerts = prim.vertices();
-                    const uint32_t nPrimFaces = prim.faces();
-                    if (nPrimVerts < 3 || nPrimFaces == 0)
-                        continue; // invalid, skip
 
-                    nSoupVerts += nPrimVerts;
-                    ++nSoupFaces;
-                }
-                //std::cout << "      info.points=" << nPoints << ", nSoupVerts=" << nSoupVerts << ", nSoupFaces=" << nSoupFaces << std::endl;
-
-                assert(info.points() == nPoints);
-#if DEBUG
-                assert(nSoupVerts    == nVerts);
-                assert(nSoupFaces    == nFaces);
-#endif
-            }
-
+            motion_times[j]  = gptx->motion_times[j];
             motion_xforms[j] = info.matrix;
             P_arrays[j]      = Fsr::getObjectPointArray(info);
 #if DEBUG
@@ -548,10 +595,10 @@ class DDImagePolysoupHandler : public SurfaceHandler
         // Build a zpr::Mesh RenderPrimitive:
         if (nPoints > 0 && vertIndicesList.size() > 0 && vertsPerFace.size() > 0)
         {
-            zpr::Mesh* mesh = new zpr::Mesh(&stx,
+            zpr::Mesh* mesh = new zpr::Mesh(stx.material_ctx,
                                             false/*enable_subdivision*/,
                                             Fsr::ArgSet()/*subd_args*/,
-                                            rtx.shutter_times,
+                                            motion_times,
                                             motion_xforms,
                                             nPoints/*numPoints*/,
                                             P_arrays.data(),
@@ -561,7 +608,7 @@ class DDImagePolysoupHandler : public SurfaceHandler
                                             vertIndicesList.data(),
                                             (haveUVs)?UV_list.data():NULL/*UV_list*/,
                                             (haveCfs)?Cf_list.data():NULL/*Cf_list*/);
-            mesh->index = gptx->addPrim(mesh);
+            gptx->addPrim(mesh);
         }
 
     }

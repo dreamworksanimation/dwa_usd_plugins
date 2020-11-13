@@ -2,6 +2,7 @@ set(PXR_PACKAGE Light2)
 
 pxr_plugin(${PXR_PACKAGE}
     LIBRARIES
+        zprender
         Fuser
         ${NUKE_DDIMAGE_LIBRARY}
 

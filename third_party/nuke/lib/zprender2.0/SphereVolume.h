@@ -30,8 +30,7 @@
 #ifndef zprender_SphereVolume_h
 #define zprender_SphereVolume_h
 
-#include "Volume.h"
-#include "RenderPrimitive.h"
+#include "LightVolume.h"
 
 namespace zpr {
 
@@ -42,8 +41,7 @@ static const uint32_t  ZprSphereVolumePrim  =  510;
 /*!
     TODO: finish!
 */
-class ZPR_EXPORT SphereVolume : public RenderPrimitive,
-                                public Volume
+class ZPR_EXPORT SphereVolume : public LightVolume
 {
   public:
     /*!
@@ -51,36 +49,44 @@ class ZPR_EXPORT SphereVolume : public RenderPrimitive,
     struct Sample
     {
         Fsr::Mat4d inv_xform;       //!< For transforming ray into sphere's space
-        double     radius_near;     //!< Inner shell (optional for point light fakery)
-        double     radius_far;      //!< Outside shell
+        double     near_radius;     //!< Inner shell (optional for point light fakery)
+        double     far_radius;      //!< Outside shell
 
         //! Default ctor leaves junk in vars.
         Sample() {}
 
         //!
         Sample(const Fsr::Mat4d& _xform,
-               double            _radius_near,
-               double            _radius_far) :
-            inv_xform(_xform.inverse()),
-            radius_near(std::min(_radius_near, _radius_far)),
-            radius_far(std::max(_radius_near, _radius_far))
+               double            _near_radius,
+               double            _far_radius)
         {
-            //
+            set(_xform, _near_radius, _far_radius);
         }
+
+        //!
+        void set(const Fsr::Mat4d& _xform,
+                 double            _near_radius,
+                 double            _far_radius)
+        {
+            inv_xform   = _xform.inverse();
+            near_radius = std::min(::fabs(_near_radius), ::fabs(_far_radius));
+            far_radius  = std::max(::fabs(_near_radius), ::fabs(_far_radius));
+        }
+
     };
     typedef std::vector<Sample> SampleList;
 
 
   public:
     //!
-    SphereVolume(SurfaceContext*   stx,
-                 double            motion_time,
-                 const Fsr::Mat4d& xform       =Fsr::Mat4d::getIdentity(),
-                 double            radius_near =0.0,
-                 double            radius_far  =1.0);
+    SphereVolume(const MaterialContext* material_info,
+                 double                 motion_time,
+                 const Fsr::Mat4d&      xform       =Fsr::Mat4d::getIdentity(),
+                 double                 near_radius =0.0,
+                 double                 far_radius  =1.0);
 
     //!
-    SphereVolume(SurfaceContext*                 stx,
+    SphereVolume(const MaterialContext*          material_info,
                  const Fsr::DoubleList&          motion_times,
                  const SphereVolume::SampleList& motion_spheres);
 
@@ -116,8 +122,8 @@ class ZPR_EXPORT SphereVolume : public RenderPrimitive,
     //--------------------------------------------------------------------------------- 
 
     //!
-    static Fsr::Box3d getSphereBbox(double            radius_near,
-                                    double            radius_far,
+    static Fsr::Box3d getSphereBbox(double            near_radius,
+                                    double            far_radius,
                                     const Fsr::Mat4d& xform);
 
   protected:
@@ -135,24 +141,22 @@ class ZPR_EXPORT SphereVolume : public RenderPrimitive,
 
 
 inline
-SphereVolume::SphereVolume(SurfaceContext*   stx,
-                           double            motion_time,
-                           const Fsr::Mat4d& xform,
-                           double            radius_near,
-                           double            radius_far) :
-    RenderPrimitive(stx, motion_time),
-    Volume(2/*nSurfaces*/)
+SphereVolume::SphereVolume(const MaterialContext* material_info,
+                           double                 motion_time,
+                           const Fsr::Mat4d&      xform,
+                           double                 near_radius,
+                           double                 far_radius) :
+    LightVolume(material_info, motion_time)
 {
-    m_motion_spheres.resize(1, Sample(xform, radius_near, radius_far));
+    m_motion_spheres.resize(1, Sample(xform, near_radius, far_radius));
 }
 
 
 inline
-SphereVolume::SphereVolume(SurfaceContext*                 stx,
+SphereVolume::SphereVolume(const MaterialContext*          material_info,
                            const Fsr::DoubleList&          motion_times,
                            const SphereVolume::SampleList& motion_spheres) :
-    RenderPrimitive(stx, motion_times),
-    Volume(2/*nSurfaces*/),
+    LightVolume(material_info, motion_times),
     m_motion_spheres(motion_spheres)
 {
 #if DEBUG
@@ -163,22 +167,58 @@ SphereVolume::SphereVolume(SurfaceContext*                 stx,
 
 /*static*/
 inline Fsr::Box3d
-SphereVolume::getSphereBbox(double            radius_near,
-                            double            radius_far,
+SphereVolume::getSphereBbox(double            near_radius,
+                            double            far_radius,
                             const Fsr::Mat4d& xform)
 {
     // Make sure far is largest:
-    if (radius_far < radius_near) { const double t = radius_near; radius_near = radius_far; radius_far = t; }
+    if (far_radius < near_radius) { const double t = near_radius; near_radius = far_radius; far_radius = t; }
     Fsr::Box3d bbox;
-    bbox.expand(xform.transform(Fsr::Vec3d(-radius_far, -radius_far, -radius_far)), false/*test_empty*/);
-    bbox.expand(xform.transform(Fsr::Vec3d( radius_far, -radius_far, -radius_far)));
-    bbox.expand(xform.transform(Fsr::Vec3d( radius_far,  radius_far, -radius_far)));
-    bbox.expand(xform.transform(Fsr::Vec3d(-radius_far,  radius_far, -radius_far)));
-    bbox.expand(xform.transform(Fsr::Vec3d(-radius_far, -radius_far,  radius_far)));
-    bbox.expand(xform.transform(Fsr::Vec3d( radius_far, -radius_far,  radius_far)));
-    bbox.expand(xform.transform(Fsr::Vec3d( radius_far,  radius_far,  radius_far)));
-    bbox.expand(xform.transform(Fsr::Vec3d(-radius_far,  radius_far,  radius_far)));
+    bbox.expand(xform.transform(Fsr::Vec3d(-far_radius, -far_radius, -far_radius)), false/*test_empty*/);
+    bbox.expand(xform.transform(Fsr::Vec3d( far_radius, -far_radius, -far_radius)));
+    bbox.expand(xform.transform(Fsr::Vec3d( far_radius,  far_radius, -far_radius)));
+    bbox.expand(xform.transform(Fsr::Vec3d(-far_radius,  far_radius, -far_radius)));
+    bbox.expand(xform.transform(Fsr::Vec3d(-far_radius, -far_radius,  far_radius)));
+    bbox.expand(xform.transform(Fsr::Vec3d( far_radius, -far_radius,  far_radius)));
+    bbox.expand(xform.transform(Fsr::Vec3d( far_radius,  far_radius,  far_radius)));
+    bbox.expand(xform.transform(Fsr::Vec3d(-far_radius,  far_radius,  far_radius)));
     return bbox;
+}
+
+
+/*!
+*/
+inline bool
+intersectSphere(const Fsr::Vec3d&           Ro,
+                const Fsr::Vec3d&           Rd,
+                const SphereVolume::Sample& sphere,
+                double&                     tmin,
+                double&                     tmax)
+{
+    const double a = Rd.lengthSquared();
+    const double b = 2.0 * Rd.dot(Ro);
+    const double c = (Ro.lengthSquared() - double(sphere.far_radius*sphere.far_radius));
+
+    const double discrm = b*b - 4.0*a*c;
+    if (discrm >= std::numeric_limits<double>::epsilon())
+    {
+        const double l = std::sqrt(discrm);
+        tmin = (-b - l) / (2.0 * a);
+        tmax = (-b + l) / (2.0 * a);
+        if (tmin < 0.0 && tmax < 0.0)
+            return false; // sphere behind origin
+        return true;
+    }
+    if (::fabs(discrm) < std::numeric_limits<double>::epsilon())
+    {
+        // Ray is tangent to sphere:
+        tmin = tmax = -b / (2.0 * a);
+        if (tmin < 0.0)
+            return false; // sphere behind origin
+        return true;
+    }
+
+    return false;
 }
 
 
@@ -209,13 +249,13 @@ SphereVolume::getFirstIntersection(RayShaderContext&    stx,
     {
         const Sample& s0 = m_motion_spheres[motion_step];
         spRtx.transform(s0.inv_xform);
-        hit = Fsr::intersectSphere(center, s0.radius_far, spRtx, tmin, tmax);
+        hit = Fsr::intersectSphere(center, s0.far_radius, spRtx, tmin, tmax);
     }
     else if (motion_mode == MOTIONSTEP_END)
     {
         const Sample& s1 = m_motion_spheres[motion_step+1];
         spRtx.transform(s1.inv_xform);
-        hit = Fsr::intersectSphere(center, s1.radius_far, spRtx, tmin, tmax);
+        hit = Fsr::intersectSphere(center, s1.far_radius, spRtx, tmin, tmax);
     }
     else
     {
@@ -225,7 +265,7 @@ SphereVolume::getFirstIntersection(RayShaderContext&    stx,
                         s1.inv_xform,
                         motion_step_t); // transform ray to volume's space
         hit = Fsr::intersectSphere(center,
-                                   Fsr::lerp(s0.radius_far, s1.radius_far, motion_step_t),
+                                   Fsr::lerp(s0.far_radius, s1.far_radius, motion_step_t),
                                    spRtx,
                                    tmin, tmax);
     }
@@ -252,27 +292,79 @@ SphereVolume::getIntersections(RayShaderContext&        stx,
                                double&                  tmin,
                                double&                  tmax)
 {
-    //if (R.show_debug_info) std::cout << "    Sphere::getIntersections()" << std::endl;
+    //std::cout << "    Sphere::getIntersections()" << std::endl;
 
-#if 0
+#if DEBUG
+    assert(m_motion_spheres.size() > 0);
+#endif
     // Find the motion-step this shutter position falls inside:
     uint32_t  motion_step;
     float     motion_step_t;
     const int motion_mode = getMotionStep(m_motion_times, stx.frame_time, motion_step, motion_step_t);
-    //std::cout << "  motion_step=" << motion_step << ", motion_step_t=" << motion_step_t << std::endl;
+    //std::cout << "  frame_time=" << stx.frame_time << ", motion_step=" << motion_step << ", motion_step_t=" << motion_step_t << std::endl;
+#if DEBUG
+    assert(motion_step < m_motion_spheres.size());
+#endif
 
+    // Transform the ray origin and direction by the sphere's inverse xform:
+    if (motion_mode == MOTIONSTEP_START)
+    {
+        // No interpolation first sample:
+        const Sample& sphere0 = m_motion_spheres[motion_step];
+        if (sphere0.far_radius < std::numeric_limits<double>::epsilon())
+            return; // miss, sphere is too small
+
+        const Fsr::Vec3d Ro = sphere0.inv_xform.transform(stx.Rtx.origin);
+        const Fsr::Vec3d Rd = sphere0.inv_xform.vecTransform(stx.Rtx.dir());
+        double t0, t1;
+        if (intersectSphere(Ro, Rd, sphere0, t0, t1))
+            Volume::addVolumeIntersection(t0, t1, this, stx.Rtx, I_list, tmin, tmax);
+    }
+    else if (motion_mode == MOTIONSTEP_END)
+    {
+        // No interpolation second sample:
+        const Sample& sphere1 = m_motion_spheres[motion_step+1];
+        if (sphere1.far_radius < std::numeric_limits<double>::epsilon())
+            return; // miss, sphere is too small
+
+        const Fsr::Vec3d Ro = sphere1.inv_xform.transform(stx.Rtx.origin);
+        const Fsr::Vec3d Rd = sphere1.inv_xform.vecTransform(stx.Rtx.dir());
+        double t0, t1;
+        if (intersectSphere(Ro, Rd, sphere1, t0, t1))
+            Volume::addVolumeIntersection(t0, t1, this, stx.Rtx, I_list, tmin, tmax);
+    }
+    else
+    {
+        // Interpolate sphere inv_xforms:
+        const Sample& sphere0 = m_motion_spheres[motion_step  ];
+        const Sample& sphere1 = m_motion_spheres[motion_step+1];
+        if (sphere0.far_radius < std::numeric_limits<double>::epsilon() ||
+            sphere1.far_radius < std::numeric_limits<double>::epsilon())
+            return; // miss, sphere is too small
+#if DEBUG
+        assert((motion_step+1) < m_motion_spheres.size());
+#endif
+        const Fsr::Mat4d interp_inv_xform(Fsr::lerp(sphere0.inv_xform, sphere1.inv_xform, motion_step_t));
+        const Fsr::Vec3d Ro = interp_inv_xform.transform(stx.Rtx.origin);
+        const Fsr::Vec3d Rd = interp_inv_xform.vecTransform(stx.Rtx.dir());
+        double t0, t1;
+        if (intersectSphere(Ro, Rd, sphere0, t0, t1))
+            Volume::addVolumeIntersection(t0, t1, this, stx.Rtx, I_list, tmin, tmax);
+    }
+
+#if 0
     double r;
     Fsr::RayContext Rtx(stx.Rtx);
     if (stx.mb_enabled && twin())
     {
         if (stx.frame_time <= m_frame_time)
         {
-            r = m_radius_far;
+            r = m_far_radius;
             Rtx.transform(m_motion_inv_xforms[motion_step]); // transform ray to volume's space
         }
         else if (stx.frame_time >= twin()->m_frame_time)
         {
-            r = twin()->m_radius_far;
+            r = twin()->m_far_radius;
             Rtx.transform(twin()->m_motion_inv_xforms[motion_step]); // transform ray to volume's space
         }
         else
@@ -280,7 +372,7 @@ SphereVolume::getIntersections(RayShaderContext&        stx,
             // Interpolate:
             const double t = (stx.frame_time - m_frame_time) / (twin()->m_frame_time - m_frame_time);
             const double invt = (1.0 - t);
-            r = m_radius_far*invt + twin()->m_radius_far*t;
+            r = m_far_radius*invt + twin()->m_far_radius*t;
             Fsr::Mat4d interp;
             interp.interpolate(m_motion_inv_xforms[motion_step], twin()->m_motion_inv_xforms[motion_step], t);
             Rtx.transform(interp);
@@ -288,7 +380,7 @@ SphereVolume::getIntersections(RayShaderContext&        stx,
     }
     else
     {
-        r = m_radius_far;
+        r = m_far_radius;
         Rtx.transform(m_motion_inv_xforms[motion_step]); // transform ray to volume's space
     }
 
@@ -356,7 +448,7 @@ SphereVolume::printInfo() const
 {
    std::cout << "Volume::Sphere";
    //std::cout << "Volume::Sphere[" << m_xform.getTranslation();
-   //std::cout << " near=" << m_radius_near << ", far=" << m_radius_far << "]";
+   //std::cout << " near=" << m_near_radius << ", far=" << m_far_radius << "]";
 }
 
 
@@ -368,11 +460,11 @@ SphereVolume::getBBoxAtTime(double frame_time)
 #if 0
     if (!twin() || frame_time <= m_frame_time)
     {
-        getSphereBbox(m_radius_near, m_radius_far, m_xform, bbox);
+        getSphereBbox(m_near_radius, m_far_radius, m_xform, bbox);
     }
     else if (frame_time >= twin()->m_frame_time)
     {
-        getSphereBbox(twin()->m_radius_near, twin()->m_radius_far, twin()->m_xform, bbox);
+        getSphereBbox(twin()->m_near_radius, twin()->m_far_radius, twin()->m_xform, bbox);
     }
     else
     {
@@ -383,8 +475,8 @@ SphereVolume::getBBoxAtTime(double frame_time)
         Fsr::Mat4d time_xform;
         time_xform.interpolate(m_xform, twin()->m_xform, t);
         //
-        getSphereBbox(m_radius_near*invt + twin()->m_radius_near*t,
-                      m_radius_far*invt  + twin()->m_radius_far*t,
+        getSphereBbox(m_near_radius*invt + twin()->m_near_radius*t,
+                      m_far_radius*invt  + twin()->m_far_radius*t,
                       time_xform,
                       bbox);
     }

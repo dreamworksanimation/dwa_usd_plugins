@@ -404,10 +404,8 @@ MeshPrimitive::get_face_normal(int                         face,
     const Fsr::Vec3f& p0 = getVertexPoint(first_vert, points);
     const Fsr::Vec3f& p1 = getVertexPoint(first_vert + 1, points);
     const Fsr::Vec3f& p2 = getVertexPoint(first_vert + m_num_verts_per_face[face] - 1, points);
-    Fsr::Vec3f N = (p1 - p0).cross(p2 - p0);
-    N.fastNormalize();
 
-    return N;
+    return Fsr::Vec3f((p1 - p0).cross(p2 - p0), 1.0f/*normalize*/);
 }
 
 
@@ -440,7 +438,7 @@ MeshPrimitive::get_geometric_normal(int                         vert,
     for (size_t i=0; i < nConnectedVerts - 1; ++i)
         N += (getVertexPoint(connected_verts[i], points) - p0).cross(getVertexPoint(connected_verts[i + 1], points) - p0);
     N += (getVertexPoint(connected_verts[nConnectedVerts - 1], points) - p0).cross(getVertexPoint(connected_verts[0], points) - p0);
-    N.fastNormalize();
+    N.normalize();
 
     return N;
 }
@@ -837,7 +835,13 @@ MeshPrimitive::draw_solid(DD::Image::ViewerContext*    ctx,
         const uint32_t last_vert = v + m_num_verts_per_face[f];
         for (; v < last_vert; ++v)
         {
+#if DEBUG
+            assert(v < (uint32_t)vertex_.size());
+#endif
             const uint32_t pi = vertex_[v];
+#if DEBUG
+            assert(pi < (uint32_t)points.size());
+#endif
             const_cast<uint32_t*>(ptx->indices())[DD::Image::Group_Vertices] = v;
             const_cast<uint32_t*>(ptx->indices())[DD::Image::Group_Points  ] = pi;
 

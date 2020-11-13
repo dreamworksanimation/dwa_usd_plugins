@@ -89,6 +89,12 @@ class ZPR_EXPORT Texture2dSampler
     //! Tile pointer is non-NULL only if the tile loaded successfully.
     bool isValid() const { return (m_status == LOADED); }
 
+    //! Return the Iop the sampler is bound to.
+    DD::Image::Iop* iop() const { return m_iop; }
+
+    //! Get the channels this will sample.
+    const DD::Image::ChannelSet& channels() const { return m_channels; }
+
 
   public:
     //! Replicates the Iop::sample() method.

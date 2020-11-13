@@ -295,7 +295,6 @@ class FSR_EXPORT FuserGeoReader : public DD::Image::GeoReader,
     */
     bool openSceneFile();
 
-
     //! Get the list of object names(paths) to read in during geometry_engine. Base class returns an empty set.
     virtual const std::set<std::string>& getObjectPathsForReader();
 

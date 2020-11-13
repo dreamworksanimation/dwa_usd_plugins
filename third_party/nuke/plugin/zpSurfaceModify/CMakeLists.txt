@@ -1,6 +1,6 @@
 set(PXR_PACKAGE zpSurfaceModify)
 
-pxr_plugin(zprModify}
+pxr_plugin(zprModify
     LIBRARIES
         zprender
         Fuser

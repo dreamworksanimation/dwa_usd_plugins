@@ -40,6 +40,21 @@ namespace zpr {
 class ZPR_EXPORT zprPointLight : public LightShader
 {
   public:
+    struct InputParams : public BaseInputParams
+    {
+        double k_near;
+        double k_far;
+    };
+
+
+  public:
+    InputParams inputs;
+
+    double m_near;      //!< Clamped k_near
+    double m_far;       //!< Clamped k_far
+
+
+  public:
     static const ShaderDescription description;
     /*virtual*/ const char* zprShaderClass() const { return description.shaderClass(); }
     static const InputKnobList  input_defs;
@@ -47,17 +62,44 @@ class ZPR_EXPORT zprPointLight : public LightShader
     /*virtual*/ const InputKnobList&  getInputKnobDefinitions() const  { return input_defs;  }
     /*virtual*/ const OutputKnobList& getOutputKnobDefinitions() const { return output_defs; }
 
+
     //!
     zprPointLight();
+    //!
+    zprPointLight(const InputParams&     input_params,
+                  const Fsr::DoubleList& motion_times,
+                  const Fsr::Mat4dList&  motion_xforms);
+
+    //! Must have a virtual destructor to subclass!
+    virtual ~zprPointLight() {}
 
 
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
-    /*virtual*/ bool illuminateSurface(const RayShaderContext& stx,
-                                       Fsr::RayContext&        light_ray,
-                                       float&                  direct_pdfW_out,
-                                       Fsr::Pixel&             light_color_out);
+    //! Return a pointer to the input uniform parameter structure.
+    /*virtual*/ BaseInputParams* uniformInputs() { return &inputs; }
 
+    /*virtual*/ void updateUniformLocals(double  frame,
+                                         int32_t view=-1);
+
+    /*virtual*/ bool illuminate(RayShaderContext& stx,
+                                Fsr::RayContext&  illum_ray,
+                                float&            direct_pdfW_out,
+                                Fsr::Pixel&       illum_color_out);
+
+
+    /*! Can this light shader produce a LightVolume?
+        Why yes, a simple SphereVolume.
+    */
+    /*virtual*/ bool canGenerateLightVolume();
+
+    /*! Return the entire motion bbox enclosing the LightVolume that
+        this shader can create during createLightVolume().
+        This is a union of all the transformed motion spheres.
+    */
+    /*virtual*/ Fsr::Box3d getLightVolumeMotionBbox();
+
+    /*! Create and return a SphereVolume primitive.
+    */
+    /*virtual*/ LightVolume* createLightVolume(const MaterialContext* material_ctx);
 };
 
 

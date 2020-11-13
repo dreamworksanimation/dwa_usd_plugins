@@ -32,12 +32,10 @@
 
 #include "AxisManipulator.h"//<zprender/AxisManipulator.h>
 #include "zpSamplerSet.h"
-#include "zpSurfaceHandlers.h"
-#include "zpLightVolumeHandler.h"
 
 #include <zprender/RenderContext.h>
 #include <zprender/Volume.h>
-#include <zprender/VolumeMaterialOp.h>
+#include <zprender/zprHomogeneousVolume.h>
 
 #include <DDImage/Render.h>
 #include <DDImage/DeepOp.h>
@@ -69,6 +67,28 @@
 
 
 namespace zpr {
+
+//-------------------------------------------------------------------------
+
+
+/*!
+*/
+class AmbientVolumeShader : public zprHomogeneousVolume
+{
+  public:
+    AmbientVolumeShader();
+
+    //!
+    void addVolumeKnobs(DD::Image::Knob_Callback f);
+    //!
+    void addFalloffKnobs(DD::Image::Knob_Callback f);
+    //!
+    void addNoiseKnobs(DD::Image::Knob_Callback f);
+
+};
+
+
+//-------------------------------------------------------------------------
 
 
 /*!
@@ -278,6 +298,9 @@ class zpRender : public DD::Image::Render,
     //--------------------------------------------------
     // zpr Raytracing:
 
+
+    //! TODO: change this to return a camera type string vs. an enum
+    RenderContext::CameraProjectionType getRayCameraType(int proj_mode) const;
 
     //!
     int getRaySampleSideCount(int mode) const;

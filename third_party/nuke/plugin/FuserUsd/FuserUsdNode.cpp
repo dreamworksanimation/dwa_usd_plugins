@@ -93,6 +93,9 @@ FuserUsdNode::~FuserUsdNode()
     Returns false if prim is not Valid, not Active, not Defined, or
     it failed to Load.
 
+    Set 'load_inactive_prims' to let inactive prims load,
+    however this method does not make the prim active.
+
     This fails silently so if you want specific info about why the
     prim is not useable call the version that returns an ErrorNode
     which will contain that info.
@@ -102,30 +105,60 @@ FuserUsdNode::~FuserUsdNode()
 */
 /*static*/
 bool
-FuserUsdNode::isLoadedAndUseablePrim(Pxr::UsdPrim& prim)
+FuserUsdNode::isLoadedAndUseablePrim(Pxr::UsdPrim& prim,
+                                     bool          load_inactive_prims,
+                                     bool          enable_inactive_prims)
 {
     // Only load Prims that are Active (enabled) and not Abstract:
-    if (!prim.IsValid() || !prim.IsActive() || prim.IsAbstract())
+    if (!prim.IsValid() || prim.IsAbstract())
         return false;
+
+    // Activate the prim if we allow it, then let it load. If still
+    // active after loading return true:
+    bool temp_active = false;
+
+    // We the prim but keep the edit in the unique session layer by
+    // using the PrimSpec interface rather than the Prim one:
+    Pxr::SdfPrimSpecHandle prim_spec;
+    if (!prim.IsActive())
+    {
+        if (!load_inactive_prims)
+            return false;
+
+        Pxr::SdfLayerHandle session_layer = prim.GetStage()->GetSessionLayer();
+        assert(session_layer);
+        prim_spec = Pxr::SdfCreatePrimInLayer(session_layer, prim.GetPath());
+        if (prim_spec)
+        {
+            prim_spec->SetActive(true);
+            temp_active = true;
+        }
+    }
 
     // Expand (load) all payloads - this can be expensive, but we can't
     // avoid it since we need to traverse the payload's graph too.
     if (!prim.IsLoaded())
     {
-        // Potentially need to update an Instanced prim to the Master. Remember the
-        // info *before* calling Load() as the prim can be trashed afterwards:
-        Pxr::UsdStageRefPtr stage = prim.GetStage();
-        const Pxr::SdfPath& path  = prim.GetPath();
-        const bool update_prim = prim.IsInstanceProxy();
-        prim.Load(Pxr::UsdLoadWithDescendants);//Pxr::UsdLoadWithoutDescendants
-        if (update_prim)
-            prim = stage->GetPrimAtPath(path);
+        // Potentially need to update an Instanced prim to the Master.
+        // *** Important ***: Remember the stage & path *before* calling
+        // Load() as the prim can be trashed afterwards:
+        Pxr::UsdStageRefPtr stage    = prim.GetStage();
+        const Pxr::SdfPath& path     = prim.GetPath();
+        const bool          instance = prim.IsInstanceProxy();
+        {
+            prim.Load(Pxr::UsdLoadWithDescendants);//Pxr::UsdLoadWithoutDescendants
+            if (instance)
+                prim = stage->GetPrimAtPath(path);
+        }
     }
 
     // Only consider Prims that are now Loaded, Valid (filled) and
     // Defined (not an over), and test again that it's still Active:
-    if (!prim.IsValid() || !prim.IsLoaded() || !prim.IsDefined() || !prim.IsActive())
+    if (!prim.IsValid()   || !prim.IsLoaded() || !prim.IsDefined() || !prim.IsActive())
         return false;
+
+    if (!enable_inactive_prims && prim_spec && temp_active)
+        prim_spec->SetActive(false);
 
     return true; // prim ok!
 }
@@ -138,6 +171,9 @@ FuserUsdNode::isLoadedAndUseablePrim(Pxr::UsdPrim& prim)
     must take ownership of the allocation and delete it after copying
     any relevant info.
 
+    Set 'load_inactive_prims' to let inactive prims load,
+    however this method does not make the prim active.
+
     The returned ErrorNode will detail if the prim is not Valid,
     not Active, not Defined, or it failed to Load.
 
@@ -149,6 +185,8 @@ Fsr::ErrorNode*
 FuserUsdNode::isLoadedAndUseablePrim(const char*   fsr_builder_class,
                                      Pxr::UsdPrim& prim,
                                      const char*   prim_load_path,
+                                     bool          load_inactive_prims,
+                                     bool          enable_inactive_prims,
                                      bool          debug_loading)
 {
     if (!prim.IsValid())
@@ -157,12 +195,30 @@ FuserUsdNode::isLoadedAndUseablePrim(const char*   fsr_builder_class,
                                   "prim '%s' is not Valid() for an unknown USD reason.",
                                    prim.GetName().GetString().c_str());
 
-    // Only handle Prims that are Active (enabled) and not Abstract:
-    if (!prim.IsActive())
-        return new Fsr::ErrorNode(fsr_builder_class, -2, "could not load inactive prim '%s'", prim_load_path);
-
     if (prim.IsAbstract())
         return new Fsr::ErrorNode(fsr_builder_class, -2, "could not load abstract prim '%s'", prim_load_path);
+
+    // Activate the prim if we allow it, then let it load. If still
+    // active after loading return true:
+    bool temp_active = false;
+
+    // We the prim but keep the edit in the unique session layer by
+    // using the PrimSpec interface rather than the Prim one:
+    Pxr::SdfPrimSpecHandle prim_spec;
+    if (!prim.IsActive())
+    {
+        if (!load_inactive_prims)
+            return new Fsr::ErrorNode(fsr_builder_class, -2, "could not load inactive prim '%s'", prim_load_path);
+
+        Pxr::SdfLayerHandle session_layer = prim.GetStage()->GetSessionLayer();
+        assert(session_layer);
+        prim_spec = Pxr::SdfCreatePrimInLayer(session_layer, prim.GetPath());
+        if (prim_spec)
+        {
+            prim_spec->SetActive(true);
+            temp_active = true;
+        }
+    }
 
     // Make sure the prim is loaded before checking IsActive again, IsValid, or IsDefined:
     if (!prim.IsLoaded())
@@ -174,14 +230,17 @@ FuserUsdNode::isLoadedAndUseablePrim(const char*   fsr_builder_class,
             std::cout << "      prim.IsLoaded=" << prim.IsLoaded() << " ... LOADING NOW!" << std::endl;
         }
 
-        // Potentially need to update an Instanced prim to the Master. Remember the
-        // info *before* calling Load() as the prim can be trashed afterwards:
-        Pxr::UsdStageRefPtr stage = prim.GetStage();
-        const Pxr::SdfPath& path  = prim.GetPath();
-        const bool update_prim = prim.IsInstanceProxy();
-        prim.Load(Pxr::UsdLoadWithDescendants);//Pxr::UsdLoadWithoutDescendants
-        if (update_prim)
-            prim = stage->GetPrimAtPath(path);
+        // Potentially need to update an Instanced prim to the Master.
+        // *** Important ***: Remember the stage & path *before* calling
+        // Load() as the prim can be trashed afterwards:
+        Pxr::UsdStageRefPtr stage    = prim.GetStage();
+        const Pxr::SdfPath& path     = prim.GetPath();
+        const bool          instance = prim.IsInstanceProxy();
+        {
+            prim.Load(Pxr::UsdLoadWithDescendants);//Pxr::UsdLoadWithoutDescendants
+            if (instance)
+                prim = stage->GetPrimAtPath(path);
+        }
 
         // Check if the load happened:
         if (!prim.IsLoaded())
@@ -284,6 +343,9 @@ FuserUsdNode::isLoadedAndUseablePrim(const char*   fsr_builder_class,
                                   prim_load_path,
                                   prim.GetTypeName().GetString().c_str());
     }
+
+    if (!enable_inactive_prims && prim_spec && temp_active)
+        prim_spec->SetActive(false);
 
     // No error!
     return NULL;

@@ -42,15 +42,21 @@ namespace zpr {
 class ZPR_EXPORT zprReadUVTexture : public RayShader
 {
   public:
-    std::string k_file;
-    int         k_wrapS;
-    int         k_wrapT;
-    Fsr::Vec4f  k_fallback;
-    Fsr::Vec4f  k_scale;
-    Fsr::Vec4f  k_bias;
+    struct InputParams
+    {
+        std::string k_file;
+        int         k_wrapS;
+        int         k_wrapT;
+        Fsr::Vec4f  k_fallback;
+        Fsr::Vec4f  k_scale;
+        Fsr::Vec4f  k_bias;
+    };
 
 
-  protected:
+  public:
+    InputParams inputs;
+
+    DD::Image::Hash   m_file_hash;      //!< Only update if file path updates
     DD::Image::Read*  m_read;           //!< Read Iop to access
     bool              m_file_exists;    //!< Can the file be read
     bool              m_read_error;     //!< Reader had some error
@@ -67,7 +73,10 @@ class ZPR_EXPORT zprReadUVTexture : public RayShader
 
     //!
     zprReadUVTexture(const char* path=NULL);
-    ~zprReadUVTexture();
+    zprReadUVTexture(const InputParams& input_params);
+
+    //! Must have a virtual destructor to subclass!
+    virtual ~zprReadUVTexture();
 
     //!
     //bool load(bool force=false);
@@ -77,8 +86,11 @@ class ZPR_EXPORT zprReadUVTexture : public RayShader
                      int         version);
 
 
-    /*virtual*/ void validateShader(bool                 for_real,
-                                    const RenderContext& rtx);
+    /*virtual*/ void updateUniformLocals(double  frame,
+                                         int32_t view=-1);
+    /*virtual*/ void validateShader(bool                            for_real,
+                                    const RenderContext*            rtx,
+                                    const DD::Image::OutputContext* op_ctx=NULL);
     /*virtual*/ void getActiveTextureBindings(std::vector<InputBinding*>& texture_bindings);
     /*virtual*/ void evaluateSurface(RayShaderContext& stx,
                                      Fsr::Pixel&       out);

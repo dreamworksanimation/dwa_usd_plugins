@@ -239,43 +239,22 @@ SceneLoader::isOpSceneLoader(DD::Image::Op* op)
 //
 // Scene graph browser push-button script.
 // Open the scenegraph browser and process the resulting selection.
-// TODO: finish this!
+// Access an external Python file for the functions rather than hardcoding it.
 //
 const char* const py_scenegraph_browser =
-    "_this = nuke.thisNode()\n"
-    "k = nuke.thisKnob()\n"
-#if 1
-    "scenePath = _this['scene_node'].getText()\n"
-    "print 'scenePath=',scenePath\n"
-#else
-     // call the browser:
-    "browsePath = nuke.getClipname(default=fullPath, prompt='AssetRead File Browser')\n"
-    "if (browsePath != None):\n"
-         // Compress the resulting full path:
-         // replace a '%3d' with '%d':
-    "    import re\n"
-    "    browsePath = re.sub('%\\d*d', '%d', browsePath)\n"
-         // load the path into the file knob to set range & format knobs:
-    "    #on_error = _this['on_error'].value()\n"
-    "    #_this['on_error'].setValue('error')\n"
-    "    #_this['file'].fromUserText(browsePath)\n"
-    "    #_this['on_error'].setValue(on_error)\n"
-    "    _this['update_path'].setText(browsePath)\n"
-
-     //
-    "    f = browsePath.split()[0]\n"
-         // Convert recognized view names to '%V':
-    "    if len(nuke.views()) > 1:\n"
-    "        for v in nuke.views():\n"
-    "            f = f.replace(v, '%V')\n"
+    "import nuke\n"
+    "try:\n"
+    "    import sceneloader_support\n"
+    "    _this = nuke.thisNode()\n"
+    "    sceneFileKnob = _this['scene_file']\n"
+    "    if sceneFileKnob is not None:\n"
+    "        sceneNodePath = sceneloader_support.sceneBrowser(node=_this, path=sceneFileKnob.getText())\n"
+    "        sceneNodeKnob = _this['scene_node']\n"
+    "        if sceneNodePath != '' and sceneNodeKnob is not None:\n"
+    "            sceneNodeKnob.setText(sceneNodePath)\n"
     ""
-    "    try:\n"
-    "        import assetread_support\n"
-    "        extract_tokens(f, _this, 'scene_node')\n"
-    ""
-    "    except (ImportError), e:\n"
-    "        print 'Unable to import AssetRead support module'\n"
-#endif
+    "except (ImportError), e:\n"
+    "    print 'Unable to import sceneloader_support python module.'\n"
     "";
 
 
@@ -301,10 +280,11 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
     //DD::Image::Divider(f, "@b;Scene File Import");
     DD::Image::BeginGroup(f, "scene_file_import", "@b;Scene File Import");
     {
+        DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE);
         if (group_open)
-            ClearFlags(f, DD::Image::Knob::CLOSED);
+            DD::Image::ClearFlags(f, DD::Image::Knob::CLOSED);
         else
-            SetFlags(f, DD::Image::Knob::CLOSED);
+            DD::Image::SetFlags(f, DD::Image::Knob::CLOSED);
 
         {
             DD::Image::Bool_knob(f, &k_scene_ctls.read_enabled, "read_from_file", "read from file");
@@ -323,7 +303,9 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
             DD::Image::Spacer(f, 10);
             DD::Image::Script_knob(f, "knob scene_file_version [expr [value scene_file_version]+1]", "Reload");
                 DD::Image::ClearFlags(f, DD::Image::Knob::STARTLINE);
-                DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE | DD::Image::Knob::NO_UNDO | DD::Image::Knob::NO_ANIMATION);
+                DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE |
+                                       DD::Image::Knob::NO_UNDO |
+                                       DD::Image::Knob::NO_ANIMATION);
                 DD::Image::Tooltip(f, "Re-read the node data from the scene file only if the 'read enable' "
                                         "switch is enabled.");
             //DD::Image::Button(f, "force_load_button", "Force Load");
@@ -344,18 +326,28 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
 
             DD::Image::File_knob(f, &k_scene_ctls.file, "scene_file", "scene file", DD::Image::Geo_File);
                 DD::Image::SetFlags(f, DD::Image::Knob::STARTLINE);
-                DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE | DD::Image::Knob::NO_MULTIVIEW);
+                DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE |
+                                       DD::Image::Knob::NO_MULTIVIEW);
             DD::Image::Int_knob(f, &k_scene_ctls.file_version, "scene_file_version", DD::Image::INVISIBLE);
 
             //----------------------------------------
 
             DD::Image::String_knob(f, &k_scene_ctls.node_path, "scene_node", "scene node");
                 DD::Image::SetFlags(f, DD::Image::Knob::STARTLINE);
-                DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE | DD::Image::Knob::NO_MULTIVIEW);
+                DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE |
+                                       DD::Image::Knob::NO_MULTIVIEW);
             DD::Image::PyScript_knob(f, py_scenegraph_browser, "scenegraph_browser", "@File_Knob");
-                DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE | DD::Image::Knob::NO_UNDO | DD::Image::Knob::NO_ANIMATION);
+                DD::Image::SetFlags(f, DD::Image::Knob::DO_NOT_WRITE |
+                                       DD::Image::Knob::NO_UNDO |
+                                       DD::Image::Knob::NO_ANIMATION);
                 DD::Image::SetFlags(f, DD::Image::Knob::ENDLINE);
-                DD::Image::Tooltip(f, "(sorry, not yet implemented)");
+                DD::Image::Tooltip(f, "Open a custom scene file browser to view and optionally pick an "
+                                      "object path to place in 'scene_node'.\n"
+                                      "\n"
+                                      "When pushed this button attempts to import a Python module named "
+                                      "'sceneloader_support' and call its 'sceneBrowser()' method.\n"
+                                      "See the example 'sceneloader_support.py' file for additional "
+                                      "implementation and argument details.");
             //DD::Image::Newline(f);
 
             // These stop legacy scripts from throwing errors by attempting to translate
@@ -378,7 +370,8 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
         {
             DD::Image::BeginGroup(f, "scene_file_hierarchy", "scene file contents");
             {
-                SetFlags(f, DD::Image::Knob::CLOSED);
+                DD::Image::SetFlags(f, DD::Image::Knob::CLOSED |
+                                       DD::Image::Knob::DO_NOT_WRITE);
 
                 int default_max_depth = SCENEGRAPH_MAX_DEPTH_DEFAULT;
                 DD::Image::Int_knob(f, &default_max_depth, "scenegraph_max_depth", "max depth");
@@ -412,7 +405,8 @@ SceneLoader::addSceneLoaderKnobs(DD::Image::Knob_Callback f,
         {
             DD::Image::BeginGroup(f, "scene_file_frame_ctrls", "frame / view options");
             {
-                SetFlags(f, DD::Image::Knob::CLOSED);
+                DD::Image::SetFlags(f, DD::Image::Knob::CLOSED |
+                                       DD::Image::Knob::DO_NOT_WRITE);
 
                 DD::Image::Bool_knob(f, &k_scene_ctls.lock_read_frame, "lock_read_frame", "lock read frame");
                     DD::Image::SetFlags(f, DD::Image::Knob::EARLY_STORE);

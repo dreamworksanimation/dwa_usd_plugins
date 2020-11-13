@@ -53,8 +53,7 @@ namespace zpr {
 class zpBaseMaterial : public SurfaceMaterialOp
 {
   protected:
-    zprBase::InputParams k_inputs;
-    zprBase::LocalVars   m_locals;
+    zprBase zprShader;      //!< Local shader allocation for knobs to write into
 
 
   public:
@@ -73,7 +72,7 @@ class zpBaseMaterial : public SurfaceMaterialOp
     RayShader* _createOutputSurfaceShader(const RenderContext&     rtx,
                                           std::vector<RayShader*>& shaders)
     {
-        RayShader* output = new zprBase(k_inputs);
+        RayShader* output = new zprBase(zprShader.inputs);
         shaders.push_back(output);
         return output;
     }
@@ -106,16 +105,29 @@ class zpBaseMaterial : public SurfaceMaterialOp
 
     //! Return the InputBinding for an input.
     /*virtual*/
-    InputBinding* getInputBinding(uint32_t input)
+    InputBinding* getInputBindingForOpInput(uint32_t op_input)
     {
-        if      (input == 0) return &k_inputs.k_bindings[zprBase::BG0            ];
-        else if (input == 1) return &k_inputs.k_bindings[zprBase::DIFFUSE1       ];
-        else if (input == 2) return &k_inputs.k_bindings[zprBase::SPECULAR2      ];
-        else if (input == 3) return &k_inputs.k_bindings[zprBase::EMISSION3      ];
-        else if (input == 4) return &k_inputs.k_bindings[zprBase::OPACITY4       ];
-        else if (input == 5) return &k_inputs.k_bindings[zprBase::DIFF_ROUGHNESS5];
-        else if (input == 6) return &k_inputs.k_bindings[zprBase::SPEC_ROUGHNESS6];
+        if      (op_input == 0) return &zprShader.inputs.k_bindings[zprBase::BG0            ];
+        else if (op_input == 1) return &zprShader.inputs.k_bindings[zprBase::DIFFUSE1       ];
+        else if (op_input == 2) return &zprShader.inputs.k_bindings[zprBase::SPECULAR2      ];
+        else if (op_input == 3) return &zprShader.inputs.k_bindings[zprBase::EMISSION3      ];
+        else if (op_input == 4) return &zprShader.inputs.k_bindings[zprBase::OPACITY4       ];
+        else if (op_input == 5) return &zprShader.inputs.k_bindings[zprBase::DIFF_ROUGHNESS5];
+        else if (op_input == 6) return &zprShader.inputs.k_bindings[zprBase::SPEC_ROUGHNESS6];
         return NULL;
+    }
+
+    //! Return the Op input for a shader input, or -1 if binding is not exposed.
+    /*virtual*/ int32_t getOpInputForShaderInput(uint32_t shader_input)
+    {
+        if      (shader_input == zprBase::BG0            ) return 0;
+        else if (shader_input == zprBase::DIFFUSE1       ) return 1;
+        else if (shader_input == zprBase::SPECULAR2      ) return 2;
+        else if (shader_input == zprBase::EMISSION3      ) return 3;
+        else if (shader_input == zprBase::OPACITY4       ) return 4;
+        else if (shader_input == zprBase::DIFF_ROUGHNESS5) return 5;
+        else if (shader_input == zprBase::SPEC_ROUGHNESS6) return 6;
+        return -1;
     }
 
 
@@ -134,10 +146,10 @@ class zpBaseMaterial : public SurfaceMaterialOp
         // Call base class first to get InputBindings assigned:
         SurfaceMaterialOp::_validate(for_real);
 
-        zprBase::updateLocals(k_inputs, m_locals);
+        zprShader.validateShader(for_real, NULL/*rtx*/, &outputContext()/*op_ctx*/);
 
         // Enable AOV output channels:
-        info_.turn_on(m_locals.m_aov_channels);
+        info_.turn_on(zprShader.locals.m_aov_channels);
     }
 
 
@@ -154,47 +166,47 @@ class zpBaseMaterial : public SurfaceMaterialOp
         // The top line of ray controls:
         addRayControlKnobs(f);
 
-        InputOp_knob(f, &k_inputs.k_bindings[zprBase::BG0], 0/*input_num*/);
+        InputOp_knob(f, &zprShader.inputs.k_bindings[zprBase::BG0], 0/*input_num*/);
 
         //----------------------------------------------------------------------------------------------
         Divider(f);
-        Float_knob(f, &k_inputs.k_diffuse_factor, "diffuse_factor", "diffuse factor");
+        Float_knob(f, &zprShader.inputs.k_diffuse_factor, "diffuse_factor", "diffuse factor");
             Obsolete_knob(f, "enable_diffuse", "knob diffuse_factor $value");
-        Color_knob(f, &k_inputs.k_diffuse_tint.x, IRange(0,1), "diffuse_tint", "diffuse tint");
-        ColorMap_knob(f, &k_inputs.k_bindings[zprBase::DIFFUSE1], 1/*input*/, 4/*num_channels*/, "diffuse_color", "diffuse color map");
+        Color_knob(f, &zprShader.inputs.k_diffuse_tint.x, IRange(0,1), "diffuse_tint", "diffuse tint");
+        ColorMap_knob(f, &zprShader.inputs.k_bindings[zprBase::DIFFUSE1], 1/*input*/, 4/*num_channels*/, "diffuse_color", "diffuse color map");
         //
-        Float_knob(f, &k_inputs.k_diffuse_roughness, "diffuse_roughness", "diffuse roughness");
-        ColorMap_knob(f, &k_inputs.k_bindings[zprBase::DIFF_ROUGHNESS5], 5/*input*/, 1/*num_channels*/, "diffuse_roughness_map", "diffuse roughness map");
+        Float_knob(f, &zprShader.inputs.k_diffuse_roughness, "diffuse_roughness", "diffuse roughness");
+        ColorMap_knob(f, &zprShader.inputs.k_bindings[zprBase::DIFF_ROUGHNESS5], 5/*input*/, 1/*num_channels*/, "diffuse_roughness_map", "diffuse roughness map");
             Tooltip(f, "Optional input map to modulate diffuse roughness");
         //
-        Float_knob(f, &k_inputs.k_direct_diffuse_factor,   "direct_diffuse_factor",   "direct diffuse factor");
-        Float_knob(f, &k_inputs.k_indirect_diffuse_factor, "indirect_diffuse_factor", "indirect diffuse factor");
+        Float_knob(f, &zprShader.inputs.k_direct_diffuse_factor,   "direct_diffuse_factor",   "direct diffuse factor");
+        Float_knob(f, &zprShader.inputs.k_indirect_diffuse_factor, "indirect_diffuse_factor", "indirect diffuse factor");
         //
         Divider(f);
-        Float_knob(f, &k_inputs.k_opacity_factor, "opacity_factor", "opacity factor");
+        Float_knob(f, &zprShader.inputs.k_opacity_factor, "opacity_factor", "opacity factor");
             Obsolete_knob(f, "opacity", "knob opacity_factor $value");
-        ColorMap_knob(f, &k_inputs.k_bindings[zprBase::OPACITY4], 4/*input*/, 1/*num_channels*/, "opacity", "opacity map");
+        ColorMap_knob(f, &zprShader.inputs.k_bindings[zprBase::OPACITY4], 4/*input*/, 1/*num_channels*/, "opacity", "opacity map");
         //
         Divider(f);
-        Float_knob(f, &k_inputs.k_specular_factor, "specular_factor", "specular factor");
+        Float_knob(f, &zprShader.inputs.k_specular_factor, "specular_factor", "specular factor");
             Obsolete_knob(f, "enable_specular", "knob specular_factor $value");
-        Color_knob(f, &k_inputs.k_specular_tint.x, IRange(0,1), "specular_tint", "specular tint");
-        ColorMap_knob(f, &k_inputs.k_bindings[zprBase::SPECULAR2], 2/*input*/, 3/*num_channels*/, "specular_color", "specular color map");
+        Color_knob(f, &zprShader.inputs.k_specular_tint.x, IRange(0,1), "specular_tint", "specular tint");
+        ColorMap_knob(f, &zprShader.inputs.k_bindings[zprBase::SPECULAR2], 2/*input*/, 3/*num_channels*/, "specular_color", "specular color map");
         //
-        Float_knob(f, &k_inputs.k_specular_roughness, "specular_roughness", "specular roughness");
-        ColorMap_knob(f, &k_inputs.k_bindings[zprBase::SPEC_ROUGHNESS6], 6/*input*/, 1/*num_channels*/, "specular_roughness_map", "specular roughness map");
+        Float_knob(f, &zprShader.inputs.k_specular_roughness, "specular_roughness", "specular roughness");
+        ColorMap_knob(f, &zprShader.inputs.k_bindings[zprBase::SPEC_ROUGHNESS6], 6/*input*/, 1/*num_channels*/, "specular_roughness_map", "specular roughness map");
             Tooltip(f, "Optional input map to modulate specular roughness");
         //
-        Float_knob(f, &k_inputs.k_fresnel_factor, "fresnel_factor", "frensel factor");
+        Float_knob(f, &zprShader.inputs.k_fresnel_factor, "fresnel_factor", "frensel factor");
         //
-        Float_knob(f, &k_inputs.k_direct_specular_factor,   "direct_specular_factor",   "direct specular factor");
-        Float_knob(f, &k_inputs.k_indirect_specular_factor, "indirect_specular_factor", "indirect specular factor");
+        Float_knob(f, &zprShader.inputs.k_direct_specular_factor,   "direct_specular_factor",   "direct specular factor");
+        Float_knob(f, &zprShader.inputs.k_indirect_specular_factor, "indirect_specular_factor", "indirect specular factor");
         //
         Divider(f);
-        Float_knob(f, &k_inputs.k_transmission_factor, "transmission_factor", "transmission factor");
+        Float_knob(f, &zprShader.inputs.k_transmission_factor, "transmission_factor", "transmission factor");
             Tooltip(f, "Transmission multiplier where 0 = no transmission.");
-        Color_knob(f, &k_inputs.k_transmission_tint.x, IRange(0,1), "transmission_tint", "transmission tint");
-        Double_knob(f, &k_inputs.k_index_of_refraction, IRange(1,3), "index_of_refraction", "index of refraction");
+        Color_knob(f, &zprShader.inputs.k_transmission_tint.x, IRange(0,1), "transmission_tint", "transmission tint");
+        Double_knob(f, &zprShader.inputs.k_index_of_refraction, IRange(1,3), "index_of_refraction", "index of refraction");
             Tooltip(f, "Index-of-refraction value for material.  Here's a list of commonly used values:\n"
                        "vacuum          1.0\n"
                        "air @ stp       1.00029\n"
@@ -209,15 +221,15 @@ class zpBaseMaterial : public SurfaceMaterialOp
                        "glass med       1.57\n"
                        "glass high      1.62\n"
                        "diamond         2.417");
-        Color_knob(f, &k_inputs.k_total_int_reflection_tint.x, IRange(0,1), "total_int_reflection_tint", "total int reflection tint");
+        Color_knob(f, &zprShader.inputs.k_total_int_reflection_tint.x, IRange(0,1), "total_int_reflection_tint", "total int reflection tint");
 
         //----------------------------------------------------------------------------------------------
         Divider(f);
-        Float_knob(f, &k_inputs.k_emission_factor, "emission_factor", "emission factor");
+        Float_knob(f, &zprShader.inputs.k_emission_factor, "emission_factor", "emission factor");
             Obsolete_knob(f, "enable_emission", "knob emission_factor $value");
-        Color_knob(f, &k_inputs.k_emission_tint.x, IRange(0,4), "emission_tint", "emission tint");
+        Color_knob(f, &zprShader.inputs.k_emission_tint.x, IRange(0,4), "emission_tint", "emission tint");
            SetFlags(f, Knob::LOG_SLIDER);
-        ColorMap_knob(f, &k_inputs.k_bindings[zprBase::EMISSION3], 3/*input*/, 3/*num_channels*/, "emission_color", "emission color map");
+        ColorMap_knob(f, &zprShader.inputs.k_bindings[zprBase::EMISSION3], 3/*input*/, 3/*num_channels*/, "emission_color", "emission color map");
 
         //----------------------------------------------------------------------------------------------
         //----------------------------------------------------------------------------------------------
@@ -227,17 +239,17 @@ class zpBaseMaterial : public SurfaceMaterialOp
             "Route this shader component to these output channels.  If an alpha is present in the component "
             "it will also be output (this is useful when an alpha is required from a reflected object rather "
             "than the object this shader is attached to.)";
-        Channel_knob(f, k_inputs.k_direct_diffuse_output,    4, "direct_diffuse_output",    "direct diffuse output");
+        Channel_knob(f, zprShader.inputs.k_direct_diffuse_output,    4, "direct_diffuse_output",    "direct diffuse output");
            Tooltip(f, aov_tooltip);
-        Channel_knob(f, k_inputs.k_direct_specular_output,   4, "direct_specular_output",   "direct specular output");
+        Channel_knob(f, zprShader.inputs.k_direct_specular_output,   4, "direct_specular_output",   "direct specular output");
            Tooltip(f, aov_tooltip);
-        Channel_knob(f, k_inputs.k_indirect_diffuse_output,  4, "indirect_diffuse_output",  "indirect diffuse output");
+        Channel_knob(f, zprShader.inputs.k_indirect_diffuse_output,  4, "indirect_diffuse_output",  "indirect diffuse output");
            Tooltip(f, aov_tooltip);
-        Channel_knob(f, k_inputs.k_indirect_specular_output, 4, "indirect_specular_output", "indirect specular output");
+        Channel_knob(f, zprShader.inputs.k_indirect_specular_output, 4, "indirect_specular_output", "indirect specular output");
            Tooltip(f, aov_tooltip);
-        Channel_knob(f, k_inputs.k_transmission_output,      4, "transmission_output",      "transmission output");
+        Channel_knob(f, zprShader.inputs.k_transmission_output,      4, "transmission_output",      "transmission output");
            Tooltip(f, aov_tooltip);
-        Channel_knob(f, k_inputs.k_emission_output,          4, "emission_output",          "emission output");
+        Channel_knob(f, zprShader.inputs.k_emission_output,          4, "emission_output",          "emission output");
            Tooltip(f, aov_tooltip);
     }
 

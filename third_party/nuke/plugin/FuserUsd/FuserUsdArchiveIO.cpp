@@ -71,44 +71,6 @@ static Pxr::UsdStageRefPtr m_null_stage;
 //-------------------------------------------------------------------------------
 
 
-#if 0
-// TODO: this is from the UsdKatana plugin - do we need the same?
-FnKat::DoubleAttribute
-_MakeBoundsAttribute(const UsdPrim&                      prim,
-                     const PxrUsdKatanaUsdInPrivateData& data)
-{
-    if (prim.GetPath() == SdfPath::AbsoluteRootPath())
-    {
-        // Special-case to pre-empt coding errors.
-        return FnKat::DoubleAttribute();
-    }
-
-    const std::vector<double>& motionSampleTimes =
-        data.GetMotionSampleTimes();
-    std::vector<GfBBox3d> bounds =
-        data.GetUsdInArgs()->ComputeBounds(prim, motionSampleTimes);
-
-    bool hasInfiniteBounds = false;
-    bool isMotionBackward = motionSampleTimes.size() > 1 &&
-        motionSampleTimes.front() > motionSampleTimes.back();
-
-    FnKat::DoubleAttribute boundsAttr = 
-        PxrUsdKatanaUtils::ConvertBoundsToAttribute(
-            bounds, motionSampleTimes, isMotionBackward, 
-            &hasInfiniteBounds);
-
-    // Report infinite bounds as a warning.
-    if (hasInfiniteBounds) {
-        FnLogWarn("Infinite bounds found at "<<prim.GetPath().GetString());
-    }
-
-    return boundsAttr;
-}
-#endif
-
-
-//-------------------------------------------------------------------------------
-
 // TODO: should we make supporting scenegraph instancing a user-controlled thing?
 const bool instancing_enabled = true;
 
@@ -117,19 +79,22 @@ const bool instancing_enabled = true;
 */
 Pxr::UsdPrim
 findMatchingPrimByType(const Pxr::UsdPrim& prim,
-                       const std::string&  prim_type)
+                       const std::string&  prim_type,
+                       bool                allow_inactive_prims)
 {
     // Only consider prims that are valid:
     if (prim.IsValid())
     {
         // Check type for match:
-        //std::cout << "  findMatchingPrim() prim='" << prim.GetName() << "'";
+        //std::cout << "  findMatchingPrimByType() prim='" << prim.GetName() << "'";
         //std::cout << ", typeName='" << prim.GetTypeName() << "'" << std::endl;
         if (prim.GetTypeName() == prim_type)
             return prim;
 
         // No match, continue down hierarchy:
-        auto prim_flags = (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
+        auto prim_flags = (allow_inactive_prims) ?
+                            (Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract) :
+                            (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
         const Pxr::UsdPrim::SiblingRange child_range = (instancing_enabled) ?
                                                         prim.GetFilteredChildren(Pxr::UsdTraverseInstanceProxies(prim_flags)) :
                                                         prim.GetAllChildren();
@@ -137,7 +102,7 @@ findMatchingPrimByType(const Pxr::UsdPrim& prim,
         for (Pxr::UsdPrim::SiblingRange::iterator it=child_range.begin(); it != child_range.end(); ++it)
         {
             const Pxr::UsdPrim child(*it);
-            Pxr::UsdPrim match = findMatchingPrimByType(child, prim_type);
+            Pxr::UsdPrim match = findMatchingPrimByType(child, prim_type, allow_inactive_prims);
             if (match.IsValid())
                 return match;
         }
@@ -150,7 +115,8 @@ findMatchingPrimByType(const Pxr::UsdPrim& prim,
 Pxr::UsdPrim
 findFirstMatchingPrim(const Pxr::UsdStageRefPtr& stage,
                       const std::string&         start_path,
-                      const std::string&         prim_type)
+                      const std::string&         prim_type,
+                      bool                       allow_inactive_prims)
 {
     if (prim_type.empty())
         return Pxr::UsdPrim();
@@ -183,12 +149,12 @@ findFirstMatchingPrim(const Pxr::UsdStageRefPtr& stage,
 #if 0
     std::cout << "====== findFirstMatchingPrim '" << prim_type << "' starting at '" << start_path << "'";
     std::cout << ", schema_type='" << schema_type << "'" << std::endl;
-    Pxr::UsdPrim match = findMatchingPrimByType(start_prim, schema_type);
+    Pxr::UsdPrim match = findMatchingPrimByType(start_prim, schema_type, allow_inactive_prims);
     if (match.IsValid())
         std::cout << "   match='" << match.GetName() << "' ========" << std::endl;
     return match;
 #else
-    return findMatchingPrimByType(start_prim, schema_type);
+    return findMatchingPrimByType(start_prim, schema_type, allow_inactive_prims);
 #endif
 }
 
@@ -203,6 +169,7 @@ getNodeDescriptions(Pxr::UsdPrim             prim,
                     Fsr::NodeDescriptionMap& node_description_map,
                     int                      depth,
                     int                      max_depth,
+                    bool                     show_inactive_prims,
                     bool                     debug=false)
 {
     //std::cout << "  getNodeDescriptions() prim='" << prim.GetPath() << "' depth=" << depth << ", max_depth=" << max_depth << std::endl;
@@ -216,8 +183,22 @@ getNodeDescriptions(Pxr::UsdPrim             prim,
     if (depth > max_depth)
         return;
 
-    // Only consider Prims that are valid after loading:
-    if (!FuserUsdNode::isLoadedAndUseablePrim(prim))
+    // When allowing the showing of inactive prims, handle them special as
+    // isLoadedAndUseablePrim() will not cause the prim to load and returns false.
+    // So when getting node descriptions we simply note that it's inactive but
+    // don't show any children:
+    if (!prim.IsActive() && show_inactive_prims && path != "/")
+    {
+        const std::string& name = prim.GetName().GetString();
+        const std::string& type = prim.GetTypeName().GetString();
+        node_description_map[path] = Fsr::NodeDescription(name/*path*/, type/*type*/, "INACTIVE"/*note*/);
+        return;
+    }
+
+    // Only consider Prims that are valid and active after loading:
+    if (!FuserUsdNode::isLoadedAndUseablePrim(prim,
+                                              false/*load_inactive_prims*/,
+                                              false/*enable_inactive_prims*/))
         return;
 
 #if 0
@@ -252,7 +233,8 @@ getNodeDescriptions(Pxr::UsdPrim             prim,
 
     // We do a manual child walk so we can keep track of the depth we're at.
     // Using just a UsdPrimRange iterator means losing where we are in depth.
-    auto prim_flags = (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
+    // Allow InActive prims here so we can display this info.
+    auto prim_flags = (Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
     const Pxr::UsdPrim::SiblingRange child_range = (instancing_enabled) ?
                                                     prim.GetFilteredChildren(Pxr::UsdTraverseInstanceProxies(prim_flags)) :
                                                     prim.GetAllChildren();
@@ -274,7 +256,7 @@ getNodeDescriptions(Pxr::UsdPrim             prim,
 
 #if 0
         std::cout << "    " << node_description_map.size();
-        std::cout << " '" << path << "' ('" << name << "'[" << type << "])";
+        std::cout << " '" << path << "' ('" << name << "'[" << type << "] note'" << note << "')";
         Pxr::SdfPrimSpecHandle spec = prim.GetPrimDefinition();
         if (spec)
             std::cout << ", Kind='" << spec->GetKind() << "'";
@@ -316,7 +298,12 @@ getNodeDescriptions(Pxr::UsdPrim             prim,
     const size_t nChildren = children.size();
     for (size_t i=0; i < nChildren; ++i)
     {
-        getNodeDescriptions(*children[i], node_description_map, depth, max_depth, debug);
+        getNodeDescriptions(*children[i],
+                            node_description_map,
+                            depth,
+                            max_depth,
+                            show_inactive_prims,
+                            debug);
         delete children[i];
     }
 }
@@ -375,18 +362,44 @@ selectMatchingPath(const std::string&                path,
 static void
 findSelectedNodes(Pxr::UsdPrim                      prim,
                   const Fsr::NodeFilterPatternList& node_filter_patterns,
+                  const Fsr::StringList&            enable_inactive_masks,
                   Fsr::NodePathSelections&          selections,
                   bool                              debug=false)
 {
-    // Only consider Prims that are valid after loading:
-    if (!FuserUsdNode::isLoadedAndUseablePrim(prim))
-        return;
-
     const std::string& path = prim.GetPath().GetString();
     if (path.empty())
         return; // just in case...
 
-    //std::cout << "  findSelectedNodes() path='" << path << "' [" << prim.GetTypeName() << "]" << std::endl;
+    // If we have a active inactive selection mask first filter the prim if
+    // it's Inactive:
+    bool enable_inactive = false;
+    if (enable_inactive_masks.size() > 0 && !prim.IsActive())
+    {
+        // Allow the prim if it's in the mask:
+        for (size_t i=0; i < enable_inactive_masks.size(); ++i)
+        {
+            const std::string& mask = enable_inactive_masks[i];
+            if (mask.empty())
+                continue;
+            if ((mask[0] == '-' || mask[0] == '^') && Fsr::globMatch(mask.c_str()+1, path.c_str()))
+                enable_inactive = false;
+            else if (mask[0] == '+' && Fsr::globMatch(mask.c_str()+1, path.c_str()))
+                enable_inactive = true;
+            else if (Fsr::globMatch(mask, path))
+                enable_inactive = true;
+        }
+    }
+
+    //std::cout << "      findSelectedNodes() path='" << path << "' [" << prim.GetTypeName() << "]";
+    //std::cout << " IsActive=" << prim.IsActive();
+    //std::cout << ", enable_inactive=" << enable_inactive;
+    //std::cout << ", stage=" << &(*prim.GetStage()) << std::endl;
+
+    // Only consider Prims that are valid after loading:
+    if (!FuserUsdNode::isLoadedAndUseablePrim(prim,
+                                              enable_inactive/*load_inactive_prims*/,
+                                              enable_inactive/*enable_inactive_prims*/))
+        return;
 
 #if 0
     std::cout << "    '" << prim.GetPath() << "' [" << prim.GetTypeName() << "]";
@@ -438,7 +451,9 @@ findSelectedNodes(Pxr::UsdPrim                      prim,
     // We need to avoid using the UsdPrim::SiblingRange iterators in the recursion
     // as loading child prims invalidate the iterator ranges, so we copy the prims
     // to a local list:
-    auto prim_flags = (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
+    auto prim_flags = (enable_inactive_masks.size() > 0) ?
+                        (Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract) :
+                        (Pxr::UsdPrimIsActive && Pxr::UsdPrimIsDefined && !Pxr::UsdPrimIsAbstract);
     const Pxr::UsdPrim::SiblingRange child_range = (instancing_enabled) ?
                                                     prim.GetFilteredChildren(Pxr::UsdTraverseInstanceProxies(prim_flags)) :
                                                     prim.GetAllChildren();
@@ -451,7 +466,11 @@ findSelectedNodes(Pxr::UsdPrim                      prim,
     const size_t nChildren = children.size();
     for (size_t i=0; i < nChildren; ++i)
     {
-        findSelectedNodes(*children[i], node_filter_patterns, selections, debug);
+        findSelectedNodes(*children[i],
+                          node_filter_patterns,
+                          enable_inactive_masks,
+                          selections,
+                          debug);
         delete children[i];
     }
 
@@ -471,13 +490,12 @@ static SharedStageCacheReferenceMap m_shared_stage_references;
 
     If 'parent_path' is not empty it's added to the populate_mask.
 
-    'stage_id' replaces the current one, even if empty.
+    'stage_id' if cleared to ''.
 */
 /*static*/
 StageCacheReference*
 StageCacheReference::createStageReference(uint64_t                        hash,
-                                          const std::vector<std::string>& paths,
-                                          const std::string&              stage_id)
+                                          const std::vector<std::string>& paths)
 {
     // If it already exists get the reference:
     StageCacheReference* stage_reference = findStageReference(hash);
@@ -495,7 +513,17 @@ StageCacheReference::createStageReference(uint64_t                        hash,
         if (!paths[j].empty())
             stage_reference->m_populate_mask.Add(Pxr::SdfPath(paths[j]));
     }
-    stage_reference->m_stage_id = stage_id;
+
+    // Stage ID will get assigned in first unique getStage() call for this hash
+    // and is returned by the UsdStageCache.
+    stage_reference->m_stage_id = ""; 
+
+    // A unique session layer needs to exist for each unique stage hash so
+    // that the UsdStageCacheRequest finds the correct cache.
+    // If only file name, root layer and populate mask are used as keys we
+    // don't get unique stages in the cache that can have modifications done
+    // on them:
+    stage_reference->m_session_layer = Pxr::SdfLayer::CreateAnonymous();
 
     return stage_reference;
 }
@@ -543,7 +571,7 @@ class StageOpenRequest : public Pxr::UsdStageCacheRequest
     bool m_debug_stage;
     //
     Pxr::SdfLayerHandle           m_root_layer;         //!<
-    //Pxr::SdfLayerHandle           m_session_layer;      //!< TODO: Not sure we need session layer...
+    Pxr::SdfLayerHandle           m_session_layer;      //!<
     Pxr::ArResolverContext        m_path_resolver_ctx;  //!<
     Pxr::UsdStage::InitialLoadSet m_initial_load_set;   //!<
     Pxr::UsdStagePopulationMask   m_populate_mask;      //!<
@@ -553,14 +581,14 @@ class StageOpenRequest : public Pxr::UsdStageCacheRequest
     //!
     StageOpenRequest(Pxr::UsdStage::InitialLoadSet      initial_load_set,
                      const Pxr::SdfLayerHandle&         root_layer,
-                     //const Pxr::SdfLayerHandle&         session_layer,
+                     const Pxr::SdfLayerHandle&         session_layer,
                      const Pxr::ArResolverContext&      path_resolver_ctx,
                      const Pxr::UsdStagePopulationMask& populate_mask,
                      bool                               debug_stage=false) :
         Pxr::UsdStageCacheRequest(),
         m_debug_stage(debug_stage),
         m_root_layer(root_layer),
-        //m_session_layer(session_layer),
+        m_session_layer(session_layer),
         m_path_resolver_ctx(path_resolver_ctx),
         m_initial_load_set(initial_load_set),
         m_populate_mask(populate_mask)
@@ -588,7 +616,7 @@ class StageOpenRequest : public Pxr::UsdStageCacheRequest
             std::cout << std::endl;
         }
         return (m_root_layer        == stage->GetRootLayer() &&
-                //m_session_layer     == stage->GetSessionLayer() &&
+                m_session_layer     == stage->GetSessionLayer() &&
                 m_path_resolver_ctx == stage->GetPathResolverContext() &&
                 m_populate_mask     == stage->GetPopulationMask());
     }
@@ -602,7 +630,7 @@ class StageOpenRequest : public Pxr::UsdStageCacheRequest
             return false;
 
         return (m_root_layer        == req->m_root_layer &&
-                //m_session_layer     == req->m_session_layer &&
+                m_session_layer     == req->m_session_layer &&
                 m_path_resolver_ctx == req->m_path_resolver_ctx &&
                 m_populate_mask     == req->m_populate_mask);
     }
@@ -616,7 +644,7 @@ class StageOpenRequest : public Pxr::UsdStageCacheRequest
         {
             Pxr::UsdStageRefPtr stage;
             stage = Pxr::UsdStage::OpenMasked(m_root_layer,
-                                              Pxr::TfNullPtr,//m_session_layer,
+                                              m_session_layer,
                                               m_path_resolver_ctx,
                                               m_populate_mask,
                                               m_initial_load_set);
@@ -675,7 +703,7 @@ class StageOpenRequest : public Pxr::UsdStageCacheRequest
         else
         {
             return Pxr::UsdStage::Open(m_root_layer,
-                                       Pxr::TfNullPtr,//m_session_layer,
+                                       m_session_layer,
                                        m_path_resolver_ctx,
                                        m_initial_load_set);
         }
@@ -721,8 +749,8 @@ StageCacheReference::getStage(const std::string& scene_file,
         // ID's not in cache, fall back to using scene_file
     }
 
-    Pxr::SdfLayerRefPtr root_layer = Pxr::SdfLayer::FindOrOpen(Pxr::TfStringTrimRight(scene_file));
-    if (!root_layer)
+    m_root_layer = Pxr::SdfLayer::FindOrOpen(Pxr::TfStringTrimRight(scene_file));
+    if (!m_root_layer)
     {
         // File not found!
         if (debug_stage)
@@ -736,7 +764,7 @@ StageCacheReference::getStage(const std::string& scene_file,
 
     // Successfully found root scene file.
     if (debug_stage)
-        std::cout << "       fsrUsdIO::getStage(" << std::hex << stage_hash << std::dec << "): root_layer='" << root_layer->GetRealPath() << "'";
+        std::cout << "       fsrUsdIO::getStage(" << std::hex << stage_hash << std::dec << "): root_layer='" << m_root_layer->GetRealPath() << "'";
 
     //---------------------------------------------------------------------------------------
     // Now let's get the 'base layer name' which I'm not sure we need...
@@ -751,20 +779,20 @@ StageCacheReference::getStage(const std::string& scene_file,
     //       i.e. scene_file = '/foo/bar.usd', base_layer_name = 'bar'.
     //
     // First check for a default prim name:
-    Pxr::TfToken base_layer_name = root_layer->GetDefaultPrim();
+    Pxr::TfToken base_layer_name = m_root_layer->GetDefaultPrim();
     if (base_layer_name.IsEmpty())
     {
         // If no default prim, see if there is a prim w/ the same "name" as the
         // file.  "name" here means the string before the first ".":
-        const std::string& path = root_layer->GetRealPath();
+        const std::string& path = m_root_layer->GetRealPath();
         std::string base_name = Pxr::TfGetBaseName(path);
         base_layer_name = Pxr::TfToken(base_name.substr(0, base_name.find('.')));
         if (base_layer_name.IsEmpty() ||
             !Pxr::SdfPath::IsValidIdentifier(base_layer_name) ||
-            !root_layer->GetPrimAtPath(Pxr::SdfPath::AbsoluteRootPath().AppendChild(base_layer_name)))
+            !m_root_layer->GetPrimAtPath(Pxr::SdfPath::AbsoluteRootPath().AppendChild(base_layer_name)))
         {
             // Otherwise, fallback to getting the first non-class child in the layer.
-            for (auto child=Pxr::TfMakeIterator(root_layer->GetRootPrims()); child; ++child)
+            for (auto child=Pxr::TfMakeIterator(m_root_layer->GetRootPrims()); child; ++child)
             {
                 const Pxr::SdfPrimSpecHandle& prim = *child;
                 if (prim->GetSpecifier() != Pxr::SdfSpecifierClass)
@@ -793,8 +821,8 @@ StageCacheReference::getStage(const std::string& scene_file,
 
     std::pair<Pxr::UsdStageRefPtr, bool> stage_ref =
         stage_cache.RequestStage(StageOpenRequest(Pxr::UsdStage::LoadNone/*initial_load_set*/,
-                                                  root_layer,
-                                                  //session_layer,
+                                                  m_root_layer,
+                                                  m_session_layer,
                                                   Pxr::ArGetResolver().GetCurrentContext()/*path_resolver_ctx*/,
                                                   m_populate_mask,
                                                   debug_stage));
@@ -921,13 +949,21 @@ FuserUsdArchiveIO::_execute(const Fsr::NodeContext& target_context,
     if (!target_name || !target_name[0])
         return -1; // no context target!
 
-    const bool debug_archive = target_context.getBool(Arg::Scene::file_archive_debug, false);//getBool("UsdIO:debug_archive_loading", false);
+    const bool         debug_archive        = target_context.getBool(Arg::Scene::file_archive_debug, false);//getBool("UsdIO:debug_archive_loading", false);
+    const bool         show_inactive_prims  = target_context.getBool("UsdIO:show_inactive_prims", false); // node arg
+    const std::string& enable_inactive_mask = target_context.getString("UsdIO:inactive_mask");
 
     if (debug() || debug_archive)
     {
-        std::cout << "  FuserUsdArchiveIO::_execute(" << this << ") args[" << args() << "]";
-        std::cout << ": target='" << target_name << "'";
-        std::cout << " args[" << target_context.args() << "]";
+        std::cout << "-------------------------------------------------------------------" << std::endl;
+        std::cout << "  FuserUsdArchiveIO::_execute(" << this << ")";
+        std::cout << " node args=[" << args() << "] :" << std::endl;
+        //if (m_stage)
+        //    std::cout << "    m_stage=" << &(*m_stage) << std::endl;
+        //else
+        //    std::cout << "    m_stage=NULL" << std::endl;
+        std::cout << "    target='" << target_name << "'";
+        std::cout << " target args=[" << target_context.args() << "]";
         std::cout << std::endl;
     }
 
@@ -990,7 +1026,7 @@ FuserUsdArchiveIO::_execute(const Fsr::NodeContext& target_context,
             else if (archive_command == Arg::Scene::file_archive_close)
             {
                 if (debug_archive)
-                    std::cout << "       *************  INVALIDATE ARCHIVE (GEO) *************" << std::endl;
+                    std::cout << "       *************  CLOSE ARCHIVE (GEO) *************" << std::endl;
 
                 Pxr::SdfLayerRefPtr root_layer = Pxr::SdfLayer::FindOrOpen(Pxr::TfStringTrimRight(target_context.getString(Arg::Scene::file)));
                 if (root_layer)
@@ -1068,6 +1104,7 @@ FuserUsdArchiveIO::_execute(const Fsr::NodeContext& target_context,
             const std::string& scene_node_path = getString(Arg::Scene::path   );
             const bool         scene_debug     = getBool(  Arg::Scene::read_debug, false);
             const bool         geo_debug       = getBool(Arg::NukeGeo::read_debug, false);
+
             if (debug_archive)
             {
                 std::cout << "       search_command '" << search_command << "'";
@@ -1091,7 +1128,10 @@ FuserUsdArchiveIO::_execute(const Fsr::NodeContext& target_context,
 
                 const std::string node_type((!scene_node_type.empty()) ? scene_node_type : geo_node_type);
 
-                const Pxr::UsdPrim prim = findFirstMatchingPrim(m_stage, scene_node_path, node_type);
+                const Pxr::UsdPrim prim = findFirstMatchingPrim(m_stage,
+                                                                scene_node_path,
+                                                                node_type,
+                                                                show_inactive_prims);
                 if (prim.IsValid())
                 {
                     (*scene_nodes_ctx->node_description_map)[prim.GetPath().GetString()] =
@@ -1120,6 +1160,7 @@ FuserUsdArchiveIO::_execute(const Fsr::NodeContext& target_context,
                                         *scene_nodes_ctx->node_description_map,
                                         0/*depth*/,
                                         target_context.getInt(Arg::Scene::path_max_depth, 5),
+                                        show_inactive_prims,
                                         scene_debug);
                 }
             }
@@ -1156,7 +1197,23 @@ FuserUsdArchiveIO::_execute(const Fsr::NodeContext& target_context,
             if (node_filter_patterns->size() == 0)
                 return true; // no user-abort
 
-            findSelectedNodes(m_stage->GetPseudoRoot(), *node_filter_patterns, *node_selections->node_path_selections, debug_archive);
+            Fsr::StringList enable_inactive_patterns;
+            if (!enable_inactive_mask.empty())
+            {
+                //std::cout << "FuserUsdArchiveIO::_execute() enable_inactive_mask='" << enable_inactive_mask << "'" << std::endl;
+                enable_inactive_patterns.reserve(10);
+                Fsr::stringSplit(enable_inactive_mask, ";, \t\n\r", enable_inactive_patterns);
+            }
+            else
+            {
+                //std::cout << "FuserUsdArchiveIO::_execute() EMPTY enable_inactive_mask" << std::endl;
+            }
+
+            findSelectedNodes(m_stage->GetPseudoRoot(),
+                              *node_filter_patterns,
+                              enable_inactive_patterns,
+                              *node_selections->node_path_selections,
+                              debug_archive);
             //std::cout << "  selection_paths=" << selection_paths->size() << std::endl;
 
             return 0; // success

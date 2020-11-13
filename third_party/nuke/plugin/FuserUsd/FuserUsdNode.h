@@ -134,13 +134,23 @@ class FuserUsdNode
         Returns false if prim is not Valid, not Active, not Defined, or
         it failed to Load.
 
+        When 'load_inactive_prims' is true an Inactive prim will be
+        SetActive(true), loaded, then SetActive(false). False is still
+        returned even though it's been loaded.
+
         NOTE - this may change/update the passed-in UsdPrim object if it's
         an instance proxy - it will be updated to the master prim!
     */
-    static bool isLoadedAndUseablePrim(Pxr::UsdPrim& prim);
+    static bool isLoadedAndUseablePrim(Pxr::UsdPrim& prim,
+                                       bool          load_inactive_prims,
+                                       bool          enable_inactive_prims);
 
     /*! Make sure the prim is Loaded, and is Valid, Defined, and Active.
         Returns NULL if no error otherwise an allocated ErrorNode with more error info.
+
+        When 'load_inactive_prims' is true an Inactive prim will be
+        SetActive(true), loaded, then SetActive(false). False is still
+        returned even though it's been loaded.
 
         NOTE - this may change/update the passed-in UsdPrim object if it's
         an instance proxy - it will be updated to the master prim!
@@ -148,6 +158,8 @@ class FuserUsdNode
     static Fsr::ErrorNode* isLoadedAndUseablePrim(const char*   fsr_builder_class,
                                                   Pxr::UsdPrim& prim,
                                                   const char*   prim_load_path,
+                                                  bool          load_inactive_prims,
+                                                  bool          enable_inactive_prims,
                                                   bool          debug_loading=false);
 
 

@@ -29,14 +29,21 @@
 
 #include "RenderContext.h"
 #include "Scene.h"
+#include "RayPerspectiveCamera.h"
+//#include "RayOrthographicCamera.h"
+//#include "RayUVCamera.h"
+#include "RaySphericalCamera.h"
+#include "RayCylindricalCamera.h"
 #include "SurfaceHandler.h"
 #include "ThreadContext.h"
 #include "RayMaterial.h"
 #include "RayShader.h"
+#include "LightMaterial.h"
 #include "LightShader.h"
 #include "SurfaceMaterialOp.h"
 #include "ConeVolume.h"   // for getConeBBox
 #include "SphereVolume.h" // for getSphereBBox
+
 
 #include <Fuser/Primitive.h>  // for FUSER_NODE_PRIMITIVE_TYPE, FUSER_MESH_PRIMITIVE_TYPE, etc
 #include <Fuser/NukeGeoInterface.h> // for getObjectString()
@@ -217,7 +224,6 @@ static void aov_handler_Zl(const RayShaderContext& stx, const AOVLayer& aov, Fsr
 static void aov_handler_PW(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.PW.array(),    3, aov, out); }
 static void aov_handler_dPWdx(const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.dPWdx.array(), 3, aov, out); }
 static void aov_handler_dPWdy(const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.dPWdy.array(), 3, aov, out); }
-static void aov_handler_PWg(  const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out) { copyAttribd(stx.PWg.array(),   3, aov, out); }
 static void aov_handler_PL(   const RayShaderContext& stx, const AOVLayer& aov, Fsr::Pixel& out)
 {
     if (!stx.w2l) {
@@ -310,7 +316,6 @@ assign_aov_handlers(AOVBuiltIn* handlers)
     handlers[AOV_dPWdx    ].set("dpwdx,dpdx",      aov_handler_dPWdx    );
     handlers[AOV_dPWdy    ].set("dpwdy,dpdy",      aov_handler_dPWdy    );
     handlers[AOV_PL       ].set("pl",              aov_handler_PL       );
-    handlers[AOV_PWg      ].set("pwg",             aov_handler_PWg      );
     //              //
     handlers[AOV_st       ].set("st",              aov_handler_st       );
     handlers[AOV_dstdx    ].set("dstdx",           aov_handler_dstdx    );
@@ -715,21 +720,6 @@ RenderContext::destroyAllocations(bool force)
     for (uint32_t i=0; i < hero_ray_cameras.size(); ++i)
         delete hero_ray_cameras[i];
     hero_ray_cameras.clear();
-
-    //-----
-
-    for (size_t i=0; i < master_light_shaders.size(); ++i)
-        delete master_light_shaders[i];
-    master_light_shaders.clear();
-
-    for (size_t j=0; j < per_object_light_shaders.size(); ++j)
-    {
-        LightShaderList& lshaders = per_object_light_shaders[j];
-        for (size_t i=0; i < lshaders.size(); ++i)
-            delete lshaders[i];
-        lshaders.clear();
-    }
-    per_object_light_shaders.clear();
 }
 
 
@@ -746,18 +736,20 @@ RenderContext::destroyObjectBVHs(bool force)
     objects_bvh.clear();
 }
 
-/*! Delete light bvhs
+
+/*! Delete LightVolume bvhs
 */
 void
 RenderContext::destroyLightBVHs(bool force)
 {
-    // TODO: support hash testing before deleting all volume objects!
+    // TODO: support hash testing before deleting all LightVolume objects!
     for (uint32_t i=0; i < light_context.size(); ++i)
         delete light_context[i];
     light_context.clear();
     light_map.clear();
     lights_bvh.clear();
 }
+
 
 /*!
 */
@@ -770,6 +762,7 @@ RenderContext::destroyTextureSamplers()
     texture_sampler_map.clear();
 }
 
+
 /*!
 */
 void
@@ -781,9 +774,40 @@ RenderContext::destroyRayMaterials()
     // so any Iop-locked Tiles are release first:
     destroyTextureSamplers();
 
-    for (size_t i=0; i < ray_materials.size(); ++i)
-        delete ray_materials[i];
-    ray_materials.clear();
+    // Delete all the RayMaterials (surface, light, etc):
+    for (size_t i=0; i < active_ray_materials.size(); ++i)
+        delete active_ray_materials[i];
+    active_ray_materials.clear();
+
+    // Just clear the light material lists since any shader deletions already
+    // happened in the active_ray_materials list deletion:
+    master_light_materials.clear();
+    per_object_light_materials.clear();
+}
+
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+
+
+/*! Allocated and return a RayCamera subclass based on requested type.
+    Calling method takes ownership.
+
+    TODO: change this to checking a camera type string vs. an enumeration!
+*/
+/*static*/
+zpr::RayCamera*
+RenderContext::buildRayCamera(CameraProjectionType camera_type)
+{
+    switch (camera_type)
+    {
+        default:
+        case CAMERA_PROJECTION_PERSPECTIVE:  return new zpr::RayPerspectiveCamera();
+        //case CAMERA_PROJECTION_ORTHOGRAPHIC: return new zpr::RayOrthoCamera();
+        //case CAMERA_PROJECTION_UV:           return new zpr::RayUVCamera();
+        case CAMERA_PROJECTION_SPHERICAL:    return new zpr::RaySphericalCamera();
+        case CAMERA_PROJECTION_CYLINDRICAL:  return new zpr::RayCylindricalCamera();
+    }
 }
 
 
@@ -799,36 +823,58 @@ static DD::Image::Box max_format_bbox(-1000000, -1000000, 1000000, 1000000);
 /*!
 */
 bool
-RenderContext::validateObject(int32_t                    obj,
-                              DD::Image::Hash&           obj_geometry_hash,
-                              DD::Image::Box3&           obj_bbox,
-                              DD::Image::Box&            obj_screen_bbox,
-                              RayMaterial*&              obj_created_ray_material)
+RenderContext::buildObjectMaterial(int32_t          obj,
+                                   DD::Image::Hash& obj_geometry_hash,
+                                   DD::Image::Box3& obj_bbox,
+                                   DD::Image::Box&  obj_screen_bbox,
+                                   RayMaterial*&    obj_created_ray_material)
 {
     obj_geometry_hash.reset();
     obj_bbox.clear();
     obj_screen_bbox.clear();
     obj_created_ray_material = NULL;
 
-    ObjectMaterialRef& material_ref = object_materials[obj];
-    material_ref.raymaterial      = NULL;
-    material_ref.material         = NULL;    
-    material_ref.hash.reset();
-    material_ref.texture_channels = DD::Image::Mask_None;
-    material_ref.output_channels  = DD::Image::Mask_None;
-    material_ref.displacement_max = 0.0f;
-    material_ref.texture_bindings.clear();
+#if DEBUG
+    assert(obj >= 0 && obj < (int32_t)object_material_ctxs.size());
+#endif
+    MaterialContext& material_ctx = object_material_ctxs[obj];
+    material_ctx.object_type           = SURFACE_OBJECT;
+    material_ctx.scene_index           = obj;
+    material_ctx.enabled               = false;
+    //
+    material_ctx.raymaterial           = NULL;
+    material_ctx.material              = NULL;
+    material_ctx.displacement_material = NULL;
+    material_ctx.surface_ctx           = NULL;
+    //
+    material_ctx.hash.reset();
+    material_ctx.texture_channels      = DD::Image::Mask_None;
+    material_ctx.output_channels       = DD::Image::Mask_None;
+    material_ctx.shadow_channels       = DD::Image::Mask_None;
+    //
+    material_ctx.displacement_enabled           = false;
+    material_ctx.displacement_subdivision_level = 0;
+    material_ctx.displacement_bounds.set(0.0f, 0.0f, 0.0f);
+    //
+    material_ctx.texture_bindings.clear();
 
     zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+#if DEBUG
+    assert(scene0);
+#endif
 
     // Skip object if render mode is off:
     DD::Image::GeoInfo& info0 = scene0->object(obj);
-    //{
-    //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
-    //std::cout << "    RenderContext(" << this << ")::validateObject(): obj=" << obj;
-    //std::cout << ", name='" << Fsr::getObjectName(info0) << "', scene:path='" << Fsr::getObjectPath(info0) << "'";
-    //std::cout << std::endl;
-    //}
+#if 0
+    {
+    static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+    std::cout << "    RenderContext(" << this << ")::buildObjectMaterial(): obj=" << obj;
+    std::cout << ", name='" << Fsr::getObjectName(info0) << "', scene:path='" << Fsr::getObjectPath(info0) << "'";
+    std::cout << ", scene0=" << scene0;
+    std::cout << ", frame=" << scene0->frame;
+    std::cout << std::endl;
+    }
+#endif
 
     if (info0.render_mode == DD::Image::RENDER_OFF)
         return false;
@@ -870,58 +916,78 @@ RenderContext::validateObject(int32_t                    obj,
             }
 #endif
 
-#ifdef ZPR_USE_KNOB_RTTI
-            SurfaceMaterialOp* surface_material_op = (info0.material->knob(SurfaceMaterialOp::zpClass())) ?
-                                                        static_cast<SurfaceMaterialOp*>(info0.material) :
-                                                            NULL;
-#else
-            SurfaceMaterialOp* surface_material_op = dynamic_cast<SurfaceMaterialOp*>(info0.material);
-#endif
+            SurfaceMaterialOp* surface_material_op = SurfaceMaterialOp::getOpAsSurfaceMaterialOp(info0.material);
             if (surface_material_op)
             {
-                material_ref.raymaterial = surface_material_op->createMaterial(*this);
+                material_ctx.raymaterial = surface_material_op->createMaterial(*this);
                 // Don't crash...
-                if (material_ref.raymaterial)
+                if (material_ctx.raymaterial)
                 {
-                    obj_created_ray_material = material_ref.raymaterial; // < take ownership of RayMaterial*
+                    obj_created_ray_material = material_ctx.raymaterial; // < take ownership of RayMaterial*
                     //
-                    material_ref.raymaterial->validateMaterial(true/*for_real*/, *this);
+                    material_ctx.raymaterial->validateMaterial(true/*for_real*/, *this);
                     //
-                    material_ref.texture_bindings.reserve(20);
-                    material_ref.raymaterial->getActiveTextureBindings(material_ref.texture_bindings);
+                    material_ctx.texture_bindings.reserve(20);
+                    material_ctx.raymaterial->getActiveTextureBindings(material_ctx.texture_bindings);
                     //
-                    material_ref.texture_channels = material_ref.raymaterial->getTextureChannels(); 
-                    material_ref.output_channels  = material_ref.raymaterial->getChannels();
-                    //material_ref.hash             = material_ref.raymaterial->hash();
-                    //material_ref.displacement_max = material_ref.raymaterial->getDisplacementBound();
-                    //material_ref.displacement_max = material_ref.raymaterial->displacement_bound();
+                    material_ctx.texture_channels = material_ctx.raymaterial->getTextureChannels(); 
+                    material_ctx.output_channels  = material_ctx.raymaterial->getChannels();
+                    //material_ctx.hash             = material_ctx.raymaterial->hash();
+
+                    RayShader* disp_shader = material_ctx.raymaterial->getDisplacementShader();
+                    if (disp_shader)
+                    {
+                        //material_ctx.displacement_bounds = material_ctx.raymaterial->getDisplacementBound();
+#if 0
+                        sftx->displacement_subdivision_level = disp_shader->getDisplacementSubdivisionLevel();
+                        // Scale it by the max of the object's scale:
+                        sftx->displacement_bounds = gtx0.info->matrix.scale()*disp_shader->displacement_bound();
+
+                        if (sftx->displacement_bounds.x > std::numeric_limits<float>::epsilon() ||
+                            sftx->displacement_bounds.y > std::numeric_limits<float>::epsilon() ||
+                            sftx->displacement_bounds.z > std::numeric_limits<float>::epsilon())
+                            sftx->displacement_enabled = true;
+                        //std::cout << "displacement_bounds" << sftx->displacement_bounds << std::endl;
+#endif
+                    }
                 }
                 else
                 {
-                    material_ref.texture_channels = DD::Image::Mask_None; 
-                    material_ref.output_channels  = DD::Image::Mask_None;
-                    material_ref.hash.reset();
-                    material_ref.displacement_max = 0.0f;
+                    material_ctx.texture_channels = DD::Image::Mask_None; 
+                    material_ctx.output_channels  = DD::Image::Mask_None;
+                    material_ctx.hash.reset();
                 }
             }
             else
             {
                 // Legacy material, set both to same set:
-                material_ref.material         = info0.material;
-                material_ref.texture_channels = info0.material->channels(); 
-                material_ref.output_channels  = info0.material->channels();
-                material_ref.hash             = info0.material->hash();
-                material_ref.displacement_max = info0.material->displacement_bound();
+                material_ctx.material             = info0.material;
+//material_ctx.surface_ctx      = ;
+                material_ctx.texture_channels     = info0.material->channels(); 
+                material_ctx.output_channels      = info0.material->channels();
+                material_ctx.hash                 = info0.material->hash();
+
+#if 0
+                const float disp_max = info0.material->displacement_bound();
+                material_ctx.displacement_bounds.set(disp_max, disp_max, disp_max);
+                // Scale it by the max of the object's scale:
+                sftx->displacement_bounds = gtx0.info->matrix.scale()*disp_shader->displacement_bound();
+
+                if (sftx->displacement_bounds.x > std::numeric_limits<float>::epsilon() ||
+                    sftx->displacement_bounds.y > std::numeric_limits<float>::epsilon() ||
+                    sftx->displacement_bounds.z > std::numeric_limits<float>::epsilon())
+                    sftx->displacement_enabled = true;
+#endif
             }
             material_assigned = true;
             //{
             //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
-            //std::cout << "      material_ref:";
-            //std::cout << " raymaterial=" << material_ref.raymaterial;
-            //std::cout << ", material=" << material_ref.material;
-            //std::cout << ", texture_channels=" << material_ref.texture_channels;
-            //std::cout << ", output_channels=" << material_ref.output_channels;
-            //std::cout << ", displacement_max=" << material_ref.displacement_max;
+            //std::cout << "      material_ctx:";
+            //std::cout << " raymaterial=" << material_ctx.raymaterial;
+            //std::cout << ", material=" << material_ctx.material;
+            //std::cout << ", texture_channels=" << material_ctx.texture_channels;
+            //std::cout << ", output_channels=" << material_ctx.output_channels;
+            //std::cout << ", displacement_max=" << material_ctx.displacement_max;
             //std::cout << std::endl;
             //}
         }
@@ -978,33 +1044,31 @@ RenderContext::validateObject(int32_t                    obj,
                         if (output_label == "usd:surface")
                         {
                             // TODO: for now we hardcode a UsdPreviewSurface conversion:
-                            material_ref.raymaterial = RayMaterial::createUsdPreviewSurface(output);
+                            material_ctx.raymaterial = RayMaterial::createUsdPreviewSurface(output);
                             break;
                         }
                     }
 
                     // Don't crash...
-                    if (material_ref.raymaterial)
+                    if (material_ctx.raymaterial)
                     {
-                        obj_created_ray_material = material_ref.raymaterial; // < take ownership of RayMaterial*
+                        obj_created_ray_material = material_ctx.raymaterial; // < take ownership of RayMaterial*
                         //
-                        material_ref.raymaterial->validateMaterial(true/*for_real*/, *this);
+                        material_ctx.raymaterial->validateMaterial(true/*for_real*/, *this);
                         //
-                        material_ref.texture_bindings.reserve(20);
-                        material_ref.raymaterial->getActiveTextureBindings(material_ref.texture_bindings);
+                        material_ctx.texture_bindings.reserve(20);
+                        material_ctx.raymaterial->getActiveTextureBindings(material_ctx.texture_bindings);
                         //
-                        material_ref.texture_channels = material_ref.raymaterial->getTextureChannels(); 
-                        material_ref.output_channels  = material_ref.raymaterial->getChannels();
-                        //material_ref.hash             = material_ref.raymaterial->hash();
-                        //material_ref.displacement_max = material_ref.raymaterial->getDisplacementBound();
-                        //material_ref.displacement_max = material_ref.raymaterial->displacement_bound();
+                        material_ctx.texture_channels = material_ctx.raymaterial->getTextureChannels(); 
+                        material_ctx.output_channels  = material_ctx.raymaterial->getChannels();
+                        //material_ctx.hash             = material_ctx.raymaterial->hash();
+                        //material_ctx.displacement_max = material_ctx.raymaterial->displacement_bound();
                     }
                     else
                     {
-                        material_ref.texture_channels = DD::Image::Mask_None; 
-                        material_ref.output_channels  = DD::Image::Mask_None;
-                        material_ref.hash.reset();
-                        material_ref.displacement_max = 0.0f;
+                        material_ctx.texture_channels = DD::Image::Mask_None; 
+                        material_ctx.output_channels  = DD::Image::Mask_None;
+                        material_ctx.hash.reset();
                     }
 
                     material_assigned = true;
@@ -1016,60 +1080,85 @@ RenderContext::validateObject(int32_t                    obj,
 
     // Even if no material assignment output rgba channels if there's prims:
     if (!material_assigned && nPrims > 0)
-        material_ref.output_channels = DD::Image::Mask_RGBA;
+        material_ctx.output_channels = DD::Image::Mask_RGBA;
 
 
     //-----------------------------------------------------------
     // Find object extent in worldspace and screenspace
     //-----------------------------------------------------------
 
+    bool renderable = true;
     const uint32_t nShutterSamples = numShutterSamples();
     for (uint32_t j=0; j < nShutterSamples; ++j)
     {
         zpr::Scene* scene = shutter_scenerefs[j].scene;
-        DD::Image::GeoInfo& info = scene->object(obj);
+        assert(scene);
+
+        // Get primary GeoInfo or the matching GeoInfo in mblur scenes
+        // using the GeoInfo out_id as a key:
+        DD::Image::GeoInfo* info = NULL;
+        if (j == 0)
+            info = &scene->object(obj);
+        else
+            info = scene->getMatchingObject(info0);
+        if (!info)
+        {
+            if (j == 0)
+                renderable = false;
+            break; // no matching object, stop
+        }
 
         // Combine the GeoInfo hashes together:
-        obj_geometry_hash.append(info.out_id());
+        obj_geometry_hash.append(info->out_id());
 
         // Make sure primitives and attribute references are up-to-date:
-        info.validate();
+        info->validate();
 
         // Get object bbox, but don't use the GeoInfo::update_bbox() method.
-        //info.update_bbox();
-        Fsr::Box3f bbox;
+        //info->update_bbox();
+        Fsr::Box3d point_bbox;
 
 // TODO: we don't really need to write into the GeoInfo cache for this
 // as we can store the object bbox separately, but it's convenient to
 // have the GeoInfo up to date for later on.
-        if (info.point_list() && info.point_list()->size() > 0)
-            bbox.set(reinterpret_cast<const Fsr::Vec3f*>(info.point_list()->data()), info.point_list()->size());
+        if (!info->point_list() || info->point_list()->size() == 0)
+        {
+            if (j == 0)
+                renderable = false;
+            break; // no points!
+        }
 
-        DD::Image::GeoInfo::Cache* writable_cache =
-            const_cast<DD::Image::GeoInfo::Cache*>(info.get_cache_pointer());
-
-        // Do individual primitives additionally expand the point bbox?
-        // Common cases of this are particles or instances.
-        const DD::Image::Primitive** prim_array = info.primitive_array();
+        // Do individual primitives create their point bboxes?
+        // Common cases of this are particles, instances, Fuser prims, or complex
+        // prims like a PointCloud with point radii that expand the points into
+        // spheres, discs or cards.
+        //
+        const DD::Image::Primitive** prim_array = info->primitive_array();
         if (prim_array)
         {
-            const uint32_t nPrims = info.primitives();
-            for (uint32_t j=0; j < nPrims; ++j)
+            const uint32_t nPrims = info->primitives();
+            for (uint32_t i=0; i < nPrims; ++i)
             {
                 const DD::Image::Primitive* prim = *prim_array++;
 
-                // Do the primitives inside the GeoInfo expand the bbox further than the
-                // point values imply? This is material displacement that's done below.
-                // Example is a PointCloud with point radii that expand the points into
-                // spheres, discs or cards.
-                //
-                // We only check custom zpr prims.
-                //
                 // TODO: finish this!!! Support the other types.
-                if (prim->getPrimitiveType() > DD::Image::ePrimitiveTypeCount ||
+#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
+                const bool isFuserPrim = (prim->getPrimitiveType() >= FUSER_NODE_PRIMITIVE_TYPE);
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+                const bool isFuserPrim = (prim->getPrimitiveType() >= FUSER_NODE_PRIMITIVE_TYPE);
+#pragma GCC diagnostic pop
+#endif
+
+                if (isFuserPrim ||
                     prim->getPrimitiveType() == DD::Image::eParticlesSprite)
                 {
-                    bbox.expand(prim->get_bbox(&info0));
+                    const Fsr::Box3d prim_bbox(prim->get_bbox(info));
+                    if (i == 0)
+                        point_bbox = prim_bbox;
+                    else
+                        point_bbox.expand(prim_bbox, false/*test_empty*/);
                 }
 
 #if 0
@@ -1077,66 +1166,103 @@ RenderContext::validateObject(int32_t                    obj,
                 DD::Image::Iop* material = (*prim_array++)->material();
                 if (material)
                     material->validate();
-                material_ref.output_channels += material->channels();
+                material_ctx.output_channels += material->channels();
 
                 // Combine the material hashes together:
-                material_ref.hash.append(material->hash());
+                material_ctx.hash.append(material->hash());
 #endif
             }
         }
 
-        // Possibly further expand it by displacement bounds:
-        if (material_ref.displacement_max > std::numeric_limits<float>::epsilon())
+        // If the point bbox is still empty then the prims didn't
+        // create their bounds with get_bbox(), so just make the
+        // bbox from the raw points:
+        if (point_bbox.isEmpty() && info->point_list() && info->point_list()->size() > 0)
+            point_bbox.set(Fsr::Box3f(reinterpret_cast<const Fsr::Vec3f*>(info->point_list()->data()),
+                           info->point_list()->size()));
+
+        // Save evaluated but un-xformed point bbox back to GeoInfo cache before
+        // modifying it for rendering:
         {
-            const DD::Image::Vector3 dpad(material_ref.displacement_max, material_ref.displacement_max, material_ref.displacement_max);
-            obj_bbox.set(obj_bbox.min() - dpad, obj_bbox.max() + dpad);
+            DD::Image::GeoInfo::Cache* writable_cache =
+                const_cast<DD::Image::GeoInfo::Cache*>(info->get_cache_pointer());
+            writable_cache->bbox = point_bbox.asDDImage();
         }
 
-        writable_cache->bbox = bbox.asDDImage();
+        // Don't render the object if any of the point bboxes are empty:
+        if (point_bbox.isEmpty())
+        {
+            if (j == 0)
+                renderable = false;
+            break;
+        }
 
-        // Combine all scene obj bboxes together:
-        obj_bbox.expand(writable_cache->bbox);
+        // Possibly expand it by displacement bounds then transform to
+        // world-space before projecting:
+        point_bbox.pad(material_ctx.displacement_bounds);
+        point_bbox = Fsr::Mat4d(info->matrix).transform(point_bbox);
 
-        //{
-        //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
-        //std::cout << "     " << obj << ": bbox" << bbox << ", obj_bbox" << Fsr::Box3f(obj_bbox) << std::endl;
-        //}
+        // Screen projection still needs DDImage Box3...:
+        const DD::Image::Box3 point_bboxdd = point_bbox.asDDImage();
 
-        // Find the screen projected bbox of this object.
-        obj_screen_bbox = max_format_bbox; // default to max
-
+        // Find the screen projected bbox of this object:
 // TODO: This should use the code that manages the camera projections so that any lens projection can be supported
 // TODO: change this to Fuser math classes
+        DD::Image::Box screen_bboxdd = max_format_bbox; // default to max
         if (scene->camera && (render_projection == CAMERA_PROJECTION_PERSPECTIVE ||
                               render_projection == CAMERA_PROJECTION_ORTHOGRAPHIC))
         {
-            // Transform it to world-space before projecting:
-            obj_bbox.transform(info.matrix);
-
             // Check if camera is inside the object's bbox as we can't project a bbox
             // that's surrounding the camera:
-            if (!obj_bbox.inside(scene->cam_vectors.p))
+            if (!point_bboxdd.inside(scene->cam_vectors.p))
             {
                 // Project the object's bbox into screen space:
-                obj_bbox.project(scene->matrix(WORLD_TO_SCREEN), obj_screen_bbox);
-                obj_screen_bbox.intersect(max_format_bbox);
+                point_bboxdd.project(scene->matrix(WORLD_TO_SCREEN), screen_bboxdd);
+                screen_bboxdd.intersect(max_format_bbox);
             }
         }
 
-    }
+        if (j == 0)
+        {
+            obj_bbox        = point_bboxdd;
+            obj_screen_bbox = screen_bboxdd;
+        }
+        else
+        {
+            obj_bbox.expand(point_bboxdd);
+            obj_screen_bbox.intersect(screen_bboxdd);
+        }
 
-    if (obj_bbox.empty())
-        return false; // zero size, can't render
+#if 0
+        {
+        static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+        std::cout << "     sample " << j << ": obj=" << obj;
+        std::cout << ", out_id=0x" << std::hex << info->out_id().value() << std::dec;
+        std::cout << ", point_bbox" << point_bbox;
+        std::cout << ", obj_bbox" << Fsr::Box3f(obj_bbox);
+        std::cout << ", obj_screen_bbox" << Fsr::Box2d(obj_screen_bbox);
+        std::cout << ", renderable=" << renderable;
+        std::cout << std::endl;
+        }
+#endif
+    }
 
     obj_bbox.append(obj_geometry_hash);
 
-    //{
-    //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
-    //std::cout << "      obj_outid=0x" << std::hex << info0.out_id().value() << std::dec << std::endl;
-    //std::cout << "      obj_bbox" << Fsr::Box3f(obj_bbox) << std::endl;
-    //std::cout << "      obj_screen_bbox" << Fsr::Box2i(obj_screen_bbox) << std::endl;
-    //std::cout << "      obj_geometry_hash=0x" << std::hex << obj_geometry_hash.value() << std::dec << std::endl;
-    //}
+#if 0
+    {
+    static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
+    std::cout << "      obj_outid=0x" << std::hex << info0.out_id().value() << std::dec << std::endl;
+    std::cout << "      obj_bbox" << Fsr::Box3f(obj_bbox) << std::endl;
+    std::cout << "      obj_screen_bbox" << Fsr::Box2d(obj_screen_bbox) << std::endl;
+    std::cout << "      obj_geometry_hash=0x" << std::hex << obj_geometry_hash.value() << std::dec << std::endl;
+    }
+#endif
+
+    if (!renderable || obj_bbox.empty())
+        return false; // zero size, can't render
+
+    material_ctx.enabled = true;
 
     return true; // render the object
 }
@@ -1193,11 +1319,11 @@ struct ValidateThreadContext
                 break;
 
             ObjectState& obj_state = ctx->obj_states[obj];
-            if (ctx->rtx->validateObject(obj,
-                                         obj_state.geometry_hash,
-                                         obj_state.bbox,
-                                         obj_state.screen_bbox,
-                                         obj_state.created_ray_material))
+            if (ctx->rtx->buildObjectMaterial(obj,
+                                              obj_state.geometry_hash,
+                                              obj_state.bbox,
+                                              obj_state.screen_bbox,
+                                              obj_state.created_ray_material))
             {
                 //static std::mutex m_lock; std::lock_guard<std::mutex> guard(m_lock); // lock to make the output print cleanly
                 //std::cout << "      " << obj << ": thread_index=" << thread_index << ", num_threads=" << num_threads << std::endl;
@@ -1215,17 +1341,106 @@ struct ValidateThreadContext
 };
 
 
+/*! Currently this routine assumes all lights are LightOps in a DD::Image::Scene.
+
+    TODO: also check for Fuser Lights in the GeometryList.
+
+    TODO: this is not threaded since there's typically very few lights
+    in the Scene, but this may not be true when Fuser Lights are read
+    in from large USD scenes...
+*/
+bool
+RenderContext::buildLightMaterial(int32_t                ltindex,
+                                  const Fsr::DoubleList& motion_times,
+                                  const Fsr::Mat4dList&  motion_xforms,
+                                  DD::Image::Hash&       lt_hash,
+                                  LightMaterial*&        lt_created_material)
+{
+    //std::cout << "    RenderContext()::buildLightMaterial() ltindex=" << ltindex << std::endl;
+    lt_hash.reset();
+    lt_created_material = NULL;
+
+#if DEBUG
+    assert(ltindex >= 0 && ltindex < (int32_t)light_material_ctxs.size());
+#endif
+    MaterialContext& material_ctx = light_material_ctxs[ltindex];
+    material_ctx.object_type           = LIGHT_OBJECT;
+    material_ctx.scene_index           = ltindex;
+    material_ctx.enabled               = false;
+    //
+    material_ctx.raymaterial           = NULL;
+    material_ctx.material              = NULL;
+    material_ctx.displacement_material = NULL;
+    material_ctx.surface_ctx           = NULL;
+    //
+    material_ctx.hash.reset();
+    material_ctx.texture_channels      = DD::Image::Mask_None;
+    material_ctx.output_channels       = DD::Image::Mask_None;
+    material_ctx.shadow_channels       = DD::Image::Mask_None;
+    //
+    material_ctx.displacement_enabled           = false;
+    material_ctx.displacement_subdivision_level = 0;
+    material_ctx.displacement_bounds.set(0.0f, 0.0f, 0.0f);
+    //
+    material_ctx.texture_bindings.clear();
+
+    zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+#if DEBUG
+    assert(scene0);
+    assert(scene0->lights[ltindex]);
+    assert(scene0->lights[ltindex]->light());
+#endif
+    DD::Image::LightOp* light = scene0->lights[ltindex]->light();
+    if (light->node_disabled())
+        return false;
+
+    lt_hash = light->hash();
+
+    // Create the LightMaterial by translating the LightOp:
+    lt_created_material = LightMaterial::createLightMaterial(*this,
+                                                             light,
+                                                             motion_times,
+                                                             motion_xforms);
+    //std::cout << "      lt_created_material=" << lt_created_material << std::endl;
+    if (!lt_created_material)
+        return false;
+
+    material_ctx.raymaterial = lt_created_material;
+
+    // Let light shader calc any internal values:
+    lt_created_material->validateMaterial(true/*for_real*/, *this);
+
+    // Get the shadow channels for any legacy lights with shadow renderers:
+    // TODO: do we really need this anymore...? Can't we stop using shadow renderers?
+    material_ctx.shadow_channels = light->getShadowMaskChannel();
+    //
+    material_ctx.texture_bindings.reserve(20);
+    material_ctx.raymaterial->getActiveTextureBindings(material_ctx.texture_bindings);
+    //
+    material_ctx.texture_channels = material_ctx.raymaterial->getTextureChannels(); 
+    material_ctx.output_channels  = material_ctx.raymaterial->getChannels();
+
+    material_ctx.enabled = true;
+
+    return true;
+}
+
+
 /*! Sample index is not required since we use the absolute frame time instead.
+
+    Called from zpRender::_validate(for_real = true).
+
 */
 /*virtual*/
 void
-RenderContext::validateObjects(zpr::Scene* scene,
-                               bool        for_real)
+RenderContext::validateShutterScenes(bool for_real)
 {
-    //std::cout << "    RenderContext()::validateObjects():" << std::endl;
+    //std::cout << "    ------------------------------------------------------" << std::endl;
+    //std::cout << "    RenderContext()::validateShutterScene():" << std::endl;
     destroyRayMaterials();
 
-    object_materials.clear();
+    object_material_ctxs.clear();
+    light_material_ctxs.clear();
     texture_bbox_map.clear(); // this gets filled in getTextureRequests()
 
     render_bbox.clear();
@@ -1240,16 +1455,28 @@ RenderContext::validateObjects(zpr::Scene* scene,
     lighting_hash.reset();
     hash.reset();
 
-    //-------------------------------------------------------
-    // Validate camera vectors
-    // TODO: do we need to do this anymore...? The RayShaders certainly don't need
-    // the camera vectors, but probably legacy shaders like Project3D still use
-    // these for the view vector.
-
     const uint32_t nShutterSamples = numShutterSamples();
+
+    // The motion times for lights are all the same and match the shutter's:
+    Fsr::DoubleList light_motion_times(nShutterSamples);
+
+    //-------------------------------------------------------
+    // Get light motion times and build legacy camera vectors
+    //
+    // TODO: do we need to build these vectors anymore...? The RayShaders
+    // certainly don't need the camera vectors, but probably legacy shaders
+    // like Project3D still use these for the view vector...
+    //
     for (uint32_t j=0; j < nShutterSamples; ++j)
     {
-        zpr::Scene* scene = shutter_scenerefs[j].scene;
+        const ShutterSceneRef& sref = shutter_scenerefs[j];
+        zpr::Scene* scene = sref.scene;
+#if DEBUG
+        assert(scene);
+#endif
+        // All LightOps share the same motion times which are the
+        // renderer's shutter samples:
+        light_motion_times[j] = sref.frame;
 
         //std::cout << "      camera " << scene->camera->matrix() << std::endl;
         if (scene->camera)
@@ -1279,13 +1506,14 @@ RenderContext::validateObjects(zpr::Scene* scene,
 
 
     zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+
     const uint32_t nObjects = scene0->objects();
     if (nObjects > 0)
     {
         //-------------------------------------------------------
         // Validate object bboxes
-
-        object_materials.resize(nObjects);
+        //
+        object_material_ctxs.resize(nObjects);
 
         ValidateThreadContext validate_ctx(this, nObjects);
 
@@ -1308,21 +1536,23 @@ RenderContext::validateObjects(zpr::Scene* scene,
         }
 
         // Combine all objects to build global hashes and bboxes:
-        for (uint32_t j=0; j < nObjects; j++)
+        for (uint32_t j=0; j < nObjects; ++j)
         {
             const ObjectState& obj_state = validate_ctx.obj_states[j];
             if (obj_state.bbox.empty())
                 continue; // not renderable
 
-            const ObjectMaterialRef& material_ref = object_materials[j];
+            const MaterialContext& material_ctx = object_material_ctxs[j];
+            if (!material_ctx.enabled)
+                continue; // not renderable
 
             if (obj_state.created_ray_material != NULL)
-                ray_materials.push_back(obj_state.created_ray_material);
+            {
+                active_ray_materials.push_back(obj_state.created_ray_material); // manages the allocated RayMaterial
+            }
 
             geometry_hash.append(obj_state.geometry_hash);
-            material_hash.append(material_ref.hash);
-
-            render_bbox.expand(obj_state.bbox); // expand the Scene's 3D bbox
+            material_hash.append(material_ctx.hash);
 
             if (obj_state.screen_bbox.x() >= render_format->width()  ||
                 obj_state.screen_bbox.y() >= render_format->height() ||
@@ -1333,81 +1563,143 @@ RenderContext::validateObjects(zpr::Scene* scene,
             }
             else
             {
+                render_bbox.expand(obj_state.bbox); // expand the Scene's 3D bbox
                 render_region.expand(Fsr::Box2i(obj_state.screen_bbox));
             }
 
-            texture_channels  += material_ref.texture_channels;
-            material_channels += material_ref.output_channels;
+            texture_channels  += material_ctx.texture_channels;
+            material_channels += material_ctx.output_channels;
+            shadow_channels   += material_ctx.shadow_channels;
         }
     }
 
-
     const uint32_t nLights = (uint32_t)scene0->lights.size();
-    if (nLights > 0)
+    if (direct_lighting_enabled && nLights > 0)
     {
         //-------------------------------------------------------
         // Validate lights
-        // Handle lights that are volume objects as geometry and find their bboxes.
+        // Consider lights that are LightVolumes as geometry and find their bboxes.
+        //
+        // Currently this routine assumes all lights are LightOps in a DD::Image::Scene.
+        // TODO: also check for Fuser Lights in the GeometryList.
+        //
+        // TODO: this is not threaded since there's typically very few lights
+        //  in the Scene, but this may not be true when Fuser Lights are read
+        //  in from large USD scenes...
+        //
+        Fsr::Mat4dList light_motion_xforms;
+        light_motion_xforms.reserve(nShutterSamples);
 
-        const bool atmo_enabled = (atmospheric_lighting_enabled && direct_lighting_enabled);
-        const DD::Image::Matrix4& world2screen = scene0->matrix(WORLD_TO_SCREEN);
+        light_material_ctxs.resize(nLights);
 
-        for (uint32_t j=0; j < nLights; j++)
+        DD::Image::Hash lt_hash;
+        DD::Image::Box3 lt_bbox;
+        DD::Image::Box  lt_screen_bbox;
+        for (uint32_t ltindex=0; ltindex < nLights; ++ltindex)
         {
 #if DEBUG
-            assert(scene0->lights[j]);
-            assert(scene0->lights[j]->light());
+            assert(scene0);
+            assert(scene0->lights[ltindex]);
+            assert(scene0->lights[ltindex]->light());
 #endif
-            const DD::Image::LightOp* light = scene0->lights[j]->light();
+            DD::Image::LightOp* light = scene0->lights[ltindex]->light();
+            light->validate(for_real);
 
-            // Get the shadow channels for any legacy lights:
-            // TODO: do we really need this anymore...? Can't we stop using shadow renderers?
-            shadow_channels += light->getShadowMaskChannel();
-
-            // Combine the light hashes together:
-            lighting_hash.append(light->hash());
-
-            if (atmo_enabled)
+            // Get the motion xforms for all shutter samples, verifying that
+            // the light type still matches at each one (which it always should.)
+            light_motion_xforms.clear();
+            light_motion_xforms.push_back(Fsr::Mat4d(light->matrix()));
+            for (uint32_t j=1; j < nShutterSamples; ++j)
             {
-                // If a light can illuminate atmosphere then it becomes a physical object
-                // of a certain size, so find that size.
-                Fsr::Box3d lt_bbox;
-                if (getVolumeLightTypeAndBbox(light, lt_bbox) != UNRECOGNIZED_PRIM)
+                // Try to match the light type in the next scenes.
+                // if we can't we copy the xform from the previous sample:
+                zpr::Scene* scene1 = shutter_scenerefs[j].scene;
+                if (!scene1->lights[ltindex])
                 {
-                    const DD::Image::Box3 bbox(lt_bbox.asDDImage());
+                    light_motion_xforms.push_back(light_motion_xforms[j-1]);
+                    continue;
+                }
 
-                    // Expand the Scene's bbox:
-                    render_bbox.expand(bbox);
+                // Verify that the next light is from the same node and has same prim type:
+                DD::Image::LightOp* light1 = scene1->lights[ltindex]->light();
+#if DEBUG
+                assert(light1);
+#endif
+                if (light->node() != light1->node())
+                {
+                    std::cerr << light->node_name() << ": light prim type or index mismatch!" << std::endl;
+                    light_motion_xforms.push_back(light_motion_xforms[j-1]);
+                }
+                else
+                {
+                    light_motion_xforms.push_back(Fsr::Mat4d(light1->matrix()));
+                }
+            }
 
-// TODO: include other light params in geometry hash, or just add the LightOp hash
-                    bbox.append(geometry_hash);
+            LightMaterial*  lt_created_material = NULL;
+            if (!buildLightMaterial(ltindex,
+                                    light_motion_times,
+                                    light_motion_xforms,
+                                    lt_hash,
+                                    lt_created_material))
+                continue; // disabled, skip it
 
-                    // Check if camera is inside the lights's bbox as we
-                    // can't project a bbox that's surrounding the camera:
-                    if (bbox.inside(scene0->cam_vectors.p))
+            if (lt_created_material)
+            {
+                // Add to list of all allocated RayMaterials:
+                active_ray_materials.push_back(lt_created_material); // manages the allocated RayMaterial
+
+                // And add a reference in the master light list:
+                master_light_materials.push_back(lt_created_material);
+
+
+                if (atmospheric_lighting_enabled)
+                {
+                    lt_bbox = lt_created_material->getLightVolumeBbox().asDDImage();
+                    if (!lt_bbox.empty())
                     {
-                        // Camera inside, set to maximum projection:
-                        render_region = max_format_bbox;
-                    }
-                    else
-                    {
-                        DD::Image::Box sbbox;
-                        bbox.project(world2screen, sbbox);
-                        // Clip to screen sides:
-                        if (sbbox.x() >= render_format->width()  || sbbox.r() < 0 ||
-                            sbbox.y() >= render_format->height() || sbbox.t() < 0)
+
+                        lt_screen_bbox = max_format_bbox; // default to max
+
+// TODO: This should use the code that manages the camera projections so that any lens projection can be supported
+// TODO: change this to Fuser math classes
+                        if (scene0->camera && (render_projection == CAMERA_PROJECTION_PERSPECTIVE ||
+                                               render_projection == CAMERA_PROJECTION_ORTHOGRAPHIC))
                         {
-                            // don't include light in screen bbox
+                            // Check if camera is inside the object's bbox as we can't project a bbox
+                            // that's surrounding the camera:
+                            if (!lt_bbox.inside(scene0->cam_vectors.p))
+                            {
+                                // Project the object's bbox into screen space:
+                                lt_bbox.project(scene0->matrix(WORLD_TO_SCREEN), lt_screen_bbox);
+                                lt_screen_bbox.intersect(max_format_bbox);
+                            }
+                        }
+
+                        if (lt_screen_bbox.x() >= render_format->width()  ||
+                            lt_screen_bbox.y() >= render_format->height() ||
+                            lt_screen_bbox.r() <= 0 ||
+                            lt_screen_bbox.t() <= 0)
+                        {
+                            // outside format, skip it
                         }
                         else
                         {
-                            // Clamp sbbox to max format values:
-                            sbbox.intersect(max_format_bbox);
-                            render_region.expand(sbbox);
+                            render_bbox.expand(lt_bbox); // expand the Scene's 3D bbox
+                            render_region.expand(Fsr::Box2i(lt_screen_bbox));
                         }
+
                     }
                 }
             }
+
+            lighting_hash.append(lt_hash);
+
+            // This MaterialContext was filled in by buildLightMaterial() above:
+            const MaterialContext& material_ctx = light_material_ctxs[ltindex];
+            texture_channels  += material_ctx.texture_channels;
+            material_channels += material_ctx.output_channels;
+            shadow_channels   += material_ctx.shadow_channels;
         }
 
     }
@@ -1600,7 +1892,7 @@ struct RequestThreadContext
         while (1)
         {
             const int32_t obj = ctx->do_obj++; // get object to process and atomic increment
-            if (obj >= (int32_t)ctx->rtx->object_materials.size())
+            if (obj >= (int32_t)ctx->rtx->object_material_ctxs.size())
                 break;
 
             DD::Image::Iop* obj_material = NULL;
@@ -1638,18 +1930,46 @@ struct RequestThreadContext
 };
 
 
+/*! Return false if light disabled.
+*/
+bool
+RenderContext::requestLight(int32_t                      ltindex,
+                            const DD::Image::ChannelSet& request_channels,
+                            int                          request_count)
+{
+    // Only do requests on shutter_open scene:
+    zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+#if DEBUG
+    assert(ltindex < (int32_t)scene0->lights.size());
+#endif
+    const DD::Image::LightContext* ltx = scene0->lights[ltindex];
+#if DEBUG
+    assert(ltx);
+    assert(ltx->light());
+#endif
+
+    DD::Image::LightOp* light = ltx->light();
+    if (light->node_disabled())
+        return false;
+
+    light->request(request_channels, request_count);
+
+    return true;
+}
+
+
 /*!
 */
-/*virtual*/
 void
 RenderContext::doTextureRequests(const DD::Image::ChannelSet& request_channels,
                                  int                          request_count)
 {
     //std::cout << "  RenderContext(" << this << ")::doTextureRequests(): request_channels=" << request_channels << ", request_count=" << request_count << std::endl;
 
+    // Only do requests on shutter_open scene:
     zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+
     const uint32_t nObjects = scene0->objects();
-    const uint32_t nLights  = (uint32_t)scene0->lights.size();
 
     // Only do the requests if there's channels being published from textures:
     if (texture_channels != DD::Image::Mask_None)
@@ -1677,33 +1997,6 @@ RenderContext::doTextureRequests(const DD::Image::ChannelSet& request_channels,
                 DD::Image::Thread::wait(&request_ctx);
             }
 
-#if 0
-            // Build the flattened list of TextureSamplers:
-            texture_samplers.clear();
-            //texture_sampler_map.clear();
-            const uint32_t nObjects = (uint32_t)object_materials.size();
-            for (uint32_t j=0; j < nObjects; ++j)
-            {
-                const ObjectMaterialRef& material_ref = object_materials[j];
-                const uint32_t nMaps = (uint32_t)material_ref.colormapknob_list.size();
-                for (uint32_t i=0; i < nMaps; ++i)
-                {
-                    const ColorMapKnob* map = material_ref.colormapknob_list[i];
-                    if (map && map->getChannels() != DD::Image::Mask_None)
-                    {
-                        DD::Image::Iop* iop = map->getTextureIop();
-                        if (iop)
-                        {
-                            TextureSamplerContext ctx;
-                            ctx.index   = (int32_t)texture_samplers.size();
-                            ctx.sampler = NULL;
-                            texture_samplers.push_back(ctx);
-                            //texture_sampler_map[iop] = ctx.index;
-                        }
-                    }
-                }
-            }
-#endif
         }
 
         // Call request() on each unique material.
@@ -1719,11 +2012,11 @@ RenderContext::doTextureRequests(const DD::Image::ChannelSet& request_channels,
         // Call request() on each unique ColorMapKnob:
         for (uint32_t j=0; j < nObjects; ++j)
         {
-            const ObjectMaterialRef& material_ref = object_materials[j];
-            const uint32_t nMaps = (uint32_t)material_ref.colormapknob_list.size();
+            const MaterialContext& material_ctx = object_material_ctxs[j];
+            const uint32_t nMaps = (uint32_t)material_ctx.colormapknob_list.size();
             for (uint32_t i=0; i < nMaps; ++i)
             {
-                const ColorMapKnob* map = material_ref.colormapknob_list[i];
+                const ColorMapKnob* map = material_ctx.colormapknob_list[i];
                 if (map && map->getChannels() != DD::Image::Mask_None)
                     map->requestColorMap(request_count);
             }
@@ -1733,45 +2026,44 @@ RenderContext::doTextureRequests(const DD::Image::ChannelSet& request_channels,
     }
 
 
+    const uint32_t nLights  = (uint32_t)scene0->lights.size();
     if (nLights)
     {
-        // Request RGB from each light:
-        DD::Image::ChannelSet request_light_channels(DD::Image::Mask_RGBA);
+        // This should be a combined mask from all lights in the scene...:
+        DD::Image::ChannelSet request_light_channels(DD::Image::Mask_RGB);
+        request_light_channels += DD::Image::Mask_Alpha;    // always need transparency - unless we have a switch...
+
         for (uint32_t i=0; i < nLights; ++i)
         {
-            const DD::Image::LightContext* ltx = scene0->lights[i];
-            assert(ltx); // shouldn't happen...
-
-            DD::Image::LightOp* l = ltx->light();
-            assert(l); // shouldn't happen...
-            if (l->node_disabled())
-                continue;
-
-            l->request(request_light_channels, request_count);
+            requestLight(i, request_light_channels, request_count);
         }
     }
 
 }
 
 
-/*! Per-pixel texture sampling calling the built-in Iop::sample() methods has become
-    extremely slow, so we create RawGeneralTile for all used textures in the scene
-    and pass them down to the samples in the shaders.
+//-------------------------------------------------------------------------
+
+
+/*! Create RawGeneralTile objects for all textures in the materials list.
+
+    Per-pixel texture sampling calling the built-in Iop::sample() methods has become
+    extremely slow, so we create RawGeneralTile for all used textures in the
+    MaterialContext and pass them down to the samplers in the shaders.
 */
 void
-RenderContext::requestTextureSamplers()
+updateSamplerMap(std::vector<MaterialContext>& material_ctx_list,
+                 Texture2dSamplerMap&          texture_sampler_map)
 {
-    //std::cout << "  RenderContext(" << this << ")::requestTextureSamplers()" << std::endl;
-
-    const uint32_t nObjects = (uint32_t)object_materials.size();
-    for (uint32_t j=0; j < nObjects; ++j)
+    const uint32_t nMaterials = (uint32_t)material_ctx_list.size();
+    for (uint32_t j=0; j < nMaterials; ++j)
     {
-        const ObjectMaterialRef& material_ref = object_materials[j];
+        const MaterialContext& material_ctx = material_ctx_list[j];
 
-        const uint32_t nBindings = (uint32_t)material_ref.texture_bindings.size();
+        const uint32_t nBindings = (uint32_t)material_ctx.texture_bindings.size();
         for (uint32_t i=0; i < nBindings; ++i)
         {
-            const InputBinding* binding = material_ref.texture_bindings[i];
+            const InputBinding* binding = material_ctx.texture_bindings[i];
             assert(binding);
             if (binding && binding->getNumChannels() > 0)
             {
@@ -1796,207 +2088,121 @@ RenderContext::requestTextureSamplers()
 }
 
 
-//-------------------------------------------------------------------------
-//-------------------------------------------------------------------------
-
-
-/*! TODO: finish implementing this
+/*! Per-pixel texture sampling calling the built-in Iop::sample() methods has become
+    extremely slow, so we create RawGeneralTile for all used textures in the scene
+    and pass them down to the samples in the shaders.
 */
 void
-RenderContext::buildLightShaders()
+RenderContext::updateTextureSamplerMap()
 {
+    //std::cout << "  RenderContext(" << this << ")::updateTextureSamplerMap()" << std::endl;
 
-    // Get the light count and motion times:
-    size_t nLights = 0;
-    const uint32_t nScenes = (uint32_t)shutter_scenerefs.size();
-    Fsr::DoubleList motion_times(nScenes);
-    for (uint32_t j=0; j < nScenes; ++j)
+    updateSamplerMap(object_material_ctxs, texture_sampler_map);
+    updateSamplerMap(light_material_ctxs,  texture_sampler_map);
+}
+
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+
+
+/*! Build the LightVolume Bvh
+
+    Called from zpRender::generate_primitives().
+
+    LightMaterials will only be built if atmospheric_lighting_enabled
+    is true or there's created RayMaterials that may access LightMaterials
+    during surface shading.
+*/
+void
+RenderContext::buildLightVolumeBvh()
+{
+    // Go through each light MaterialContext and see if the active
+    // LightMaterial's assigned LightShader can construct a LightVolume:
+
+    const size_t nLightMaterials = light_material_ctxs.size();
+    //std::cout << "----------------------------------------------------------" << std::endl;
+    //std::cout << "zpr::buildLightVolumeBvh(): nLightMaterials=" << nLightMaterials << std::endl;
+
+    if (!atmospheric_lighting_enabled || nLightMaterials == 0)
+        return; // no light volumes
+
+    zpr::Scene* scene0 = shutter_scenerefs[0].scene;
+#if DEBUG
+    assert(scene0);
+#endif
+
+    std::vector<zpr::ObjectContextRef> ltvref_list; // for building Light Volume Bvh
+    ltvref_list.reserve(nLightMaterials);
+
+    // Build LightVolumes by calling the LightMaterial method:
+    for (uint32_t j=0; j < nLightMaterials; ++j)
     {
-        const ShutterSceneRef& sref = shutter_scenerefs[j];
-        zpr::Scene* scene = input_scenes[sref.op_input_index];
-#if DEBUG
-        assert(scene);
-#endif
-        if (j==0)
-            nLights = scene->lights.size();
-        else
-            // verify that the lights don't change in count!!!
-            assert(scene->lights.size() == nLights);
+        if (m_parent->aborted())
+            return;  // bail quickly on user-interrupt
 
-        motion_times[j] = sref.frame;
-    }
-    if (nLights == 0)
-        return;
+        MaterialContext& material_ctx = light_material_ctxs[j];
+        if (!material_ctx.enabled || !material_ctx.raymaterial)
+            continue; // no assigned or active LightMaterial, skip
 
-//std::cout << "zpr::buildLightShaders():" << std::endl;
-    zpr::Scene* scene0 = input_scenes[shutter_scenerefs[0].op_input_index];
-    Fsr::Mat4dList motion_xforms; motion_xforms.reserve(nScenes);
-    for (size_t ltindex=0; ltindex < nLights; ++ltindex)
-    {
-        DD::Image::LightContext* ltx0 = scene0->lights[ltindex];
-#if DEBUG
-        assert(ltx0);
-#endif
-        DD::Image::LightOp* light0 = ltx0->light();
-#if DEBUG
-        assert(light0);
-#endif
-        if (light0->node_disabled())
-            continue;
-std::cout << "  " << ltindex << "(" << light0->node_name() << "): type=" << light0->lightType() << std::endl;
-
-        //--------------------------------------------------
-        // Get the light's xforms:
-        //
-        motion_xforms.clear();
-        motion_xforms.push_back(Fsr::Mat4d(light0->matrix()));
-//std::cout << "    0 xform" << motion_xforms[motion_xforms.size()-1] << std::endl;
-        for (uint32_t j=1; j < nScenes; ++j)
+        LightMaterial* lt_material = static_cast<LightMaterial*>(material_ctx.raymaterial);
+        LightVolume*   lt_volume   = lt_material->createLightVolume(&material_ctx);
+        //std::cout << "  " << j << ": lt_volume=" << lt_volume << ", material_ctx=" << &material_ctx << std::endl;
+        if (lt_volume)
         {
-            zpr::Scene* scene1 = input_scenes[shutter_scenerefs[j].op_input_index];
-            DD::Image::LightContext* ltx1 = scene1->lights[ltindex];
-#if DEBUG
-            assert(ltx1);
-#endif
-            DD::Image::LightOp* light1 = ltx1->light();
-#if DEBUG
-            assert(light1);
-#endif
-            motion_xforms.push_back(Fsr::Mat4d(light1->matrix()));
-//std::cout << "    " << j << " xform" << motion_xforms[motion_xforms.size()-1] << std::endl;
-        }
+            // Assign the volume shader:
+            //lt_material->m_light_volume_shader = lt_volume;
+            //lt_material->m_light_volume_bbox
 
+            // We don't really need this anymore as we could have a
+            // single Bvh contain the Traceable volume prims vs. the
+            // outer Context Bvh which is used to call back to zpRender
+            // for the light volume creation handlers.
+            LightVolumeContext* otx = new LightVolumeContext(lt_material);
+            this->light_context.push_back(otx);
 
-        //--------------------------------------------------
-        // Convert to LightShader:
-        //
+            // Only need one concatenated light volume sample (deprecate!):
+            otx->addLightVolumeSample(scene0, (uint32_t)material_ctx.scene_index);
 
-        LightShader* lshader = NULL;
+            otx->bbox = lt_material->getLightVolumeBbox();
 
-        //double near = clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity());
-        //double far  = clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity());
+            otx->hash.reset();
+            //otx->hash.append(light->hash());
+            //vol_bbox0.append(otx->hash);
+            // Force it to change every render pass:
+            //otx->hash.append(render_version);
 
-        /* In DDImage LightOp.h:
-            enum LightType
-            { 
-                ePointLight,       0
-                eDirectionalLight, 1
-                eSpotLight,        2
-                eOtherLight        3
-            };
-        */
+            // Build the SurfaceContext and the volume prim:
+            SurfaceContext* sftx    = otx->addSurface();
+            sftx->handler           = NULL; // not required
+            sftx->parent_object_ctx = NULL; // not required??
+            sftx->obj_index         = (uint32_t)material_ctx.scene_index;
+            sftx->prim_index        = -1; // prim_index not needed
 
-        // Check for recognized light types:
-        if (light0->lightType() == DD::Image::LightOp::eSpotLight)
-        {
-            //bbox = ConeVolume::getConeBbox(clamp(light->hfov(), 0.0001, 180.0),
-            //                               clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity()),
-            //                               clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity()),
-            //                               light_xform);
-            //std::cout << " type=LIGHTCONE_PRIM" << std::endl;
+            // Build the pointers to/from material and surface contexts:
+            material_ctx.surface_ctx = sftx;
+            sftx->material_ctx = &material_ctx;
 
-            //lshader = dynamic_cast<LightShader*>(RayShader::create("SpotLight"));
+            otx->addPrim(lt_volume);
 
-        }
-        else if (light0->lightType() == DD::Image::LightOp::ePointLight)
-        {
-            //bbox = SphereVolume::getSphereBbox(clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity()),
-            //                                   clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity()),
-            //                                   light_xform);
-            //std::cout << " type=LIGHTSPHERE_PRIM" << std::endl;
+            ltvref_list.push_back(zpr::ObjectContextRef(otx, otx->bbox));
+            //std::cout << "    ltvol[" << otx << "]: bbox=" << otx->bbox << std::endl;
 
-            lshader = dynamic_cast<LightShader*>(RayShader::create("PointLight"));
-
-        }
-        else if (light0->lightType() == DD::Image::LightOp::eDirectionalLight)
-        {
-            //lshader = dynamic_cast<LightShader*>(RayShader::create("DirectLight"));
-
-            //std::cout << " type=LIGHTCYLINDER_PRIM" << std::endl;
-
-        }
-        else
-        {
-            // Check for ReflectionCard:
-            if (strcmp(light0->Class(), "ReflectionCard")==0 ||
-                strcmp(light0->Class(), "AreaLight"     )==0)
-            {
-                // LightCard
-
-                //lshader = dynamic_cast<LightShader*>(RayShader::create("CardLight"));
-
-                //std::cout << " type=LIGHTCARD_PRIM" << std::endl;
-            }
-        }
-        //std::cout << "  " << ltindex << ": lshader=" << lshader << std::endl;
-
-        if (lshader)
-        {
-            // Assign xforms:
-            lshader->setMotionXforms(motion_times, motion_xforms);
-
-            // Assign common LightOp knob values:
-            /*
-                DWA PointLight node:
-                    color 1
-                    intensity 1
-
-                    near 0.001
-                    far 1
-                    falloff_rate 1
-                    light_identifier ""
-                    object_mask *
-
-                    falloff_profile_enable false
-                    falloff_profile
-
-
-                Stock PointLight node:
-                    color 1
-                    intensity 1
-                    falloff_type "No Falloff"
-
-                    cast_shadows false
-                    shadow_mode solid
-                    filter Cubic
-                    scene_epsilon 0.001
-                    samples 1
-                    sample_width 1
-                    depthmap_bias 0.01
-                    depthmap_slope_bias 0.01
-                    clipping_threshold 0.5
-                    shadow_jitter_scale 3
-                    depthmap_width 1024
-                    shadow_mask none
-            */
-            int kindex = 0;
-            while (1)
-            {
-                DD::Image::Knob* k = light0->knob(kindex++);
-                if (!k)
-                    break; // all done no more knobs
-
-                if (lshader->setInputValue(k->name().c_str(), k, light0->outputContext()))
-                {
-                    //std::cout << k->name() << ": copied" << std::endl;
-                }
-            }
-            //std::cout << *lshader << std::endl;
-
-            master_light_shaders.push_back(lshader);
-
-
-            // Let light shader calc any internal values:
-            lshader->validateShader(true/*for_real*/, *this);
-        }
-        else
-        {
-            //std::cout << " UNRECOGNIZED LIGHT TYPE" << std::endl;
-            //std::cout << "zpr::RenderContext::buildLightShaders(): warning, unknown light type, skipping..." << std::endl;
+            // Stop the ObjectContext from trying to expand itself upon ray intersection:
+            otx->status = SURFACE_DICED;
         }
     }
 
-    //per_object_light_shaders.resize();
+
+    // Build the primary intersection test BVH, which is simply the bboxes of all the ObjectContexts:
+    if (ltvref_list.size() > 0)
+    {
+        lights_bvh.build(ltvref_list, 1/*max_objects_per_leaf*/);
+        objects_bvh.setName("lights_bvh");
+        objects_bvh.setGlobalOrigin(Fsr::Vec3d(0,0,0));
+    }
+    //std::cout << "    lights_bvh" << lights_bvh.bbox() << ", depth=" << lights_bvh.maxNodeDepth() << std::endl;
+
 }
 
 
@@ -2037,62 +2243,145 @@ interpolateDDImageAxis(const DD::Image::Axis& a0,
 }
 
 
-/*!
+/*! Update the lighting scenes light and camera vectors.
+    For legacy shading only.
 */
 void
-RenderContext::updateLightingSceneVectorsTo(uint32_t    shutter_step,
-                                            float       shutter_step_t,
-                                            zpr::Scene* light_scene) const
+RenderContext::updateLightingSceneVectorsTo(const Fsr::RayContext& cameraRtx,
+                                            uint32_t               shutter_step,
+                                            float                  shutter_step_t,
+                                            ThreadContext&         ttx) const
 {
 #if DEBUG
     assert(shutter_step+1 < shutter_scenerefs.size());
 #endif
+
+
+    zpr::Scene& master_lighting_scene = ttx.masterLightingScene();
+
+    // Update the master scene's camera vectors from the current view ray:
+    master_lighting_scene.cam_vectors.p = cameraRtx.origin.asDDImage();
+    master_lighting_scene.cam_vectors.z = cameraRtx.dir().asDDImage();
+    // TODO: do we need accurate xy camera vectors...? I think really only
+    // position and possibly z-axis are ever used:
+    //master_lighting_scene.cam_vectors.x = cameraRtx.origin.asDDImage();
+    //master_lighting_scene.cam_vectors.y = cameraRtx.origin.asDDImage();
+
+
     zpr::Scene* scene0 = input_scenes[shutter_scenerefs[shutter_step  ].op_input_index];
     zpr::Scene* scene1 = input_scenes[shutter_scenerefs[shutter_step+1].op_input_index];
-
-    const size_t nLights = light_scene->lights.size();
 #if DEBUG
-    assert(nLights == scene0->lights.size());
-    assert(nLights == scene1->lights.size());
+    assert(scene0);
+    assert(scene1);
 #endif
-    for (size_t i=0; i < nLights; ++i)
+
+    // Update the light vectors in the master lighting scene, then copy them
+    // to the per-object scenes:
+    const size_t nMasterLights = master_lighting_scene.lights.size();
+#if DEBUG
+    assert(nMasterLights == scene0->lights.size());
+    assert(nMasterLights == scene1->lights.size());
+#endif
+    for (size_t j=0; j < nMasterLights; ++j)
     {
-        DD::Image::LightContext* ltx0 = scene0->lights[i];
-        DD::Image::LightContext* ltx1 = scene1->lights[i];
-        DD::Image::LightContext* ltx_interp = light_scene->lights[i];
+        // Lighting scenes always contain RayLightContexts (vs. the source Scenes
+        // filled in by the input GeoOp):
+#if DEBUG
+        assert(RayLightContext::isRayLightContext(master_lighting_scene.lights[j]) != NULL);
+#endif
+        RayLightContext* rltx = static_cast<RayLightContext*>(master_lighting_scene.lights[j]);
+#if DEBUG
+        assert(rltx->ltindex < (int32_t)scene0->lights.size());
+        assert(rltx->ltindex < (int32_t)scene1->lights.size());
+#endif
+
+        DD::Image::LightContext* ltx0 = scene0->lights[rltx->ltindex];
+        DD::Image::LightContext* ltx1 = scene1->lights[rltx->ltindex];
 #if DEBUG
         assert(ltx0);
         assert(ltx1);
-        assert(ltx_interp);
 #endif
         // Shift LightContext Axis in time:
         interpolateDDImageAxis(ltx0->vectors(),
                                ltx1->vectors(),
                                shutter_step_t,
-                               const_cast<DD::Image::Axis&>(ltx_interp->vectors()));
+                               const_cast<DD::Image::Axis&>(rltx->vectors()));
+    }
+
+
+    // Copy the interpolated vectors to per-object lighting scenes:
+    LightingSceneList& per_object_lighting_scenes = ttx.perObjectLightingSceneList();
+    const size_t nObjects = per_object_lighting_scenes.size();
+    for (size_t j=0; j < nObjects; ++j)
+    {
+        zpr::Scene* ltscene = per_object_lighting_scenes[j];
+
+        // Copy camera vectors:
+        ltscene->cam_vectors = master_lighting_scene.cam_vectors;
+
+        // Copy light vectors:
+        const size_t nObjectLights = ltscene->lights.size();
+        for (size_t i=0; i < nObjectLights; ++i)
+        {
+            // Lighting scenes always contain RayLightContexts (vs. the source Scenes
+            // filled in by the input GeoOp):
+#if DEBUG
+            assert(RayLightContext::isRayLightContext(ltscene->lights[i]) != NULL);
+#endif
+            RayLightContext* rltx = static_cast<RayLightContext*>(ltscene->lights[i]);
+#if DEBUG
+            assert(rltx->ltindex < (int32_t)master_lighting_scene.lights.size());
+#endif
+
+            const_cast<DD::Image::Axis&>(rltx->vectors()) = rltx->vectors();
+        }
     }
 }
 
 
-/*!
-*/
-void
-RenderContext::updateLightingScene(const zpr::Scene* ref_scene,
-                                   zpr::Scene*       lighting_scene) const
-{
-    // Update the lighting scene's camera vectors:
-    DD::Image::Matrix4 cm = ref_scene->camera->matrix();
+//-------------------------------------------------------------------------
 
-    // Copy the camera vectors:
-    lighting_scene->cam_vectors.p = cm.translation(); // << this is really the most important one
-    lighting_scene->cam_vectors.x = cm.x_axis(); // but we'll do the others for completeness:
-    lighting_scene->cam_vectors.y = cm.y_axis();
-    lighting_scene->cam_vectors.z = cm.z_axis();
-    lighting_scene->cam_vectors.x.normalize();
-    lighting_scene->cam_vectors.y.normalize();
-    lighting_scene->cam_vectors.z.normalize();
-    //std::cout << " camera.p[" << lighting_scene->cam_vectors.p.x << " " << lighting_scene->cam_vectors.p.y << " " << lighting_scene->cam_vectors.p.z << "]" << std::endl;
+
+//! Also copies LightContext contents.
+RayLightContext::RayLightContext(ThreadContext*           _ttx,
+                                 int32_t                  _ltindex,
+                                 zpr::LightMaterial*      _light_material,
+                                 DD::Image::LightContext* _ltx) :
+    LightContext(_ltx),
+    magic_token(ZPR_MAGIC_TOKEN),
+    ttx(_ttx),
+    ltindex(_ltindex),
+    light_material(_light_material)
+{
+    m_enabled = (ttx && light_material && light_material->getLightShader());
 }
+
+
+//! Copy constructor
+RayLightContext::RayLightContext(const RayLightContext* b) :
+    LightContext(b),
+    magic_token(ZPR_MAGIC_TOKEN),
+    m_enabled(b->m_enabled),
+    ttx(b->ttx),
+    ltindex(b->ltindex),
+    light_material(b->light_material)
+{
+    //
+}
+
+
+//! Get the current active RayShaderContext.
+RayShaderContext&
+RayLightContext::getShaderContext() const
+{
+#if DEBUG
+    assert(ttx);
+#endif
+    return ttx->currentShaderContext();
+}
+
+
+//-------------------------------------------------------------------------
 
 
 /*! Per-subpixel motionblurred lighting in Nuke's legacy shading system requires a
@@ -2111,24 +2400,78 @@ void
 RenderContext::updateLightingScenes(const zpr::Scene* ref_scene,
                                     ThreadContext&    ttx) const
 {
+    // If the render versions match then we've already done the work
+    // for this ThreadContext:
+    if (ttx.getRenderVersion() == render_version)
+        return; // already updated
+
+    //std::cout << "RenderContext::updateLightingScenes(): ref_scene=" << ref_scene << std::endl;
 #if DEBUG
     assert(ref_scene);
 #endif
+
+    ttx.setRenderVersion(render_version);
+
+    // Clear all light info initially:
+    ttx.clearLightingScenes();
 
     // Build the master lighting scene:
     zpr::Scene& master_lighting_scene = ttx.masterLightingScene();
     master_lighting_scene.copyInfo(ref_scene);
     //master_lighting_scene.object_list_.clear();
     //master_lighting_scene.object_transforms_.clear();
-
-    // Clear all light info initially:
-    ttx.clearLightingScenes();
-
+    // Clear all lights initially as we'll add them back in below:
+    master_lighting_scene.delete_light_context();
+    master_lighting_scene.light_transforms.clear();
+    master_lighting_scene.light_renderers.clear();
     master_lighting_scene.transparency(true);
 
-    // Build the per-object lights first:
-    const uint32_t nObjects = (uint32_t)object_context.size();
+    const size_t nLightMaterials = light_material_ctxs.size();
+    if (nLightMaterials == 0)
+    {
+        // No lights, don't need to assign per-object lights:
+        ttx.perObjectLightingSceneList().clear();
+        return;
+    }
 
+    // Copy the light context list out of the scene to make a
+    // thread-safe local version.  We'll update these LightContexts
+    // at each subpixel with interpolated light vectors:
+    const uint32_t nLights = (uint32_t)ref_scene->lights.size();
+    //std::cout << "  master_lighting_scene=" << &master_lighting_scene << ", nLights=" << nLights << std::endl;
+    master_lighting_scene.lights.reserve(nLights);
+    master_lighting_scene.light_transforms.reserve(nLights);
+    master_lighting_scene.light_renderers.reserve(nLights);
+
+    for (uint32_t ltindex=0; ltindex < nLights; ++ltindex)
+    {
+#if DEBUG
+        assert(ref_scene->lights[ltindex]);
+        assert(ltindex < (uint32_t)ref_scene->light_transforms.size());
+        assert(ltindex < (uint32_t)light_material_ctxs.size());
+#endif
+        LightMaterial* lt_material = static_cast<LightMaterial*>(light_material_ctxs[ltindex].raymaterial);
+
+        RayLightContext* rltx = new RayLightContext(&ttx,
+                                                    ltindex,
+                                                    lt_material,
+                                                    ref_scene->lights[ltindex]);
+        rltx->set_scene(&master_lighting_scene);
+
+        master_lighting_scene.lights.push_back(rltx);
+        master_lighting_scene.light_transforms.push_back(ref_scene->light_transforms[ltindex]);
+        master_lighting_scene.light_renderers.push_back(NULL);
+        //========================================================================
+        // TODO: enable this code...?:
+        // enable light output?
+        // if ( ref_scene->lights[i]->light()->getShadowMaskChannel() != Mask_None)
+        //    shader_channels += ref_scene->lights[i]->light()->getShadowMaskChannel();
+        //========================================================================================
+    }
+
+
+    // Build the per-object lighting scenes:
+    const uint32_t nObjects = (uint32_t)object_context.size();
     LightingSceneList& per_object_lighting_scenes = ttx.perObjectLightingSceneList();
     per_object_lighting_scenes.reserve(nObjects);
     for (uint32_t i=0; i < nObjects; ++i)
@@ -2136,62 +2479,45 @@ RenderContext::updateLightingScenes(const zpr::Scene* ref_scene,
         GeoInfoContext* otx = object_context[i];
         //
         per_object_lighting_scenes.push_back(new zpr::Scene());
-        zpr::Scene* lscene = per_object_lighting_scenes[i];
+        zpr::Scene* ltscene = per_object_lighting_scenes[i];
+        //std::cout << "    " << i << ": ltscene=" << ltscene << std::endl;
 
         // Copy from reference scene:
-        lscene->copyInfo(ref_scene);
+        ltscene->copyInfo(ref_scene);
         // Clear all lights initially:
-        lscene->delete_light_context();
-        lscene->light_transforms.clear();
-        lscene->light_renderers.clear();
-        lscene->transparency(true);
+        ltscene->delete_light_context();
+        ltscene->light_transforms.clear();
+        ltscene->light_renderers.clear();
+        ltscene->transparency(true);
 
         // Get the list of enabled lights from the object context:
-        lscene->lights.reserve(otx->enabled_lights.size());
-        lscene->light_transforms.reserve(otx->enabled_lights.size());
-        lscene->light_renderers.reserve(otx->enabled_lights.size());
+        ltscene->lights.reserve(otx->enabled_lights.size());
+        ltscene->light_transforms.reserve(otx->enabled_lights.size());
+        ltscene->light_renderers.reserve(otx->enabled_lights.size());
 
         for (std::set<uint32_t>::const_iterator it=otx->enabled_lights.begin(); it != otx->enabled_lights.end(); ++it)
         {
-            DD::Image::LightContext* ltx = ref_scene->lights[*it];
+            const uint32_t ltindex = *it;
 #if DEBUG
-            assert(ltx); // Shouldn't happen...
+            assert(ref_scene->lights[ltindex]);
+            assert(ltindex < (uint32_t)ref_scene->light_transforms.size());
+            assert(ltindex < (uint32_t)light_material_ctxs.size());
 #endif
+            LightMaterial* lt_material = static_cast<LightMaterial*>(light_material_ctxs[ltindex].raymaterial);
+
+            RayLightContext* rltx = new RayLightContext(&ttx,
+                                                        ltindex,
+                                                        lt_material,
+                                                        ref_scene->lights[ltindex]);
+            rltx->set_scene(ltscene);
             //std::cout << "  enabled light '" << ltx->light()->node_name() << "'" << std::endl;
-            lscene->lights.push_back(ltx->clone());
-            lscene->light_transforms.push_back(ref_scene->light_transforms[*it]);
-            lscene->light_renderers.push_back(NULL);
+
+            ltscene->lights.push_back(rltx);
+            ltscene->light_transforms.push_back(ref_scene->light_transforms[ltindex]);
+            ltscene->light_renderers.push_back(NULL);
         }
     }
 
-    if (direct_lighting_enabled)
-    {
-        // Copy the light context list out of the scene to make a
-        // thread-safe local version.  We'll update these LightContexts
-        // at each subpixel with interpolated light vectors:
-        const uint32_t nLights = (uint32_t)ref_scene->lights.size();
-        master_lighting_scene.lights.reserve(nLights);
-        master_lighting_scene.light_transforms.reserve(nLights);
-        master_lighting_scene.light_renderers.reserve(nLights);
-
-        for (uint32_t i=0; i < nLights; ++i)
-        {
-            master_lighting_scene.lights.push_back(ref_scene->lights[i]->clone());
-            master_lighting_scene.light_transforms.push_back(ref_scene->light_transforms[i]);
-            master_lighting_scene.light_renderers.push_back(NULL);
-            //========================================================================
-            // TODO: enable this code...?:
-            // enable light output?
-            // if ( ref_scene->lights[i]->light()->getShadowMaskChannel() != Mask_None)
-            //    shader_channels += ref_scene->lights[i]->light()->getShadowMaskChannel();
-            //========================================================================================
-        }
-
-        // We calculate the light Axis vectors when the Ray is initialized.
-        updateLightingScene(ref_scene, &master_lighting_scene);
-        for (uint32_t i=0; i < per_object_lighting_scenes.size(); ++i)
-            updateLightingScene(ref_scene, per_object_lighting_scenes[i]);
-    }
 }
 
 
@@ -2199,6 +2525,7 @@ RenderContext::updateLightingScenes(const zpr::Scene* ref_scene,
 //-------------------------------------------------------------------------
 
 
+#if 0
 /*! Start a shader context list owned by thread_index and returning a reference to the first one.
 */
 RayShaderContext&
@@ -2214,7 +2541,7 @@ RenderContext::startShaderContext(uint32_t thread_index)
 #endif
 
     // Add the new context:
-    const uint32_t stx_index = rttx->pushShaderContext(0/*current*/);
+    const uint32_t stx_index = rttx->pushShaderContext(NULL/*current*/);
 
     return rttx->getShaderContext(stx_index);
 }
@@ -2286,6 +2613,7 @@ RenderContext::popShaderContext(uint32_t thread_index)
 #endif
     return thread_list[thread_index]->popShaderContext();
 }
+#endif
 
 
 //-------------------------------------------------------------------------
@@ -2296,6 +2624,7 @@ RenderContext::popShaderContext(uint32_t thread_index)
 */
 ThreadContext::ThreadContext(RenderContext* rtx) :
     m_rtx(rtx),
+    m_render_version(-1),
     m_index(0),
     m_ID(0)
 {
@@ -2318,8 +2647,8 @@ ThreadContext::ThreadContext(RenderContext* rtx) :
     binding_color.setInterestRatchet(&bindingColorInterestRatchet);
     surface_color.setChannels(DD::Image::Mask_RGB);
     surface_color.setInterestRatchet(&surfaceColorInterestRatchet);
-    light_color.setChannels(DD::Image::Mask_RGB);
-    light_color.setInterestRatchet(&lightColorInterestRatchet);
+    illum_color.setChannels(DD::Image::Mask_RGB);
+    illum_color.setInterestRatchet(&illumColorInterestRatchet);
     volume_color.setChannels(DD::Image::Mask_RGB);
     volume_color.setInterestRatchet(&volumeColorInterestRatchet);
 
@@ -2345,10 +2674,10 @@ ThreadContext::~ThreadContext()
 }
 
 
-/*! Add a RayShaderContext to the end of the list, and return its index.
+/*! Add a RayShaderContext to the end of the list, and return its reference.
 */
-uint32_t
-ThreadContext::pushShaderContext(const RayShaderContext* current)
+RayShaderContext&
+ThreadContext::pushShaderContext(const RayShaderContext* src_stx)
 {
 #if DEBUG
     assert(m_rtx); // have to have a valid Context...
@@ -2361,13 +2690,13 @@ ThreadContext::pushShaderContext(const RayShaderContext* current)
     //std::cout << "ThreadContext::push_shader_context() - new stx_index=" << stx_index << std::endl;
 
     // Copy the current context first:
-    if (current)
+    if (src_stx)
     {
-        stx = *current;
+        stx = *src_stx;
         //memcpy(&stx, current, sizeof(RayShaderContext));
 
         // Update some of the info:
-        stx.previous_stx = const_cast<RayShaderContext*>(current);
+        stx.previous_stx = const_cast<RayShaderContext*>(src_stx);
 
     }
     else
@@ -2399,15 +2728,63 @@ ThreadContext::pushShaderContext(const RayShaderContext* current)
 
     // Reset intersection pointers:
     stx.rprim                 = NULL; // Current primitive being evaluated (intersected/shaded)
-    stx.surface_shader        = NULL; // Current surface RayShader to evaluate (NULL if legacy material)
-    stx.displacement_shader   = NULL; // Current displacement RayShader to evaluate (NULL if legacy material)
-    stx.atmosphere_shader     = NULL; // Current atmospheric VolumeShader being evaluated
-    stx.material              = NULL; // Current material on primitive - legacy
-    stx.displacement_material = NULL; // Current displacement material on primitive - legacy
     stx.w2l                   = NULL; // World-to-local matrix for current primitive (identity=NULL)
     stx.l2w                   = NULL; // Local-to-world matrix for current primitive (identity=NULL)
+    //
+    stx.surface_shader        = NULL; // Current surface RayShader to evaluate (NULL if legacy material)
+    stx.atmosphere_shader     = NULL; // Current atmospheric VolumeShader being evaluated
+    //
+    stx.material              = NULL; // Current material on primitive - legacy
+    stx.displacement_material = NULL; // Current displacement material on primitive - legacy
 
-    return stx_index;
+    return stx;
+}
+
+
+/*! Add a shader context to the end of the list, copying the
+    source context, and returning a reference to it.
+*/
+RayShaderContext&
+ThreadContext::pushShaderContext(const RayShaderContext&          src_stx,
+                                 const Fsr::RayContext&           Rtx,
+                                 uint32_t                         ray_type,
+                                 uint32_t                         sides_mode,
+                                 const Fsr::RayDifferentials*     Rdif)
+{
+    RayShaderContext& stx = pushShaderContext(&src_stx);
+    stx.setRayContext(Rtx,
+                      ray_type,
+                      Rdif);
+    stx.sides_mode = sides_mode;
+
+    return stx;
+}
+
+
+/*! Add a shader context to the end of the list, copying the
+    source context, and returning a reference to it.
+*/
+RayShaderContext&
+ThreadContext::pushShaderContext(const RayShaderContext&          src_stx,
+                                 const Fsr::Vec3d&                Rdir,
+                                 double                           tmin,
+                                 double                           tmax,
+                                 uint32_t                         ray_type,
+                                 uint32_t                         sides_mode,
+                                 const Fsr::RayDifferentials*     Rdif)
+{
+    RayShaderContext& stx = pushShaderContext(&src_stx);
+
+    stx.Rtx.setDirAndDistance(Rdir, tmin, tmax);
+    stx.Rtx.type_mask = ray_type;
+    if (Rdif)
+    {
+        stx.Rdif = *Rdif;
+        stx.use_differentials = true;
+    }
+    stx.sides_mode = sides_mode;
+
+    return stx;
 }
 
 
@@ -2417,7 +2794,7 @@ int
 ThreadContext::popShaderContext()
 {
     m_stx_list.pop_back();
-    return (int)m_stx_list.size() - 1;
+    return ((int)m_stx_list.size() - 1);
 }
 
 
@@ -2669,6 +3046,7 @@ RenderContext::generateSurfaceContextsForObject(ObjectContext* otx)
                     sftx->obj_index      = objIndex;
                     sftx->prim_index     = -1; // prim_index not needed for PolySoup
                     sftx->polysoup_prims = polysoupPrims;
+
 #ifdef DEBUG_OBJECT_EXPANSION
                     std::cout << "  adding SurfaceContext for polysoup prims[" << primIndex << std::endl;
                     for (uint32_t i=0; i < nPrimitives; ++i)
@@ -2718,72 +3096,25 @@ RenderContext::generateSurfaceContextsForObject(ObjectContext* otx)
 #endif
             }
 
-            // If there's a valid SurfaceContext configure the materials:
+            // If there's a valid SurfaceContext configure the material info:
             if (sftx != NULL)
             {
-                // The ObjectMaterialRef for this object was configured in validate():
+                //------------------------------------------------------------------
+                // Update the MaterialContext to point back at the new SurfaceContext.
+                // The MaterialContext for this object was previously configured
+                // in buildObjectMaterial() which is called by zpRender::_validate():
+                //
 #if DEBUG
-                assert(objIndex < (uint32_t)object_materials.size());
+                assert(objIndex < (uint32_t)object_material_ctxs.size());
 #endif
-                ObjectMaterialRef& material_ref = object_materials[objIndex];
-                //material_ref.raymaterial      = NULL;
-                //material_ref.material         = NULL;    
-                //material_ref.texture_channels = DD::Image::Mask_None;
-                //material_ref.output_channels  = DD::Image::Mask_None;
-                //material_ref.displacement_max = 0.0f;
+                MaterialContext& material_ctx = object_material_ctxs[objIndex];
+                material_ctx.surface_ctx = sftx;
+                sftx->material_ctx = &material_ctx;
 
-                if (material_ref.raymaterial)
-                {
-                    // RayMaterial:
-                    sftx->material              = NULL;
-                    sftx->displacement_material = NULL;
-                    //
-                    sftx->raymaterial = material_ref.raymaterial;
-                    RayShader* disp_shader = sftx->raymaterial->getDisplacementShader();
-                    if (disp_shader)
-                    {
-#if 0
-                        sftx->displacement_subdivision_level = disp_shader->getDisplacementSubdivisionLevel();
-                        // Scale it by the max of the object's scale:
-                        sftx->displacement_bounds = gtx0.info->matrix.scale()*disp_shader->displacement_bound();
 
-                        if (sftx->displacement_bounds.x > std::numeric_limits<float>::epsilon() ||
-                            sftx->displacement_bounds.y > std::numeric_limits<float>::epsilon() ||
-                            sftx->displacement_bounds.z > std::numeric_limits<float>::epsilon())
-                            sftx->displacement_enabled = true;
-                        //std::cout << "displacement_bounds" << sftx->displacement_bounds << std::endl;
-#endif
-                    }
-                    else
-                    {
-                        sftx->displacement_subdivision_level = 0;
-                        sftx->displacement_bounds.set(0.0f, 0.0f, 0.0f);
-                        sftx->displacement_enabled = false;
-                    }
-                }
-                else
-                {
-                    // Legacy shader:
-                    sftx->raymaterial = NULL;
-                    //
-                    sftx->material = material_ref.material;
-                    //
-                    sftx->displacement_material = NULL;  // TODO: set this!
-                    if (sftx->displacement_material)
-                    {
-                        // TODO: set these!
-                        sftx->displacement_subdivision_level = 0;
-                        sftx->displacement_bounds.set(0.0f, 0.0f, 0.0f);
-                        sftx->displacement_enabled = true;
-                    }
-                    else
-                    {
-                        sftx->displacement_subdivision_level = 0;
-                        sftx->displacement_bounds.set(0.0f, 0.0f, 0.0f);
-                        sftx->displacement_enabled = false;
-                    }
-                }
-
+                //------------------------------------------------------------------
+                // Configure AOV layer attribute connections:
+                //
 #if 0
 // TODO: finish this! Need to connect the attribs the geometry contain to their AOVLayer outputs
                 // Assign the AOVLayers:
@@ -2854,7 +3185,7 @@ SourcePrimitiveType
 RenderContext::getVolumeLightTypeAndBbox(const DD::Image::LightOp* light,
                                          Fsr::Box3d&               bbox) const
 {
-    //std::cout << "zpr::RenderContext::getVolumeLightTypeAndBbox():" << std::endl;
+std::cout << "zpr::RenderContext::getVolumeLightTypeAndBbox('" << light->node_name() << "'):" << std::endl;
     bbox.clear();
     // Skip it if it's off:
     if (!light || light->node_disabled())
@@ -2863,12 +3194,19 @@ RenderContext::getVolumeLightTypeAndBbox(const DD::Image::LightOp* light,
     // Only create prim if light can illuminate atmosphere:
     DD::Image::Knob* k_light_illum = light->knob("illuminate_atmosphere");
     if (!k_light_illum)
+    {
+std::cout << " light has no 'illuminate_atmosphere' knob, skipping..." << std::endl;
         return UNRECOGNIZED_PRIM;
+    }
+
     bool can_illuminate_atmosphere = false;
     DD::Image::Hash junk;
     k_light_illum->store(DD::Image::BoolPtr, &can_illuminate_atmosphere, junk, light->outputContext());
     if (!can_illuminate_atmosphere)
+    {
+std::cout << " light has 'illuminate_atmosphere' turned off." << std::endl;
         return UNRECOGNIZED_PRIM;
+    }
 
     //double near = clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity());
     //double far  = clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity());
@@ -2892,7 +3230,7 @@ RenderContext::getVolumeLightTypeAndBbox(const DD::Image::LightOp* light,
                                        clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity()),
                                        clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity()),
                                        light_xform);
-        //std::cout << " type=LIGHTCONE_PRIM, bbox" << bbox << std::endl;
+std::cout << " type=LIGHTCONE_PRIM, bbox" << bbox << std::endl;
         return LIGHTCONE_PRIM;
 
     }
@@ -2902,7 +3240,7 @@ RenderContext::getVolumeLightTypeAndBbox(const DD::Image::LightOp* light,
         bbox = SphereVolume::getSphereBbox(clamp(light->Near(), 0.0001, std::numeric_limits<double>::infinity()),
                                            clamp(light->Far(),  0.0001, std::numeric_limits<double>::infinity()),
                                            light_xform);
-        //std::cout << " type=LIGHTSPHERE_PRIM, bbox" << bbox << std::endl;
+std::cout << " type=LIGHTSPHERE_PRIM, bbox" << bbox << std::endl;
         return LIGHTSPHERE_PRIM;
 
     }
@@ -2910,7 +3248,7 @@ RenderContext::getVolumeLightTypeAndBbox(const DD::Image::LightOp* light,
     {
         // LightCylinder
 
-        //std::cout << " type=LIGHTCYLINDER_PRIM, bbox" << bbox << std::endl;
+std::cout << " type=LIGHTCYLINDER_PRIM, bbox" << bbox << std::endl;
         return LIGHTCYLINDER_PRIM;
 
     }
@@ -2922,13 +3260,13 @@ RenderContext::getVolumeLightTypeAndBbox(const DD::Image::LightOp* light,
         {
             // LightCard
 
-            //std::cout << " type=LIGHTCARD_PRIM, bbox" << bbox << std::endl;
+std::cout << " type=LIGHTCARD_PRIM, bbox" << bbox << std::endl;
             return LIGHTCARD_PRIM; 
         }
     }
 
-    //std::cout << " UNRECOGNIZED TYPE" << std::endl;
-    //std::cout << "zpr::RenderContext::getVolumeLightTypeAndBbox(): warning, unknown light type, skipping..." << std::endl;
+std::cout << " UNRECOGNIZED TYPE" << std::endl;
+std::cout << "zpr::RenderContext::getVolumeLightTypeAndBbox(): warning, unknown light type, skipping..." << std::endl;
 
     return UNRECOGNIZED_PRIM;
 }

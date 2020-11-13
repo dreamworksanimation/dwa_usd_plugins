@@ -109,7 +109,6 @@ static void handler_Z(    const InputBinding::ExprContext& etx, Fsr::Vec4f& out)
 static void handler_PW(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->PW.array(),    out); }
 static void handler_dPWdx(const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->dPWdx.array(), out); }
 static void handler_dPWdy(const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->dPWdy.array(), out); }
-static void handler_PWg(  const InputBinding::ExprContext& etx, Fsr::Vec4f& out) { copy_attrib3d(etx.stx->PWg.array(),   out); }
 static void handler_PL(   const InputBinding::ExprContext& etx, Fsr::Vec4f& out) {
     if (!etx.stx->w2l) {
         copy_attrib3d(etx.stx->PW.array(), out);
@@ -219,7 +218,6 @@ struct AttribHandlers
         map[std::string("pw"    )] = handler_PW;
         map[std::string("dpwdx" )] = handler_dPWdx;
         map[std::string("dpwdy" )] = handler_dPWdy;
-        map[std::string("pwg"   )] = handler_PWg;
         map[std::string("pl"    )] = handler_PL;
         //
         map[std::string("vdotn" )] = handler_VdotN;
@@ -588,7 +586,7 @@ InputBinding::buildInputTextureBinding(DD::Image::Iop*    iop,
 */
 void
 InputBinding::getValue(RayShaderContext& stx,
-                       Fsr::Pixel&       out)
+                       Fsr::Pixel&       out) const
 {
     //std::cout << "InputBinding::getValue(" << this << "): " << *this << std::endl;
     if (!isEnabled())
@@ -647,7 +645,7 @@ InputBinding::getValue(RayShaderContext& stx,
 */
 Fsr::Vec3f
 InputBinding::getValue(RayShaderContext& stx,
-                       float*            out_alpha)
+                       float*            out_alpha) const
 {
     if (!isEnabled())
     {
@@ -666,11 +664,105 @@ InputBinding::getValue(RayShaderContext& stx,
 }
 
 
-/*!
+/*! Sample the texture input filling in the binding's rgb and opacity channels in Pixel.
+    Overrides UV coord and derivatives in RayShaderContext but uses the texture
+    filter and samplers from it.
 */
 void
-InputBinding::sampleTexture(RayShaderContext& stx,
-                            Fsr::Pixel&       tex_color)
+InputBinding::sampleTexture(const Fsr::Vec2f& UV,
+                            const Fsr::Vec2f& dUVdx,
+                            const Fsr::Vec2f& dUVdy,
+                            RayShaderContext& stx,
+                            Fsr::Pixel&       tex_color) const
+{
+    //std::cout << "InputBinding::sampleTexture(" << this << "): type=" << type << ", obj=" << input_object << std::endl;
+    // TODO: this may be slow, determine if we can avoid this per-sample work:
+    tex_color.setChannels(getChannels());
+
+    DD::Image::Iop* iop = asTextureIop();
+    if (!iop)
+    {
+        tex_color[rgb_chans[0]] = 0.0f;
+        tex_color[rgb_chans[1]] = 0.0f;
+        tex_color[rgb_chans[2]] = 0.0f;
+        tex_color[opacity_chan] = 0.0f;
+        return;
+    }
+
+    // Offset any UDIM assignment:
+    const Fsr::Vec2f uv(UV - uv_tile_offset);
+
+    if (!stx.texture_filter)
+    {
+        //-------------------------------------------------------------
+        // Texture filtering disabled
+        //
+        // the scene filter is set to null in Render::_validate() for impulse filter
+        // the material->sample() will use impulse if the filter is null
+        //-------------------------------------------------------------
+        const DD::Image::Format& f = iop->format();
+        const float fX = float(f.x());
+        const float fY = float(f.y());
+        const float fW = float(f.w());
+        const float fH = float(f.h());
+        iop->at(int32_t(floorf(fX + uv.x*fW)),
+                int32_t(floorf(fY + uv.y*fH)),
+                tex_color);
+    }
+    else
+    {
+        // Get the Texture2dSampler for the texture Iop:
+        // TODO: this should not be required anymore!!!
+        Texture2dSamplerMap::iterator it = stx.rtx->texture_sampler_map.find(iop);
+        Texture2dSampler* tex_sampler = (it != stx.rtx->texture_sampler_map.end()) ? it->second : NULL;
+        if (tex_sampler)
+        {
+            tex_sampler->sampleFilterered(uv, 
+                                          dUVdx,
+                                          dUVdy,
+                                          stx.texture_filter,
+                                          tex_color);
+        }
+        else
+        {
+            // Fallback to slow Iop::sample():
+            const DD::Image::Format& f = iop->format();
+            const float fX = float(f.x());
+            const float fY = float(f.y());
+            const float fW = float(f.w());
+            const float fH = float(f.h());
+#if 0
+            // TODO: see if we can get the mip filter to work!
+            DD::Image::TextureMipSample(DD::Image::Vector2(fX + uv.x*fW, fY + uv.y*fH), /*xy*/
+                                        DD::Image::Vector2(dUVdx.x*fW, dUVdx.y*fH), /*dU*/
+                                        DD::Image::Vector2(dUVdy.x*fW, dUVdy.y*fH), /*dV*/
+                                        texture_filter,
+                                        Iop** mip_iops,
+                                        tex_color);
+#else
+            iop->sample(DD::Image::Vector2(fX + uv.x*fW, fY + uv.y*fH), /*xy*/
+                        DD::Image::Vector2(dUVdx.x*fW, dUVdx.y*fH), /*dU*/
+                        DD::Image::Vector2(dUVdy.x*fW, dUVdy.y*fH), /*dV*/
+                        stx.texture_filter,
+                        tex_color);
+#endif
+        }
+    }
+}
+
+
+/*! Sample the texture input filling in the binding's rgb and opacity channels in Pixel.
+
+    Uses slower Iop sample routines since there's no Texture2dSampler available.
+
+    Implemented separately so we don't double up some of the calcs.
+*/
+void
+InputBinding::sampleTexture(const Fsr::Vec2f&        UV,
+                            const Fsr::Vec2f&        dUVdx,
+                            const Fsr::Vec2f&        dUVdy,
+                            const DD::Image::Filter* texture_filter,
+                            Fsr::Pixel&              tex_color) const
 {
     //std::cout << "InputBinding::sampleTexture(" << this << "): type=" << type << ", obj=" << input_object << std::endl;
     tex_color.setChannels(getChannels());
@@ -685,14 +777,16 @@ InputBinding::sampleTexture(RayShaderContext& stx,
         return;
     }
 
+    // Offset any UDIM assignment:
+    const Fsr::Vec2f uv(UV - uv_tile_offset);
+
     const DD::Image::Format& f = iop->format();
     const float fX = float(f.x());
     const float fY = float(f.y());
     const float fW = float(f.w());
     const float fH = float(f.h());
-    const Fsr::Vec2f uv(stx.UV - uv_tile_offset);
 
-    if (!stx.texture_filter)
+    if (!texture_filter)
     {
         //-------------------------------------------------------------
         // Texture filtering disabled
@@ -706,38 +800,23 @@ InputBinding::sampleTexture(RayShaderContext& stx,
     }
     else
     {
-        // Get the Texture2dSampler for the texture Iop:
-        // TODO: this should not be required anymore!!!
-        Texture2dSamplerMap::iterator it = stx.rtx->texture_sampler_map.find(iop);
-        Texture2dSampler* tex_sampler = (it != stx.rtx->texture_sampler_map.end()) ? it->second : NULL;
-        if (tex_sampler)
-        {
-            tex_sampler->sampleFilterered(stx.UV - uv_tile_offset, 
-                                          stx.dUVdx,
-                                          stx.dUVdy,
-                                          stx.texture_filter,
-                                          tex_color);
-        }
-        else
-        {
-            // Fallback to slow Iop::sample():
+        // Fallback to slow Iop::sample():
 #if 0
-            // TODO: see if we can get the mip filter to work!
-            DD::Image::TextureMipSample(DD::Image::Vector2(fX + uv.x*fW, fY + uv.y*fH), /*xy*/
-                                        DD::Image::Vector2(stx.dUVdx.x*fW,   stx.dUVdx.y*fH  ), /*dU*/
-                                        DD::Image::Vector2(stx.dUVdy.x*fW,   stx.dUVdy.y*fH  ), /*dV*/
-                                        stx.texture_filter,
-                                        Iop** mip_iops,
-                                        tex_color);
+        // TODO: see if we can get the mip filter to work!
+        DD::Image::TextureMipSample(DD::Image::Vector2(fX + uv.x*fW, fY + uv.y*fH), /*xy*/
+                                    DD::Image::Vector2(dUVdx.x*fW,   dUVdx.y*fH  ), /*dU*/
+                                    DD::Image::Vector2(dUVdy.x*fW,   dUVdy.y*fH  ), /*dV*/
+                                    texture_filter,
+                                    Iop** mip_iops,
+                                    tex_color);
 #else
-            const Fsr::Vec2f uv(stx.UV - uv_tile_offset);
-            iop->sample(DD::Image::Vector2(fX + uv.x*fW, fY + uv.y*fH), /*xy*/
-                        DD::Image::Vector2(stx.dUVdx.x*fW,   stx.dUVdx.y*fH  ), /*dU*/
-                        DD::Image::Vector2(stx.dUVdy.x*fW,   stx.dUVdy.y*fH  ), /*dV*/
-                        stx.texture_filter,
-                        tex_color);
+        const Fsr::Vec2f uv(UV - uv_tile_offset);
+        iop->sample(DD::Image::Vector2(fX + uv.x*fW, fY + uv.y*fH), /*xy*/
+                    DD::Image::Vector2(dUVdx.x*fW,   dUVdx.y*fH  ), /*dU*/
+                    DD::Image::Vector2(dUVdy.x*fW,   dUVdy.y*fH  ), /*dV*/
+                    const_cast<DD::Image::Filter*>(texture_filter),
+                    tex_color);
 #endif
-        }
     }
 
 }

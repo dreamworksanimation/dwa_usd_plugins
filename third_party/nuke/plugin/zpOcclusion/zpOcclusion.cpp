@@ -44,8 +44,7 @@ namespace zpr {
 class zpOcclusion : public SurfaceMaterialOp
 {
   protected:
-    zprOcclusion::InputParams k_inputs;
-    zprOcclusion::LocalVars   m_locals;
+    zprOcclusion zprShader;     //!< Local shader allocation for knobs to write into
 
 
   public:
@@ -64,7 +63,7 @@ class zpOcclusion : public SurfaceMaterialOp
     RayShader* _createOutputSurfaceShader(const RenderContext&     rtx,
                                           std::vector<RayShader*>& shaders)
     {
-        RayShader* output = new zprOcclusion(k_inputs);
+        RayShader* output = new zprOcclusion(zprShader.inputs);
         shaders.push_back(output);
         return output;
     }
@@ -72,10 +71,17 @@ class zpOcclusion : public SurfaceMaterialOp
 
     //! Return the InputBinding for an input.
     /*virtual*/
-    InputBinding* getInputBinding(uint32_t input)
+    InputBinding* getInputBindingForOpInput(uint32_t op_input)
     {
-        if (input == 0) return &k_inputs.k_bindings[zprOcclusion::BG0];
+        if (op_input == 0) return &zprShader.inputs.k_bindings[zprOcclusion::BG0];
         return NULL;
+    }
+
+    //! Return the Op input for a shader input, or -1 if binding is not exposed.
+    /*virtual*/ int32_t getOpInputForShaderInput(uint32_t shader_input)
+    {
+        if (shader_input == zprOcclusion::BG0) return 0;
+        return -1;
     }
 
 
@@ -83,14 +89,16 @@ class zpOcclusion : public SurfaceMaterialOp
     void _validate(bool for_real) 
     {
         //std::cout << "zpOcclusion::_validate(" << for_real << ")" << std::endl;
-        // Call base class first to get InputBindings assigned:
-        SurfaceMaterialOp::_validate(for_real);
 
-        zprOcclusion::updateLocals(k_inputs, m_locals);
+        // Copy values from the Material to the InputParams before
+        // calling SurfaceMaterialOp::_validate():
 
         // Enable AOV output channels:
-        info_.turn_on(k_inputs.k_amb_ocl_output);
-        info_.turn_on(k_inputs.k_refl_ocl_output);
+        info_.turn_on(zprShader.inputs.k_amb_ocl_output);
+        info_.turn_on(zprShader.inputs.k_refl_ocl_output);
+
+        // Call base class first to get InputBindings assigned:
+        SurfaceMaterialOp::_validate(for_real);
     }
 
 
@@ -107,11 +115,11 @@ class zpOcclusion : public SurfaceMaterialOp
         // The top line of ray controls:
         addRayControlKnobs(f);
 
-        InputOp_knob(f, &k_inputs.k_bindings[zprOcclusion::BG0], 0/*input_num*/);
+        InputOp_knob(f, &zprShader.inputs.k_bindings[zprOcclusion::BG0], 0/*input_num*/);
 
         //----------------------------------------------------------------------------------------------
         Divider(f);
-        Bool_knob(f, &k_inputs.k_amb_ocl_enabled, "amb_ocl_enabled", "ambient occlusion enable");
+        Bool_knob(f, &zprShader.inputs.k_amb_ocl_enabled, "amb_ocl_enabled", "ambient occlusion enable");
             Tooltip(f, "Enable global ambient-occlusion. (fyi this is confusingly termed 'exposure' at Dreamworks...)\n"
                        "This calculates the diffuse angle off the surface for each camera ray and spawns "
                        "diffuse rays (using the diffuse samples count,) stochastically distributed over a "
@@ -122,20 +130,20 @@ class zpOcclusion : public SurfaceMaterialOp
                        "scales the distances to bias the appearance.\n"
                        "The final shadowing value is multiplied against the surface color.  This is done *after* "
                        "the surface shader is called so this will incorrectly attenuate specular highlights.");
-        Double_knob(f, &k_inputs.k_amb_ocl_mindist, "amb_ocl_mindist", "min/max");
+        Double_knob(f, &zprShader.inputs.k_amb_ocl_mindist, "amb_ocl_mindist", "min/max");
             ClearFlags(f, Knob::SLIDER); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Ignore surfaces closer than this value.");
-        Double_knob(f, &k_inputs.k_amb_ocl_maxdist, "amb_ocl_maxdist", "");
+        Double_knob(f, &zprShader.inputs.k_amb_ocl_maxdist, "amb_ocl_maxdist", "");
             ClearFlags(f, Knob::SLIDER | Knob::STARTLINE); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Ignore surfaces farther than this value.");
-        Double_knob(f, &k_inputs.k_amb_ocl_cone_angle, "amb_ocl_cone_angle", "cone angle");
+        Double_knob(f, &zprShader.inputs.k_amb_ocl_cone_angle, "amb_ocl_cone_angle", "cone angle");
             ClearFlags(f, Knob::SLIDER | Knob::STARTLINE); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Diffuse distribution cone width angle - in degrees.  180 is a full hemisphere");
-        Channel_knob(f, &k_inputs.k_amb_ocl_output, 1, "amb_ocl_output", "output");
+        Channel_knob(f, &zprShader.inputs.k_amb_ocl_output, 1, "amb_ocl_output", "output");
             Tooltip(f, "Route this shader component to these output channels.");
         //
         Divider(f);
-        Bool_knob(f, &k_inputs.k_refl_ocl_enabled, "refl_ocl_enabled", "reflection occlusion enable");
+        Bool_knob(f, &zprShader.inputs.k_refl_ocl_enabled, "refl_ocl_enabled", "reflection occlusion enable");
             Tooltip(f, "Enable global reflection-occlusion.\n"
                        "This calculates the reflection angle off the surface from each camera ray and spawns "
                        "glossy rays (using the glossy samples count,) stochastically distributed over a "
@@ -144,20 +152,20 @@ class zpOcclusion : public SurfaceMaterialOp
                        "then it's considered shadowed.\n"
                        "The final shadowing value is multiplied against the surface color.  This is done *after* "
                        "the surface shader is called so this will incorrectly attenuate specular highlights.");
-        Double_knob(f, &k_inputs.k_refl_ocl_mindist, "refl_ocl_mindist", "min/max");
+        Double_knob(f, &zprShader.inputs.k_refl_ocl_mindist, "refl_ocl_mindist", "min/max");
             ClearFlags(f, Knob::SLIDER); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Ignore surfaces closer than this value.");
-        Double_knob(f, &k_inputs.k_refl_ocl_maxdist, "refl_ocl_maxdist", "");
+        Double_knob(f, &zprShader.inputs.k_refl_ocl_maxdist, "refl_ocl_maxdist", "");
             ClearFlags(f, Knob::SLIDER | Knob::STARTLINE); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Ignore surfaces farther than this value.");
-        Double_knob(f, &k_inputs.k_refl_ocl_cone_angle, "refl_ocl_cone_angle", "cone angle");
+        Double_knob(f, &zprShader.inputs.k_refl_ocl_cone_angle, "refl_ocl_cone_angle", "cone angle");
             ClearFlags(f, Knob::SLIDER | Knob::STARTLINE); SetFlags(f, Knob::NO_MULTIVIEW | Knob::NO_ANIMATION);
             Tooltip(f, "Glossy distribution cone width angle - in degrees.  180 is a full hemisphere");
-        Channel_knob(f, &k_inputs.k_refl_ocl_output, 1, "refl_ocl_output", "output");
+        Channel_knob(f, &zprShader.inputs.k_refl_ocl_output, 1, "refl_ocl_output", "output");
             Tooltip(f, "Route this shader component to these output channels.");
         //
         Divider(f);
-        Double_knob(f, &k_inputs.k_gi_scale, IRange(0.001, 10.0), "gi_scale", "gi scale");
+        Double_knob(f, &zprShader.inputs.k_gi_scale, IRange(0.001, 10.0), "gi_scale", "gi scale");
             ClearFlags(f, Knob::STARTLINE);
             SetFlags(f, Knob::LOG_SLIDER | Knob::NO_MULTIVIEW);
             Tooltip(f, "Scales the calculated distances between objects to bias the distance weights.\n"

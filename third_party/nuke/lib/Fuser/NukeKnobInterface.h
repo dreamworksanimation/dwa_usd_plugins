@@ -51,6 +51,7 @@
 #include <DDImage/ArrayKnobI.h>
 #include <DDImage/OutputContext.h>
 #include <DDImage/Op.h>
+#include <DDImage/Convolve.h> // for ConvolveArray
 
 
 namespace Fsr {
@@ -508,14 +509,21 @@ inline void getVec4Knob(const char* name, const DD::Image::Op* op, const DD::Ima
 
 inline void getMat4Knob(DD::Image::Knob* k, const DD::Image::OutputContext& context, Fsr::Mat4d& value)
 {
-#if 1
-    getKnobValue<double>(k, context, DD::Image::DoublePtr, value.array());
-#else
-    float data[16];
-    getKnobValue<float>(k, context, DD::Image::MatrixPtr, data);
-    for (unsigned i=0; i < 16; ++i)
-        value.element(i) = double(data[i]);
-#endif
+    // Always check for null so missing knob names won't cause a crash:
+    if (!k)
+        return;
+
+    // Look in Convolve.h for explanation on how to use ConvolveArray store.
+    // It's too bad it only supports floats, but for this purpose I think it's ok:
+    float m[16];
+    DD::Image::ConvolveArray ca; ca.width = ca.height = 4; ca.array = m;
+    DD::Image::Hash dummy_hash;
+    k->store(DD::Image::ConvolveArrayPtr, &ca, dummy_hash, context);
+    const float* src = m;
+    double* dst = value.array();
+    for (int i=0; i < 16; ++i)
+        *dst++ = double(*src++);
+    value.transpose();
 }
 inline void getMat4Knob(const char* name, const DD::Image::Op* op, const DD::Image::OutputContext& context, Fsr::Mat4d& value)
     { getMat4Knob(op->knob(name), context, value); }

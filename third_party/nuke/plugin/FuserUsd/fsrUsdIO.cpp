@@ -322,22 +322,25 @@ Fsr::Node* buildUsdNode(const char*        builder_class,
 
 
     // Get the shared stage reference from the static list keyed to archive_context_hash.
-    uint64_t stage_hash = archive_context_hash;
-
     StageCacheReference* stage_reference = NULL;
 
     // If stage hash is non-default check for an existing stage cache:
-    if (stage_hash != Fsr::defaultHashValue)
+    if (archive_context_hash != Fsr::defaultHashValue)
     {
-        stage_reference = StageCacheReference::findStageReference(stage_hash);
-
-        if (debug_archive && stage_reference)
+        stage_reference = StageCacheReference::findStageReference(archive_context_hash);
+        if (stage_reference)
         {
-            std::cout << "      existing stage_reference for stage hash 0x" << std::hex << stage_hash << std::dec;
-            std::cout << ", populate mask='" << stage_reference->populateMask() << "'";
-            std::cout << ", stageid='" << stage_reference->stageId() << "'" << std::endl;
+            if (debug_archive)
+            {
+                std::cout << "      existing stage_reference for";
+                std::cout << " archive_context_hash 0x" << std::hex << archive_context_hash << std::dec;
+                std::cout << ", populate mask='" << stage_reference->populateMask() << "'";
+                std::cout << ", stageid='" << stage_reference->stageId() << "'" << std::endl;
+            }
         }
     }
+
+    uint64_t stage_hash = archive_context_hash;
 
     if (!stage_reference)
     {
@@ -402,7 +405,7 @@ Fsr::Node* buildUsdNode(const char*        builder_class,
 
                 //new_stage_hash.append(pattern);
 
-            // TODO: call the above logic in FuserUsdArchiveIO class!
+            // TODO: move the above logic in FuserUsdArchiveIO class!
             if (debug_archive)
                 std::cout << "    (node_filter_patterns) new_stage_hash=" << std::hex  << new_stage_hash.value() << std::dec << std::endl;
 
@@ -498,12 +501,16 @@ Fsr::Node* buildUsdNode(const char*        builder_class,
 
         Pxr::UsdPrim prim = stage->GetPrimAtPath(Pxr::SdfPath(scene_node_path));
 
+        // At this point this method should be passed an active node path:
         Fsr::ErrorNode* error = FuserUsdNode::isLoadedAndUseablePrim(builder_class,
                                                                      prim,
                                                                      scene_node_path.c_str()/*prim_load_path*/,
+                                                                     true/*load_inactive_prims*/,
+                                                                     false/*enable_inactive_prims*/,
                                                                      scene_debug/*debug_loading*/);
         if (error)
             return error;
+
 
         //-----------------------------------------------------------------------
         //
@@ -601,9 +608,13 @@ Fsr::Node* buildUsdNode(const char*        builder_class,
         //------------------------------------------------------------------
 
         Pxr::UsdPrim prim = stage->GetPrimAtPath(Pxr::SdfPath(scene_node_path));
+
+        // At this point this method should be passed an active node path:
         Fsr::ErrorNode* error = FuserUsdNode::isLoadedAndUseablePrim(builder_class,
                                                                      prim,
                                                                      scene_node_path.c_str()/*prim_load_path*/,
+                                                                     true/*load_inactive_prims*/,
+                                                                     false/*enable_inactive_prims*/,
                                                                      geo_debug/*debug_loading*/);
         if (error)
             return error;

@@ -92,6 +92,45 @@ inline void mask8x8ToFloats(const SpMask8& spmask,
 //----------------------------------------------------------------------------
 
 
+/*! TODO: change this to returning camera type string vs. an enumeration!
+*/
+RenderContext::CameraProjectionType
+zpRender::getRayCameraType(int proj_mode) const
+{
+    if (proj_mode == PROJECTION_RENDER_CAMERA)
+    {
+        // Map camera projection modes to render projection modes.
+        // Unsupported modes default to perspective.
+#if DEBUG
+        assert(rtx.shutter_scenerefs.size() > 0);
+#endif
+        const ShutterSceneRef& sref = rtx.shutter_scenerefs[0];
+#if DEBUG
+        assert(sref.camera);
+#endif
+        switch (sref.camera->projection_mode())
+        {
+            default:
+            case DD::Image::CameraOp::LENS_PERSPECTIVE:  proj_mode = PROJECTION_PERSPECTIVE; break;
+            case DD::Image::CameraOp::LENS_ORTHOGRAPHIC: proj_mode = PROJECTION_PERSPECTIVE; break;//PROJECTION_ORTHOGRAPHIC
+            case DD::Image::CameraOp::LENS_UV:           proj_mode = PROJECTION_PERSPECTIVE; break;//PROJECTION_UV
+            case DD::Image::CameraOp::LENS_SPHERICAL:    proj_mode = PROJECTION_SPHERICAL;   break;
+            case DD::Image::CameraOp::LENS_USER_CAMERA:  proj_mode = PROJECTION_PERSPECTIVE; break;
+        }
+    }
+
+    switch (proj_mode)
+    {
+        default:
+        case PROJECTION_PERSPECTIVE:  return RenderContext::CAMERA_PROJECTION_PERSPECTIVE;
+        //case PROJECTION_ORTHOGRAPHIC: return RenderContext::CAMERA_PROJECTION_ORTHOGRAPHIC;
+        //case PROJECTION_UV:           return RenderContext::CAMERA_PROJECTION_UV;
+        case PROJECTION_SPHERICAL:    return RenderContext::CAMERA_PROJECTION_SPHERICAL;
+        case PROJECTION_CYLINDRICAL:  return RenderContext::CAMERA_PROJECTION_CYLINDRICAL;
+    }
+}
+
+
 /*!
 */
 int
@@ -351,6 +390,8 @@ zpRender::tracerEngine(int y, int t, int x, int r,
     if (scene0->objects()==0 && (rtx.atmospheric_lighting_enabled && scene0->lights.size()==0))
         return true;
 
+    // This method will check if the ThreadContext's render_version is different
+    // from rtx and not update if they're the same:
     rtx.updateLightingScenes(scene0/*ref_scene*/, *thread_ctx);
 
 
@@ -691,7 +732,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                 //-----------------------------------------------------------------
                 // Initialize the first shader context as the camera ray:
                 thread_ctx->clearShaderContexts();
-                zpr::RayShaderContext& stx = rtx.startShaderContext(thread_ctx->index());
+                zpr::RayShaderContext& stx = thread_ctx->pushShaderContext(NULL/*src_stx*/);
 
                 //---------------------------------------------------------------------------------------------
                 // TODO: Move these assignments to a better spot...?
@@ -702,11 +743,10 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                 stx.texture_filter   = shading_texture_filter;
                 stx.cutout_channel   = k_cutout_channel;
                 //---------------------------------------------------------------------------------------------
-                stx.master_light_shaders       = NULL;
-                stx.per_object_light_shaders   = NULL;
-                // legacy lighting:
-                stx.master_lighting_scene      = &thread_ctx->masterLightingScene();
-                stx.per_object_lighting_scenes = &thread_ctx->perObjectLightingSceneList();
+                stx.master_light_materials     = NULL;
+                stx.per_object_light_materials = NULL;
+                stx.master_lighting_scene      = NULL; // legacy lighting
+                stx.per_object_lighting_scenes = NULL; // legacy lighting
                 //---------------------------------------------------------------------------------------------
                 stx.depth            = 0;
                 stx.diffuse_depth    = 0;
@@ -901,23 +941,22 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                     {
                         if (nShutterSteps > 0)
                         {
-                            rtx.updateLightingSceneVectorsTo(stx.frame_shutter_step,
+                            rtx.updateLightingSceneVectorsTo(stx.Rtx,
+                                                             stx.frame_shutter_step,
                                                              shutter_step_t,
-                                                             &thread_ctx->masterLightingScene());
+                                                             *thread_ctx);
                         }
-                        stx.master_light_shaders       = &rtx.master_light_shaders;
-                        stx.per_object_light_shaders   = &rtx.per_object_light_shaders;
+                        stx.master_light_materials = &rtx.master_light_materials;
+                        if (rtx.per_object_light_materials.size() > 0)
+                            stx.per_object_light_materials = &rtx.per_object_light_materials;
+                        else
+                            stx.per_object_light_materials = NULL;
                         // legacy lighting:
-                        stx.master_lighting_scene      = &thread_ctx->masterLightingScene();
-                        stx.per_object_lighting_scenes = &thread_ctx->perObjectLightingSceneList();
-                    }
-                    else
-                    {
-                        stx.master_light_shaders       = NULL;
-                        stx.per_object_light_shaders   = NULL;
-                        // legacy lighting:
-                        stx.master_lighting_scene      = NULL;
-                        stx.per_object_lighting_scenes = NULL;
+                        stx.master_lighting_scene = &thread_ctx->masterLightingScene();
+                        if (thread_ctx->perObjectLightingSceneList().size() > 0)
+                            stx.per_object_lighting_scenes = &thread_ctx->perObjectLightingSceneList();
+                        else
+                            stx.per_object_lighting_scenes = NULL;
                     }
 
 
@@ -1050,7 +1089,8 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                                 // Get RenderPrimitive:
                                 const RenderPrimitive* rprim = (RenderPrimitive*)ds.I.object;
 
-                                Traceable::DeepIntersectionMap::iterator it = deep_intersection_map.find(rprim->surface_ctx);
+                                void* surface_ref = const_cast<void*>(reinterpret_cast<const void*>(rprim->getSurfaceContext()));
+                                Traceable::DeepIntersectionMap::iterator it = deep_intersection_map.find(surface_ref);
                                 if (it == deep_intersection_map.end())
                                 {
                                     // Not in map yet, add it to the accum list:
@@ -1059,7 +1099,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                                     Traceable::DeepSurfaceIntersectionList dil;
                                     dil.reserve(10);
                                     dil.push_back(map_index);
-                                    deep_intersection_map[rprim->surface_ctx] = dil;
+                                    deep_intersection_map[surface_ref] = dil;
                                 }
                                 else
                                 {
@@ -1373,7 +1413,7 @@ zpRender::tracerEngine(int y, int t, int x, int r,
                         // Build a phony camera ray as if the ray has already hit
                         // the object surface, using the geometric normal:
                         stx.Rtx.set(PW - N/*origin*/, -N/*dir*/, std::numeric_limits<double>::epsilon()/*min*/, std::numeric_limits<double>::infinity()/*max*/);
-                        stx.Rtx.type_mask = Fsr::RayContext::CAMERA;
+                        stx.Rtx.type_mask = Fsr::RayContext::cameraPath();
                         //if (xx==0 && yy==550 && sample_index==0) {
                         //   std::cout << xx << ":" << y << " u=" << U << " v=" << V << " d=" << d << " st[" << st.x << " " << st.y << "]";
                         //   std::cout << " PW[" << PW.x << " " << PW.y << " " << PW.z << "]";
@@ -1588,12 +1628,6 @@ zpRender::tracerEngine(int y, int t, int x, int r,
         } // pixel loop x->r
 
     } // pixel loop y->t
-
-
-    //-----------------------------------------------------------------
-    // Destroy the temp lighting scenes:
-    //
-    thread_ctx->clearLightingScenes();
 
 
     //-----------------------------------------------------------------

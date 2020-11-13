@@ -67,10 +67,37 @@ class ZPR_EXPORT SurfaceMaterialOp : public DD::Image::Material
   protected:
     std::vector<uint16_t> m_input_binding_type;     //!< Input binding type - Constant, RayShader, Material, Iop, or Op
 
-    //! Create and return the output surface shader for this Op. Base class does nothing.
+    /*! Create the shaders for one input, returning the output surface shader.
+
+        Implement this to return a custom shader for an input. If not implemented the
+        standard InputBinding logic is used.
+
+        Base class does nothing.
+    */
+    virtual RayShader* _createInputShader(uint32_t                 input,
+                                          const RenderContext&     rtx,
+                                          std::vector<RayShader*>& shaders) { return NULL; }
+
+
+    /*! Create and return the output surface shader for this Op.
+
+        This should just allocate and return the output surface shader and
+        SurfaceMaterialOp will take care of creating any input shaders based on the
+        output shader's input bingings.
+
+        Base class does nothing.
+    */
     virtual RayShader* _createOutputSurfaceShader(const RenderContext&     rtx,
                                                   std::vector<RayShader*>& shaders) { return NULL; }
 
+
+    /*! For legacy shading system.
+        Return the local RayShader object which the SurfaceMaterialOp stores
+        its knobs into.
+        If this RayShader is non-null it will be called in the legacy
+        fragment_shader() method.
+    */
+    virtual RayShader* _getOpOutputSurfaceShader() { return NULL; }
 
 
   public:
@@ -96,6 +123,9 @@ class ZPR_EXPORT SurfaceMaterialOp : public DD::Image::Material
     */
     void addSurfaceMaterialOpIdKnob(DD::Image::Knob_Callback f);
 
+    //! Returns op cast to SurfaceMaterialOp if possible, otherwise NULL.
+    static SurfaceMaterialOp* getOpAsSurfaceMaterialOp(DD::Image::Op* op);
+
 
     //! Allow only RayShaders on input 0.
     /*virtual*/ bool        test_input(int input, Op* op) const;
@@ -118,20 +148,25 @@ class ZPR_EXPORT SurfaceMaterialOp : public DD::Image::Material
         the shader.
         Base class returns NULL.
     */
-    virtual InputBinding* getInputBinding(uint32_t input) { return NULL; }
+    virtual InputBinding*  getInputBindingForOpInput(uint32_t op_input) { return NULL; }
+
+    /*! Return the Op input for a shader input, or -1 if binding is not exposed.
+        Base class returns -1.
+    */
+    virtual int32_t        getOpInputForShaderInput(uint32_t shader_input) { return -1; }
 
 
     //! Create the shaders for one input, returning the output surface shader.
-    virtual RayShader* createInputSurfaceShaders(uint32_t                 input,
-                                                 const RenderContext&     rtx,
-                                                 std::vector<RayShader*>& shaders);
+    virtual RayShader* createInputShader(uint32_t                 input,
+                                         const RenderContext&     rtx,
+                                         std::vector<RayShader*>& shaders);
 
     /*! Allocate a list of RayShaders this Op produces, and returns the output
         connection point.
         Calling object takes ownership of all returned pointers.
     */
-    RayShader* createSurfaceShaders(const RenderContext&     rtx,
-                                    std::vector<RayShader*>& shaders);
+    RayShader* createShaders(const RenderContext&     rtx,
+                             std::vector<RayShader*>& shaders);
 
 
     /*! Allocate and return a RayMaterial filled with all the RayShader comprising

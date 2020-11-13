@@ -167,7 +167,7 @@ class ZPR_EXPORT Mesh : public Traceable,
 
   public:
     //! Accepts faces with any number of verts.
-    Mesh(SurfaceContext*        stx,
+    Mesh(const MaterialContext* material_info,
          bool                   enable_subdivision,
          const Fsr::ArgSet&     subd_args,
          const Fsr::DoubleList& motion_times,
@@ -510,9 +510,7 @@ Mesh::getFaceGeometricNormal(uint32_t face,
     const Fsr::Vec3f& p0 = points[*vp             ]; // v0
     const Fsr::Vec3f& p1 = points[*vp+1           ]; // v1
     const Fsr::Vec3f& p2 = points[*vp+nFaceVerts-1]; // v2
-    Fsr::Vec3f N = (p1 - p0).cross(p2 - p0);
-    N.fastNormalize();
-    return N;
+    return Fsr::Vec3f((p1 - p0).cross(p2 - p0), 1.0f/*normalize*/);
 }
 
 
@@ -735,12 +733,10 @@ Mesh::getFaceNormal(uint32_t          face,
     }
 
     const uint32_t* vp = m_vert_indice_list.data() + getFaceVertStartIndex(face);
-    Fsr::Vec3f N = Fsr::interpolateAtBaryCoord(normals[vp[0       ]],
-                                               normals[vp[subtri+1]],
-                                               normals[vp[subtri+2]],
-                                                st);
-    N.fastNormalize();
-    return N;
+    return Fsr::Vec3f(Fsr::interpolateAtBaryCoord(normals[vp[0       ]],
+                                                  normals[vp[subtri+1]],
+                                                  normals[vp[subtri+2]],
+                                                  st), 1.0f/*normalize*/);
 }
 inline void
 Mesh::getFaceNormal(uint32_t          face,
@@ -769,9 +765,9 @@ Mesh::getFaceNormal(uint32_t          face,
     const Fsr::Vec3f& n0 = normals[vp[0       ]];
     const Fsr::Vec3f& n1 = normals[vp[subtri+1]];
     const Fsr::Vec3f& n2 = normals[vp[subtri+2]];
-    Nst   = Fsr::interpolateAtBaryCoord(n0, n1, n2, st  );   Nst.fastNormalize();
-    NRxst = Fsr::interpolateAtBaryCoord(n0, n1, n2, Rxst); NRxst.fastNormalize();
-    NRyst = Fsr::interpolateAtBaryCoord(n0, n1, n2, Ryst); NRyst.fastNormalize();
+    Nst   = Fsr::interpolateAtBaryCoord(n0, n1, n2, st  );   Nst.normalize();
+    NRxst = Fsr::interpolateAtBaryCoord(n0, n1, n2, Rxst); NRxst.normalize();
+    NRyst = Fsr::interpolateAtBaryCoord(n0, n1, n2, Ryst); NRyst.normalize();
 }
 
 
@@ -794,9 +790,7 @@ interpolateNormalAt(const Fsr::Vec3fList& normals0,
                                                        normals1[v1],
                                                        normals1[v2],
                                                        st);
-    Fsr::Vec3f N = Ns0.interpolateTo(Ns1, motion_step_t);
-    N.fastNormalize();
-    return N;
+    return Fsr::Vec3f(Ns0.interpolateTo(Ns1, motion_step_t), 1.0f/*normalize*/);
 }
 
 //!
@@ -818,9 +812,7 @@ Mesh::getMBFaceNormal(uint32_t          face,
         // No normals, get geometric normal instead:
         const Fsr::Vec3f Ng0 = getFaceGeometricNormal(face, motion_step  );
         const Fsr::Vec3f Ng1 = getFaceGeometricNormal(face, motion_step+1);
-        Fsr::Vec3f Ng = Ng0.interpolateTo(Ng1, motion_step_t);
-        Ng.fastNormalize();
-        return Ng;
+        return Fsr::Vec3f(Ng0.interpolateTo(Ng1, motion_step_t), 1.0f/*normalize*/);
     }
 
     const uint32_t* vp = m_vert_indice_list.data() + getFaceVertStartIndex(face);
@@ -851,7 +843,7 @@ Mesh::getMBFaceNormal(uint32_t          face,
         const Fsr::Vec3f Ng0 = getFaceGeometricNormal(face, motion_step  );
         const Fsr::Vec3f Ng1 = getFaceGeometricNormal(face, motion_step+1);
         Nst = Ng0.interpolateTo(Ng1, motion_step_t);
-        Nst.fastNormalize();
+        Nst.normalize();
         return;
     }
 

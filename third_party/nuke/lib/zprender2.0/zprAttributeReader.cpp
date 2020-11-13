@@ -68,8 +68,9 @@ zprAttributeReader::~zprAttributeReader()
 */
 /*virtual*/
 void
-zprAttributeReader::validateShader(bool                 for_real,
-                                   const RenderContext& rtx)
+zprAttributeReader::validateShader(bool                            for_real,
+                                   const RenderContext*            rtx,
+                                   const DD::Image::OutputContext* op_ctx)
 {
 std::cout << "zprAttributeReader::validateShader()" << std::endl;
     //m_texture_channels = m_binding.getChannels();

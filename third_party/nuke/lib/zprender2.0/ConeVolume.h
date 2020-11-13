@@ -30,9 +30,7 @@
 #ifndef zprender_ConeVolume_h
 #define zprender_ConeVolume_h
 
-#include "Volume.h"
-#include "Disc.h"
-
+#include "LightVolume.h"
 
 namespace zpr {
 
@@ -49,8 +47,7 @@ static const uint32_t  ZprConeVolumePrim  =  520;
     rather than the cone surface which produces a different sampling pattern
     depending on the rotation of the frustum to camera...
 */
-class ZPR_EXPORT ConeVolume : public RenderPrimitive,
-                              public Volume
+class ZPR_EXPORT ConeVolume : public LightVolume
 {
   public:
     /*!
@@ -104,16 +101,16 @@ class ZPR_EXPORT ConeVolume : public RenderPrimitive,
 
   public:
     //!
-    ConeVolume(SurfaceContext*   stx,
-               double            motion_time,
-               const Fsr::Mat4d& xform,
-               double            angle,
-               double            near,
-               double            far);
+    ConeVolume(const MaterialContext* material_ctx,
+               double                 motion_time,
+               const Fsr::Mat4d&      xform,
+               double                 angle,
+               double                 near,
+               double                 far);
 
     //!
-    ConeVolume(SurfaceContext*         stx,
-               const Fsr::DoubleList&  motion_times,
+    ConeVolume(const MaterialContext*        material_ctx,
+               const Fsr::DoubleList&        motion_times,
                const ConeVolume::SampleList& motion_cones);
 
     /*virtual*/ const char* getClass() const { return "ConeVolume"; }
@@ -185,24 +182,22 @@ class ZPR_EXPORT ConeVolume : public RenderPrimitive,
 /*---------------------------------------------------------------------*/
 
 inline
-ConeVolume::ConeVolume(SurfaceContext*   stx,
-                       double            motion_time,
-                       const Fsr::Mat4d& xform,
-                       double            angle,
-                       double            near,
-                       double            far) :
-    RenderPrimitive(stx, motion_time),
-    Volume(2/*nSurfaces*/)
+ConeVolume::ConeVolume(const MaterialContext* material_ctx,
+                       double                 motion_time,
+                       const Fsr::Mat4d&      xform,
+                       double                 angle,
+                       double                 near,
+                       double                 far) :
+    LightVolume(material_ctx, motion_time)
 {
     m_motion_cones.resize(1, Sample(xform, angle, near, far));
 }
 
 inline
-ConeVolume::ConeVolume(SurfaceContext*               stx,
+ConeVolume::ConeVolume(const MaterialContext*        material_ctx,
                        const Fsr::DoubleList&        motion_times,
                        const ConeVolume::SampleList& motion_cones) :
-    RenderPrimitive(stx, motion_times),
-    Volume(2/*nSurfaces*/),
+    LightVolume(material_ctx, motion_times),
     m_motion_cones(motion_cones)
 {
 #if DEBUG

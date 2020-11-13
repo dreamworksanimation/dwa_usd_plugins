@@ -48,7 +48,8 @@ static const uint32_t  ZprVolume  =  500;
 class LightEmitter;
 
 
-/*!
+/*! TODO: this class is left over from the old architecture and needs a rethink
+    and cleanup.
 */
 class ZPR_EXPORT Volume : public Traceable
 {
@@ -157,14 +158,14 @@ Volume::addVolumeIntersection(double                   t0,
     {
         tmin = std::min(tmin, t0);
         t_enter.t          = t0;
-        t_enter.object     = static_cast<RenderPrimitive*>(object);
+        t_enter.object     = static_cast<zpr::RenderPrimitive*>(object);
         t_enter.PW         = Rtx.getPositionAt(t0);
         t_enter.N          = Fsr::Vec3f(0,0,1); // TODO get normal at intersection?
         t_enter.object_ref = 2; // two hits
         //
         tmax = std::max(tmax, t1);
         t_exit.t           = t1;
-        t_exit.object      = static_cast<RenderPrimitive*>(object);
+        t_exit.object      = static_cast<zpr::RenderPrimitive*>(object);
         t_exit.PW          = Rtx.getPositionAt(t1);
         t_exit.N           = Fsr::Vec3f(0,0,1); // TODO get normal at intersection?
         t_exit.object_ref  = -1; // relative offset to first hit
@@ -173,14 +174,14 @@ Volume::addVolumeIntersection(double                   t0,
     {
         tmin = std::min(tmin, t1);
         t_enter.t          = t1;
-        t_enter.object     = static_cast<RenderPrimitive*>(object);
+        t_enter.object     = static_cast<zpr::RenderPrimitive*>(object);
         t_enter.PW         = Rtx.getPositionAt(t1);
         t_enter.N          = Fsr::Vec3f(0,0,1); // TODO get normal at intersection?
         t_enter.object_ref = 2; // two hits
         //
         tmax = std::max(tmax, t0);
         t_exit.t           = t0;
-        t_exit.object      = static_cast<RenderPrimitive*>(object);
+        t_exit.object      = static_cast<zpr::RenderPrimitive*>(object);
         t_exit.PW          = Rtx.getPositionAt(t0);
         t_exit.N           = Fsr::Vec3f(0,0,1); // TODO get normal at intersection?
         t_exit.object_ref  = -1; // relative offset to first hit

@@ -331,9 +331,7 @@ getTriGeometricNormal(const Fsr::Vec3f& p0,
                       const Fsr::Vec3f& p1,
                       const Fsr::Vec3f& p2)
 {
-    Fsr::Vec3f N = (p1 - p0).cross(p2 - p0);
-    N.fastNormalize();
-    return N;
+    return Fsr::Vec3f((p1 - p0).cross(p2 - p0), 1.0f/*normalize*/);
 }
 
 
@@ -347,9 +345,7 @@ getQuadGeometricNormal(const Fsr::Vec3f& p0,
 {
     const Fsr::Vec3f diag0(p3 - p1);
     const Fsr::Vec3f diag1(p0 - p2);
-    Fsr::Vec3f N(diag0.cross(diag1));
-    N.fastNormalize();
-    return N;
+    return Fsr::Vec3f(diag0.cross(diag1), 1.0f/*normalize*/);
 }
 
 

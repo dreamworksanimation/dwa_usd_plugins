@@ -39,6 +39,9 @@
 
 namespace zpr {
 
+class RenderContext;
+class ThreadContext;
+
 
 /*! Extension of the default DDImage Scene class to fill in that
     class' gaps.
@@ -48,37 +51,80 @@ namespace zpr {
     store global object-related lists like material texture inputs
     and scene state hashes.
     
+
+    We use a hack to identify this as a zpr::Scene to avoid
+    dynamic-casting as this test must happen in each light shading
+    call. The magic_token var will be after the last var in the
+    LightContext, so we test for the magic_token code in memory
+    right after. The token's first 32 bits is the same as the
+    second 32 bits but reversed.
+    Who knows if this is a reasonably unique pattern.
+    This relies on C++ packing the zpr::Scene struct vars right
+    after the DD::Image::Scene ones...
+
+    magic_token = 0x4c70f07c3e0f0e32
+                  0100 1100 0111 0000 1111 0000 0111 1100 0011 1110 0000 1111 0000 1110 0011 0010
+                  
 */
 class ZPR_EXPORT Scene : public DD::Image::Scene
 {
+  private:
+    uint64_t magic_token;   //!< Token that identifies this as a zpr::Scene
+
+
   public:
-    double  frame;          //!< This scene's absolute frame number
-    int32_t shutter_step;   //!< Which motion step this scene represents
+    RenderContext* rtx;             //!< Pointer back to RenderContext
+    int32_t        shutter_sample;  //!< Which motion step this scene represents
+    double         frame;           //!< This scene's absolute frame number
 
 
   protected:
-    std::map<uint64_t, uint32_t> m_object_map;      //!< Object-ID -> object-index map
+    typedef std::map<uint64_t, uint32_t> ObjectIdMap;
+    ObjectIdMap m_object_map;       //!< Object-ID -> object-index map
 
 
   public:
-    Scene(int32_t _shutter_step=0,
-          double  _frame=0.0);
+    // Default ctor leaves rtx NULL.
+    Scene();
+    //!
+    Scene(RenderContext* _rtx,
+          int32_t        _shutter_sample,
+          double         _frame);
 
     /*virtual*/ ~Scene();
 
 
+    //! Return non-null if the magic token value is present.
+    static inline zpr::Scene* isRayScene(DD::Image::Scene* scene)
+    {
+        const uint64_t* magic_token = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(scene) + sizeof(DD::Image::Scene));
+        return (*magic_token == ZPR_MAGIC_TOKEN) ? static_cast<zpr::Scene*>(scene) : NULL;
+    }
+    static inline zpr::Scene* isRayScene(const DD::Image::Scene* scene)
+    {
+        return isRayScene(const_cast<DD::Image::Scene*>(scene));
+    }
+
+
     //! Copy the info out of the source scene, but don't copy actual geometry.
     void copyInfo(const Scene* b);
+
 
     //===========================================================
 
     //! Find matching object id hash in object map. Returns -1 if not found.
     int findObject(const uint64_t& obj_id);
     int findObject(const char* id_string) { return findObject(::strtoull(id_string, NULL, 16/*base*/)); }
+    int findMatchingObject(const DD::Image::GeoInfo& obj) { return findObject(obj.out_id().value()); }
 
     //! Find matching object id in object map and return the object pointer.
     DD::Image::GeoInfo* getObject(const uint64_t& obj_id);
     DD::Image::GeoInfo* getObject(const char* id_string) { return getObject(::strtoull(id_string, NULL, 16/*base*/)); }
+    DD::Image::GeoInfo* getMatchingObject(const DD::Image::GeoInfo& obj) { return getObject(obj.out_id().value()); }
+
+
+    //! Return a LightContext pointer cast to a zpr::RayLightContext.
+    //zpr::RayLightContext* getLightContext(int32_t ltindex) const;
 
 
     //===========================================================

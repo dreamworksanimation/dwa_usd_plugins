@@ -101,7 +101,7 @@ class ZPR_EXPORT Points : public Traceable,
 
   public:
     //!
-    Points(SurfaceContext*        stx,
+    Points(const MaterialContext* material_ctx,
            const Fsr::DoubleList& motion_times,
            const Fsr::Mat4dList&  motion_xforms,
            uint32_t               numPoints,
@@ -112,7 +112,7 @@ class ZPR_EXPORT Points : public Traceable,
            const Fsr::Vec4f*      Cf_array=NULL);
 
     //!
-    Points(SurfaceContext*           stx,
+    Points(const MaterialContext*    material_ctx,
            const Fsr::DoubleList&    motion_times,
            const Points::SampleList& motion_ptcs,
            const Fsr::Vec4f*         Cf_array=NULL);
@@ -203,7 +203,7 @@ class SpherePoints : public Points
 {
   public:
     //!
-    SpherePoints(SurfaceContext*        stx,
+    SpherePoints(const MaterialContext* material_ctx,
                  const Fsr::DoubleList& motion_times,
                  const Fsr::Mat4dList&  motion_xforms,
                  uint32_t               numPoints,
@@ -232,7 +232,7 @@ class DiscPoints : public Points
 {
   public:
     //!
-    DiscPoints(SurfaceContext*        stx,
+    DiscPoints(const MaterialContext* material_ctx,
                const Fsr::DoubleList& motion_times,
                const Fsr::Mat4dList&  motion_xforms,
                uint32_t               numPoints,
@@ -262,7 +262,7 @@ class CardPoints : public Points
 {
   public:
     //!
-    CardPoints(SurfaceContext*        stx,
+    CardPoints(const MaterialContext* material_ctx,
                const Fsr::DoubleList& motion_times,
                const Fsr::Mat4dList&  motion_xforms,
                uint32_t               numPoints,
