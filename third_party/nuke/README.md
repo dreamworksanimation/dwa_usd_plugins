@@ -31,7 +31,11 @@ The current project code takes the form of a utility library called 'Fuser', a r
 
 - `plugin/FuserOpenSubdiv` - Fuser plugin providing subdivision functionality from the OpenSubdiv library.
 
-- `plugin/TransformGeo2` - a replacement for TransformGeo (unfinished).
+- `plugin/ApplyMaterial` - a replacement for ApplyMaterial with robust object filtering.
+
+- `plugin/MergeGeo2` - a replacement for MergeGeo with object filtering (beta, disabled by default).
+
+- `plugin/TransformGeo2` - a replacement for TransformGeo with object filtering (beta, disabled by default).
 
 - `plugin/zpRender` - ray-trace renderer alternative for ScanlineRender or RayRender. Supports ray-tracing shaders, subdivision surfaces, motionblur, etc.
 
